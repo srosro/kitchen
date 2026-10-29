@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from claude_kitchen.tmux import tmux, has_session, target, SESSION
-from claude_kitchen.state import MCP_CONFIG_NAME
+from claude_kitchen.state import MCP_CONFIG_NAME, channel_flags
 
 
 def check_sous_pid(state_dir: Path):
@@ -71,7 +71,7 @@ def spawn_sous(kitchen: str, state_dir: Path, sous_prompt: str,
     claude_args = [
         "claude",
         "--dangerously-skip-permissions",
-        "--dangerously-load-development-channels", "server:kitchen",
+        "--dangerously-load-development-channels", *channel_flags(kitchen),
         "--mcp-config", str(state_dir / MCP_CONFIG_NAME),
         f"--remote-control=[sous] {kitchen}",
     ]
@@ -260,7 +260,7 @@ def build_sous_cmd(name: str, base: Path, sous_md_path: Path,
     model_flag = f"--model {q(model)} " if model else ""
     claude = (
         "exec claude --dangerously-skip-permissions "
-        "--dangerously-load-development-channels server:kitchen "
+        f"--dangerously-load-development-channels {' '.join(channel_flags(name))} "
         f"--mcp-config {q(str(base / MCP_CONFIG_NAME))} "
         f"{model_flag}"
         f"--append-system-prompt-file {q(str(sous_md_path))}"

@@ -33,11 +33,14 @@ class FakePlow:
         self.history[chat].append(message)
         return message
 
-    async def inbound(self, chat, handle, body, live=True):
-        """A member texts the line; `live=False` lands it while no socket hears it."""
-        message = self._message(chat, "inbound", body, handle)
-        if live:
-            await self._broadcast(message)
+    def add(self, chat, handle, body):
+        """A member's text lands while no socket hears it."""
+        return self._message(chat, "inbound", body, handle)
+
+    async def inbound(self, chat, handle, body):
+        """A member texts the line, and every open socket hears it."""
+        message = self.add(chat, handle, body)
+        await self._broadcast(message)
         return message
 
     async def _broadcast(self, message):
@@ -83,6 +86,7 @@ class FakePlow:
 
     async def serve(self):
         """Start on a free localhost port; returns (base_url, uvicorn server)."""
+        self.sockets.clear()
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
             port = s.getsockname()[1]

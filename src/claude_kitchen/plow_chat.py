@@ -17,16 +17,12 @@ from mcp.server.lowlevel import NotificationOptions, Server
 from mcp.server.stdio import stdio_server
 
 from claude_kitchen.channel import CHANNEL_CAPABILITY, _refuse_if_deaf, push
-from claude_kitchen.state import state_root
+from claude_kitchen.state import atomic_write_json, plow_chat_dir
 
 DEFAULT_BASE_URL = "https://api.plow.co"
 MAX_BACKOFF = 30
 SEEN_CAP = 2000
 CATCH_UP_LIMIT = 50
-
-
-def config_dir() -> Path:
-    return state_root() / "plow-chat"
 
 
 def log(msg: str):
@@ -66,12 +62,22 @@ class Bridge:
     config: Config
     client: httpx.AsyncClient
     deliver: callable  # async (content, meta) -> None
-    seen: dict = field(default_factory=dict)  # insertion-ordered set of message uids
+    # Message uids already handled, persisted so a restart neither replays
+    # them nor misses what arrived while the server was down.
+    cursor: Path
+    seen: dict = field(init=False)  # insertion-ordered set of message uids
+
+    def __post_init__(self):
+        self.seen = dict.fromkeys(json.loads(self.cursor.read_text())["seen"]) if self.cursor.exists() else {}
+
+    def _save(self):
+        atomic_write_json(self.cursor, {"seen": list(self.seen)})  # mkstemp: mode 600
 
     def _mark(self, uid: str):
         self.seen[uid] = None
         while len(self.seen) > SEEN_CAP:
             del self.seen[next(iter(self.seen))]
+        self._save()
 
     async def accept(self, message: dict):
         """Deliver one Plow message if it is a new inbound text from an
@@ -90,8 +96,8 @@ class Bridge:
         self._mark(uid)
 
     async def catch_up(self, deliver: bool):
-        """Read each allowed chat's newest page. The first pass after start
-        only records what is already there, so history is never replayed."""
+        """Read each allowed chat's newest page. With no cursor yet, only
+        record what is already there, so history is never replayed."""
         for chat in sorted(self.config.chats):
             r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": CATCH_UP_LIMIT})
             r.raise_for_status()
@@ -114,7 +120,7 @@ class Bridge:
     async def run(self):
         """Hold the socket forever: fresh ticket per connect, catch up after
         every `connected`, back off exponentially on any drop."""
-        backoff, started = 1, False
+        backoff, primed = 1, self.cursor.exists()
         ws_url = self.config.base_url.replace("http", "ws", 1) + "/v1/ws"
         while True:
             try:
@@ -124,8 +130,10 @@ class Bridge:
                     hello = json.loads(await ws.recv())
                     if hello.get("type") != "connected":
                         raise ConnectionError(f"expected a connected frame, got {hello.get('type')!r}")
-                    await self.catch_up(deliver=started)
-                    started, backoff = True, 1
+                    await self.catch_up(deliver=primed)
+                    if not primed:
+                        self._save()  # an empty chat still gets a cursor
+                    primed, backoff = True, 1
                     log("connected")
                     async for raw in ws:
                         event = json.loads(raw)
@@ -158,8 +166,9 @@ REPLY_TOOL = types.Tool(
 )
 
 
-async def run_server():
-    config = load_config(config_dir())
+async def run_server(kitchen: str):
+    directory = plow_chat_dir(kitchen)
+    config = load_config(directory)
     server = Server("plow-chat")
     bridge = None  # bound once the HTTP client and stdio streams are open
 
@@ -180,7 +189,8 @@ async def run_server():
     headers = {"Authorization": f"Bearer {config.token}"}
     async with httpx.AsyncClient(base_url=config.base_url, headers=headers, timeout=30) as client, \
             stdio_server() as (read_stream, write_stream):
-        bridge = Bridge(config, client, lambda content, meta: push(write_stream, content, meta))
+        bridge = Bridge(config, client, lambda content, meta: push(write_stream, content, meta),
+                        directory / "last_seen.json")
         supervisor = asyncio.create_task(bridge.run())
         try:
             await server.run(read_stream, write_stream, init_options)
@@ -188,5 +198,5 @@ async def run_server():
             supervisor.cancel()
 
 
-def main():
-    asyncio.run(run_server())
+def main(kitchen: str):
+    asyncio.run(run_server(kitchen))

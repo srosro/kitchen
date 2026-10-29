@@ -1,6 +1,8 @@
 """Tests for the plow-chat channel server, against a fake Plow API."""
 import asyncio
 import json
+import tempfile
+from pathlib import Path
 
 import httpx
 import pytest
@@ -18,13 +20,14 @@ async def eventually(predicate, timeout=5):
             await asyncio.sleep(0.01)
 
 
-def run_bridge(scenario, history=()):
+def run_bridge(scenario, fake=None, cursor=None):
     """Run `scenario(fake, bridge, delivered)` with the bridge's socket
-    supervisor live against a fresh fake Plow already holding `history`."""
+    supervisor live against `fake` (a fresh one by default). Pass the same
+    fake and cursor twice to restart the server against the same chat."""
+    fake = fake or FakePlow()
+    cursor = cursor or Path(tempfile.mkdtemp()) / "last_seen.json"
+
     async def main():
-        fake = FakePlow()
-        for chat, handle, body in history:
-            await fake.inbound(chat, handle, body, live=False)
         base_url, server = await fake.serve()
         config = Config(token=TOKEN, senders={SAM: "sam", PLUCAS: "plucas"},
                         chats=frozenset({HOME}), base_url=base_url)
@@ -34,7 +37,7 @@ def run_bridge(scenario, history=()):
             delivered.append((content, meta))
 
         async with httpx.AsyncClient(base_url=base_url, headers={"Authorization": f"Bearer {TOKEN}"}) as client:
-            bridge = Bridge(config, client, deliver)
+            bridge = Bridge(config, client, deliver, cursor)
             supervisor = asyncio.create_task(bridge.run())
             await eventually(lambda: fake.sockets)
             try:
@@ -81,14 +84,34 @@ def test_reconnect_catches_up_without_replay_or_duplicates():
         await fake.inbound(HOME, SAM, "before")  # live, delivered once
         await eventually(lambda: delivered)
         await fake.drop_sockets()
-        await fake.inbound(HOME, SAM, "during the gap", live=False)
+        fake.add(HOME, SAM, "during the gap")
         await eventually(lambda: fake.sockets)  # reconnected with a fresh ticket
         await fake.inbound(HOME, SAM, "after")
         await eventually(lambda: len(delivered) == 3)
         await asyncio.sleep(0.2)
         assert [c for c, _ in delivered] == ["before", "during the gap", "after"]
 
-    run_bridge(scenario, history=[(HOME, SAM, "history from last week")])
+    fake = FakePlow()
+    fake.add(HOME, SAM, "history from last week")  # a first-ever start must not replay it
+    run_bridge(scenario, fake)
+
+
+def test_restart_delivers_texts_sent_while_down_exactly_once(tmp_path):
+    fake, cursor = FakePlow(), tmp_path / "last_seen.json"
+
+    async def before_restart(fake, bridge, delivered):
+        await fake.inbound(HOME, SAM, "before restart")
+        await eventually(lambda: delivered)
+
+    async def after_restart(fake, bridge, delivered):
+        await eventually(lambda: delivered)
+        await asyncio.sleep(0.2)
+        assert [c for c, _ in delivered] == ["while down"]
+
+    run_bridge(before_restart, fake, cursor)
+    fake.add(HOME, SAM, "while down")
+    run_bridge(after_restart, fake, cursor)
+    assert cursor.stat().st_mode & 0o777 == 0o600
 
 
 def test_load_config_refuses_token_readable_by_others(tmp_path):

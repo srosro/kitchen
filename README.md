@@ -266,6 +266,7 @@ The root sous's own Stop hook does not notify its own socket, preventing an echo
 │   ├── sous.pid              # duplicate-sous guard
 │   ├── cooks/<name>.json     # backend, status, response, session, context
 │   ├── codex-home/           # clean-room Codex homes, when used
+│   ├── plow-chat/            # optional: config.json, token (600), last_seen.json
 │   └── notes/                # handoff, log, and long task briefs
 └── projects/<slug>/wiki/
     ├── mistakes.md           # durable lessons
@@ -273,6 +274,26 @@ The root sous's own Stop hook does not notify its own socket, preventing an echo
 ```
 
 `kitchen close` removes managed per-kitchen notes and cook state. The project wiki survives so later kitchens inherit the lessons and preferences.
+
+## Texting the sous (plow-chat)
+
+A kitchen whose state dir holds `plow-chat/config.json` also loads the `plow-chat` channel when `kitchen open` starts its sous. Texts to a Plow line then arrive as `<channel source="plow-chat" from="<name>" chat="<chat uid>">`, and the sous answers with its `reply` tool. Kitchens without that file are unchanged.
+
+```text
+~/.claude-kitchen/<kitchen>/plow-chat/
+├── config.json      # {"senders": {"<phone or email>": "<name>"}, "chats": ["cht_…"]}
+├── token            # the line's agent token, chmod 600; the server refuses anything looser
+└── last_seen.json   # message uids already handled; texts sent while the sous was down arrive on restart
+```
+
+`config.json` may also set `base_url` (default `https://api.plow.co`). Only texts whose sender **and** chat are both listed reach the sous. The rest are dropped and logged with the chat uid, and `reply` refuses any chat not in `chats`.
+
+**Adding someone who doesn't own the line.** Plow opens a 1:1 chat only for the line's owner. Anyone else reaches the line through a group: the owner starts an iMessage group containing that person and the line's number, and someone in it texts. Plow creates the chat on that first message (the owner doesn't have to be the one who speaks), and the line's agent token already covers chats created on its line later. Then:
+
+1. Text the group once. That message is dropped, and the log line `plow-chat: dropped msg_…: … in chat cht_… is not allowlisted` names the new chat uid.
+2. Add that uid to `chats` and the person's number to `senders`, then reopen the kitchen.
+
+The owner stays in the group, so they see every exchange between the sous and the collaborator.
 
 ## Customize the workflow
 
