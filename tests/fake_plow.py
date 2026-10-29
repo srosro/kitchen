@@ -4,6 +4,7 @@ import asyncio
 import itertools
 import socket
 from collections import defaultdict
+from datetime import UTC, datetime, timedelta
 
 import uvicorn
 from starlette.applications import Starlette
@@ -19,7 +20,9 @@ class FakePlow:
         self.history = defaultdict(list)  # chat -> messages, oldest first
         self.sent = []  # (chat, body) the agent posted
         self.sockets = []
+        self.missing = set()  # chats that answer 404, as a deleted or mistyped uid does
         self._uids = itertools.count(1)
+        self._epoch = datetime.now(UTC)
         self.app = Starlette(routes=[
             Route("/v1/ws/ticket", self._ticket, methods=["POST"]),
             Route("/v1/chats/{chat}/messages", self._messages, methods=["GET", "POST"]),
@@ -28,8 +31,9 @@ class FakePlow:
 
     def _message(self, chat, direction, body, handle=None):
         sender = {"type": "member", "provider_key": handle} if handle else {"type": "agent"}
-        message = {"uid": f"msg_{next(self._uids)}", "chat_uid": chat, "direction": direction,
-                   "body": body, "sender": sender}
+        n = next(self._uids)
+        message = {"uid": f"msg_{n}", "chat_uid": chat, "direction": direction, "body": body,
+                   "sender": sender, "created_at": (self._epoch + timedelta(milliseconds=n)).isoformat()}
         self.history[chat].append(message)
         return message
 
@@ -65,6 +69,8 @@ class FakePlow:
         if not self._authorized(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         chat = request.path_params["chat"]
+        if chat in self.missing:
+            return JSONResponse({"error": "not_found"}, status_code=404)
         if request.method == "POST":
             body = (await request.json())["body"]
             self.sent.append((chat, body))

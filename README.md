@@ -283,7 +283,7 @@ A kitchen whose state dir holds `plow-chat/config.json` also loads the `plow-cha
 ~/.claude-kitchen/<kitchen>/plow-chat/
 ├── config.json      # {"senders": {"<phone or email>": "<name>"}, "chats": ["cht_…"]}
 ├── token            # the line's agent token, chmod 600; the server refuses anything looser
-└── last_seen.json   # message uids already handled; texts sent while the sous was down arrive on restart
+└── last_seen.json   # per-chat high-water mark; texts sent while the sous was down arrive on restart
 ```
 
 `config.json` may also set `base_url` (default `https://api.plow.co`). Only texts whose sender **and** chat are both listed reach the sous. The rest are dropped and logged with the chat uid, and `reply` refuses any chat not in `chats`.

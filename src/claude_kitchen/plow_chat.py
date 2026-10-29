@@ -8,6 +8,7 @@ import asyncio
 import json
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -21,7 +22,6 @@ from claude_kitchen.state import atomic_write_json, plow_chat_dir
 
 DEFAULT_BASE_URL = "https://api.plow.co"
 MAX_BACKOFF = 30
-SEEN_CAP = 2000
 CATCH_UP_LIMIT = 50
 
 
@@ -31,6 +31,11 @@ def log(msg: str):
 
 def mask(value: str) -> str:
     return "…***" if len(value) < 8 else f"…{value[-3:]}"
+
+
+def log_dropped(message: dict):
+    handle = (message.get("sender") or {}).get("provider_key") or ""
+    log(f"dropped {message['uid']}: sender {mask(handle)} in chat {message['chat_uid']} is not allowlisted")
 
 
 @dataclass(frozen=True)
@@ -62,50 +67,52 @@ class Bridge:
     config: Config
     client: httpx.AsyncClient
     deliver: callable  # async (content, meta) -> None
-    # Message uids already handled, persisted so a restart neither replays
-    # them nor misses what arrived while the server was down.
+    # Per-chat high-water mark, the created_at of the newest message handled,
+    # persisted so a restart replays nothing older and misses nothing newer.
     cursor: Path
-    seen: dict = field(init=False)  # insertion-ordered set of message uids
+    marks: dict = field(init=False)
 
     def __post_init__(self):
-        self.seen = dict.fromkeys(json.loads(self.cursor.read_text())["seen"]) if self.cursor.exists() else {}
+        self.marks = json.loads(self.cursor.read_text()) if self.cursor.exists() else {}
 
-    def _save(self):
-        atomic_write_json(self.cursor, {"seen": list(self.seen)})  # mkstemp: mode 600
+    def _advance(self, chat: str, created_at: str):
+        self.marks[chat] = created_at
+        atomic_write_json(self.cursor, self.marks)  # mkstemp: mode 600
 
-    def _mark(self, uid: str):
-        self.seen[uid] = None
-        while len(self.seen) > SEEN_CAP:
-            del self.seen[next(iter(self.seen))]
-        self._save()
-
-    async def accept(self, message: dict):
-        """Deliver one Plow message if it is a new inbound text from an
-        allowlisted sender in an allowlisted chat; drop and log anything else."""
-        uid = message["uid"]
-        if message["direction"] != "inbound" or uid in self.seen:
+    async def sync(self, chat: str):
+        """Hand the sous every inbound text in `chat` newer than its mark,
+        oldest first. The REST page is the record and a socket frame only a
+        doorbell, so live, reconnect and restart share this one path and an
+        out-of-order frame can't skip a text. A chat with no mark yet is only
+        measured, so its history is never replayed. A chat Plow refuses is
+        logged and skipped, so one bad uid can't starve the others."""
+        r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": CATCH_UP_LIMIT})
+        if r.is_error:
+            log(f"HTTP {r.status_code} reading chat {chat}; skipped")
             return
-        handle = (message.get("sender") or {}).get("provider_key") or ""
-        name = self.config.senders.get(handle)
-        chat = message["chat_uid"]
-        if name is None or chat not in self.config.chats:
-            log(f"dropped {uid}: sender {mask(handle)} in chat {chat} is not allowlisted")
-        else:
-            await self.deliver(message["body"], {"from": name, "chat": chat})
-        # Marked only after delivery, so a crash mid-send can't suppress it.
-        self._mark(uid)
-
-    async def catch_up(self, deliver: bool):
-        """Read each allowed chat's newest page. With no cursor yet, only
-        record what is already there, so history is never replayed."""
-        for chat in sorted(self.config.chats):
-            r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": CATCH_UP_LIMIT})
-            r.raise_for_status()
-            for message in reversed(r.json()["data"]):  # newest-first → oldest-first
-                if deliver:
-                    await self.accept(message)
+        messages = r.json()["data"][::-1]  # newest-first → oldest-first
+        if chat not in self.marks:
+            self._advance(chat, messages[-1]["created_at"] if messages else "")
+            return
+        mark = self.marks[chat]
+        for message in messages:
+            if mark and datetime.fromisoformat(message["created_at"]) <= datetime.fromisoformat(mark):
+                continue
+            if message["direction"] == "inbound":
+                name = self.config.senders.get((message.get("sender") or {}).get("provider_key"))
+                if name is None:
+                    log_dropped(message)
                 else:
-                    self._mark(message["uid"])
+                    await self.deliver(message["body"], {"from": name, "chat": chat})
+            # Advanced only after delivery, so a crash mid-send can't suppress it.
+            self._advance(chat, message["created_at"])
+
+    async def on_frame(self, message: dict):
+        chat = message["chat_uid"]
+        if chat in self.config.chats:
+            await self.sync(chat)
+        elif message["direction"] == "inbound":
+            log_dropped(message)
 
     async def reply(self, chat: str, text: str) -> str:
         if chat not in self.config.chats:
@@ -118,9 +125,9 @@ class Bridge:
         return f"sent {r.json()['uid']}"
 
     async def run(self):
-        """Hold the socket forever: fresh ticket per connect, catch up after
-        every `connected`, back off exponentially on any drop."""
-        backoff, primed = 1, self.cursor.exists()
+        """Hold the socket forever: fresh ticket per connect, sync every
+        allowed chat after each `connected`, back off exponentially on any drop."""
+        backoff = 1
         ws_url = self.config.base_url.replace("http", "ws", 1) + "/v1/ws"
         while True:
             try:
@@ -130,15 +137,14 @@ class Bridge:
                     hello = json.loads(await ws.recv())
                     if hello.get("type") != "connected":
                         raise ConnectionError(f"expected a connected frame, got {hello.get('type')!r}")
-                    await self.catch_up(deliver=primed)
-                    if not primed:
-                        self._save()  # an empty chat still gets a cursor
-                    primed, backoff = True, 1
+                    for chat in sorted(self.config.chats):
+                        await self.sync(chat)
+                    backoff = 1
                     log("connected")
                     async for raw in ws:
                         event = json.loads(raw)
                         if event.get("event_type") == "message_received":
-                            await self.accept(event["data"]["message"])
+                            await self.on_frame(event["data"]["message"])
                 log("socket closed")
             except httpx.HTTPStatusError as e:
                 log(f"HTTP {e.response.status_code} from {e.request.url.path}")

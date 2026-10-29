@@ -11,7 +11,7 @@ from claude_kitchen.plow_chat import Bridge, Config, load_config
 from tests.fake_plow import TOKEN, FakePlow
 
 SAM, PLUCAS, STRANGER = "+15550000001", "+15550000002", "+15550000099"
-HOME, OTHER = "cht_home", "cht_other"
+HOME, OTHER, GONE = "cht_home", "cht_other", "cht_gone"
 
 
 async def eventually(predicate, timeout=5):
@@ -20,7 +20,7 @@ async def eventually(predicate, timeout=5):
             await asyncio.sleep(0.01)
 
 
-def run_bridge(scenario, fake=None, cursor=None):
+def run_bridge(scenario, fake=None, cursor=None, chats=(HOME,)):
     """Run `scenario(fake, bridge, delivered)` with the bridge's socket
     supervisor live against `fake` (a fresh one by default). Pass the same
     fake and cursor twice to restart the server against the same chat."""
@@ -30,7 +30,7 @@ def run_bridge(scenario, fake=None, cursor=None):
     async def main():
         base_url, server = await fake.serve()
         config = Config(token=TOKEN, senders={SAM: "sam", PLUCAS: "plucas"},
-                        chats=frozenset({HOME}), base_url=base_url)
+                        chats=frozenset(chats), base_url=base_url)
         delivered = []
 
         async def deliver(content, meta):
@@ -113,6 +113,34 @@ def test_restart_delivers_texts_sent_while_down_exactly_once(tmp_path):
     run_bridge(after_restart, fake, cursor)
     assert cursor.stat().st_mode & 0o777 == 0o600
 
+
+
+def test_a_chat_plow_refuses_is_skipped_and_logged(capsys):
+    fake = FakePlow()
+    fake.missing.add(GONE)
+
+    async def scenario(fake, bridge, delivered):
+        await fake.inbound(HOME, SAM, "still reachable")
+        await eventually(lambda: delivered)
+        assert f"HTTP 404 reading chat {GONE}; skipped" in capsys.readouterr().err
+
+    run_bridge(scenario, fake, chats=(HOME, GONE))
+
+
+def test_a_flood_of_dropped_texts_never_replays_old_ones():
+    async def scenario(fake, bridge, delivered):
+        await fake.inbound(HOME, SAM, "real")
+        await eventually(lambda: delivered)
+        for i in range(2001):
+            await fake.inbound(OTHER, STRANGER, f"spam {i}")
+        await fake.drop_sockets()
+        await eventually(lambda: fake.sockets)
+        await fake.inbound(HOME, SAM, "marker")
+        await eventually(lambda: len(delivered) >= 2)
+        await asyncio.sleep(0.2)
+        assert [c for c, _ in delivered] == ["real", "marker"]
+
+    run_bridge(scenario)
 
 def test_load_config_refuses_token_readable_by_others(tmp_path):
     (tmp_path / "config.json").write_text(json.dumps({"senders": {SAM: "sam"}, "chats": [HOME]}))
