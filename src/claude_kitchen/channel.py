@@ -70,6 +70,17 @@ def _refuse_if_deaf(capabilities):
         )
 
 
+async def push(write_stream, content: str, meta: dict):
+    """Send one channel notification; Claude renders it as a <channel> tag
+    with the server's name as `source` and each meta key as an attribute."""
+    notification = JSONRPCNotification(
+        jsonrpc="2.0",
+        method=f"notifications/{CHANNEL_CAPABILITY}",
+        params={"content": content, "meta": meta},
+    )
+    await write_stream.send(SessionMessage(message=JSONRPCMessage(notification)))
+
+
 async def handle_connection(reader: asyncio.StreamReader, writer, notify):
     """Handle one cook hook connection: read JSON line, call notify."""
     try:
@@ -186,12 +197,7 @@ async def run_server(kitchen: str):
         # token info yet — the sous shouldn't see ctx="" or ctx="null".
         if data.get("ctx"):
             meta["ctx"] = data["ctx"]
-        notification = JSONRPCNotification(
-            jsonrpc="2.0",
-            method=f"notifications/{CHANNEL_CAPABILITY}",
-            params={"content": summary, "meta": meta},
-        )
-        await ws.send(SessionMessage(message=JSONRPCMessage(notification)))
+        await push(ws, summary, meta)
 
     async def on_connection(reader, writer):
         await handle_connection(reader, writer, notify)

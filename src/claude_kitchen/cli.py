@@ -1439,6 +1439,7 @@ def main():
 
     p_channel = sub.add_parser("channel-server", help="(internal) Run channel MCP server")
     p_channel.add_argument("kitchen", help="Kitchen name")
+    sub.add_parser("plow-chat-server", help="(internal) Run the plow-chat channel MCP server")
 
     args = parser.parse_args()
 
@@ -1473,3 +1474,6 @@ def main():
     elif args.command == "channel-server":
         from claude_kitchen.channel import main as channel_main
         channel_main(args.kitchen)
+    elif args.command == "plow-chat-server":
+        from claude_kitchen.plow_chat import main as plow_chat_main
+        plow_chat_main()
