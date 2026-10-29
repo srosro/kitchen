@@ -577,6 +577,7 @@ class TestSpawnWindow:
         from claude_kitchen.tmux import SESSION, tmux
         kitchen = f"hire-target-{os.getpid()}"
         tmux("new-session", "-d", "-s", SESSION, "-n", "kitchen", "sleep 30", kitchen=kitchen, check=True)
+        sock = Path(tmux("display", "-p", "#{socket_path}", kitchen=kitchen).stdout.strip())
         try:
             with patch("claude_kitchen.spawn.build_shell_cmd", return_value="sleep 30"):
                 assert spawn_window(kitchen, "rev1", str(tmp_path), "claude", str(tmp_path))
@@ -584,6 +585,7 @@ class TestSpawnWindow:
             assert windows == ["kitchen", "rev1"]
         finally:
             tmux("kill-server", kitchen=kitchen)
+            sock.unlink(missing_ok=True)  # tmux leaves the socket file behind
 
     @patch("claude_kitchen.spawn.has_session", return_value=True)
     @patch("claude_kitchen.spawn.tmux")
