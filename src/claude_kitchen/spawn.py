@@ -217,12 +217,22 @@ def spawn_window(kitchen: str, name: str, cwd: str, backend: str, status_dir: st
                           plugin_dirs=plugin_dirs, model=model)
 
     if has_session(kitchen):
-        result = tmux("new-window", "-t", target(), "-n", name, "-c", cwd, cmd,
-                      kitchen=kitchen)
-    else:
-        result = tmux("new-session", "-d", "-s", SESSION, "-n", name, "-c", cwd, cmd,
-                      kitchen=kitchen)
+        return _new_window(kitchen, name, cwd, cmd)
+    result = tmux("new-session", "-d", "-s", SESSION, "-n", name, "-c", cwd, cmd,
+                  kitchen=kitchen)
+    return _launched(result)
 
+
+def _new_window(kitchen: str, name: str, cwd: str, cmd: str) -> bool:
+    return _launched(tmux("new-window", "-t", target(), "-n", name, "-c", cwd, cmd,
+                          kitchen=kitchen))
+
+
+def _launched(result) -> bool:
+    """True on success; otherwise print tmux's own reason, which the caller's
+    one-line failure message would otherwise hide."""
+    if result.returncode != 0:
+        print(f"tmux: {result.stderr.strip()}", file=sys.stderr)
     return result.returncode == 0
 
 
@@ -281,8 +291,7 @@ def spawn_sous_window(name: str, base: Path, sous_md_path: Path, project: Path,
     tear the half-created kitchen down."""
     cmd = build_sous_cmd(name, base, sous_md_path, slug=slug,
                          parent_base=parent_base, model=model)
-    if tmux("new-window", "-t", target(), "-n", "sous", "-c", str(project),
-            cmd, kitchen=name).returncode != 0:
+    if not _new_window(name, "sous", str(project), cmd):
         return False
     # The placeholder kill is cosmetic (the window is `_`-hidden from brigade);
     # a transient stall under launch load must not fail an otherwise-good launch.
