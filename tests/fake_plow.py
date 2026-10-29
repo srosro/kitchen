@@ -21,6 +21,7 @@ class FakePlow:
         self.sent = []  # (chat, body) the agent posted
         self.sockets = []
         self.missing = set()  # chats that answer 404, as a deleted or mistyped uid does
+        self.flaky = set()  # chats whose next read answers 503
         self._uids = itertools.count(1)
         self._epoch = datetime.now(UTC)
         self.app = Starlette(routes=[
@@ -73,6 +74,9 @@ class FakePlow:
         chat = request.path_params["chat"]
         if chat in self.missing:
             return JSONResponse({"error": "not_found"}, status_code=404)
+        if chat in self.flaky and request.method == "GET":
+            self.flaky.discard(chat)
+            return JSONResponse({"error": "unavailable"}, status_code=503)
         if request.method == "POST":
             body = (await request.json())["body"]
             self.sent.append((chat, body))
@@ -81,7 +85,10 @@ class FakePlow:
             return JSONResponse(message, status_code=201)
         limit = int(request.query_params.get("limit", 20))
         newest_first = sorted(self.history[chat], key=lambda m: m["created_at"], reverse=True)  # as Plow orders
-        return JSONResponse({"data": newest_first[:limit], "has_more": False})
+        after = request.query_params.get("starting_after")
+        if after:
+            newest_first = newest_first[[m["uid"] for m in newest_first].index(after) + 1:]
+        return JSONResponse({"data": newest_first[:limit], "has_more": len(newest_first) > limit})
 
     async def _ws(self, websocket):
         await websocket.accept()

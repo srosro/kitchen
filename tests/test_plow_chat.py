@@ -168,6 +168,35 @@ def test_a_text_stamped_before_our_own_echo_is_still_delivered():
 
     run_bridge(scenario)
 
+
+def test_a_long_absence_delivers_every_text_past_the_first_page(tmp_path):
+    fake, cursor = FakePlow(), tmp_path / "last_seen.json"
+
+    async def first_run(fake, bridge, delivered):
+        pass  # records the chat, so the next start reads it as a returning reader
+
+    missed = [f"text {i}" for i in range(60)]  # more than one 50-message page
+
+    async def after_absence(fake, bridge, delivered):
+        await eventually(lambda: len(delivered) == len(missed))
+        await asyncio.sleep(0.2)
+        assert [c for c, _ in delivered] == missed
+
+    run_bridge(first_run, fake, cursor)
+    for body in missed:
+        fake.add(HOME, SAM, body)
+    run_bridge(after_absence, fake, cursor)
+
+
+def test_a_transient_plow_error_retries_instead_of_stranding_the_text():
+    async def scenario(fake, bridge, delivered):
+        fake.flaky.add(HOME)  # the read this text triggers answers 503
+        await fake.inbound(HOME, SAM, "are you there?")
+        await eventually(lambda: delivered)  # delivered after the reconnect's catch-up
+        assert [c for c, _ in delivered] == ["are you there?"]
+
+    run_bridge(scenario)
+
 @pytest.mark.parametrize("mode, token, error", [
     (0o644, TOKEN, "chmod 600"),
     (0o600, "\n", "token is empty"),

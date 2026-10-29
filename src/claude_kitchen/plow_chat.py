@@ -83,20 +83,37 @@ class Bridge:
     def _save(self):
         atomic_write_json(self.cursor, {chat: sorted(uids) for chat, uids in self.seen.items()})  # mkstemp: mode 600
 
-    async def sync(self, chat: str):
-        """Hand the sous every inbound text in `chat`'s newest page that it
-        hasn't seen, oldest first. The REST page is the record and a socket
-        frame only a doorbell, so live, reconnect and restart share this one
-        path. A chat seen for the first time is only recorded, so its history
-        is never replayed. A chat Plow refuses is logged and skipped, so one
-        bad uid can't starve the others."""
-        r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": CATCH_UP_LIMIT})
+    async def _page(self, chat: str, starting_after: str = None) -> dict | None:
+        """One page of `chat`, newest first. A busy or failing Plow (429, 5xx)
+        raises into the reconnect loop's backoff; any other refusal (a typo, a
+        re-created group) is logged and skipped so it can't starve the others."""
+        params = {"limit": CATCH_UP_LIMIT, **({"starting_after": starting_after} if starting_after else {})}
+        r = await self.client.get(f"/v1/chats/{chat}/messages", params=params)
+        if r.status_code == 429 or r.status_code >= 500:
+            r.raise_for_status()
         if r.is_error:
             log(f"HTTP {r.status_code} reading chat {chat}; skipped")
+            return None
+        return r.json()
+
+    async def sync(self, chat: str):
+        """Hand the sous every inbound text in `chat` it hasn't seen, oldest
+        first, paging back until it reaches messages it has. The REST record is
+        the source and a socket frame only a doorbell, so live, reconnect and
+        restart share this one path. A chat seen for the first time is only
+        recorded, so its history is never replayed."""
+        page = await self._page(chat)
+        if page is None:
             return
-        messages = r.json()["data"][::-1]  # newest-first → oldest-first
+        newest = page["data"]
         if chat in self.seen:
-            for message in messages:
+            unread = list(newest)
+            while page["has_more"] and not self.seen[chat] & {m["uid"] for m in page["data"]}:
+                page = await self._page(chat, page["data"][-1]["uid"])
+                if page is None:
+                    return
+                unread += page["data"]
+            for message in reversed(unread):  # newest-first → oldest-first
                 if message["uid"] in self.seen[chat]:
                     continue
                 if message["direction"] == "inbound":
@@ -108,8 +125,8 @@ class Bridge:
                 # Recorded only after delivery, so a crash mid-send can't suppress it.
                 self.seen[chat].add(message["uid"])
                 self._save()
-        # Only the page can be read again, so it is all the record needs.
-        self.seen[chat] = {message["uid"] for message in messages}
+        # The next read stops at the newest page, so it is all the record needs.
+        self.seen[chat] = {message["uid"] for message in newest}
         self._save()
 
     async def on_frame(self, message: dict):

@@ -288,7 +288,7 @@ A kitchen whose state dir holds `plow-chat/config.json` also loads the `plow-cha
 
 `config.json` may also set `base_url` (default `https://api.plow.co`). Only texts whose sender **and** chat are both listed reach the sous. The rest are dropped and logged with the chat uid, and `reply` refuses any chat not in `chats`.
 
-**One-time setup for a kitchen.** Run these yourself from a shell, with the kitchen's deployed build already carrying plow-chat and its dependencies. They need `curl` and `jq`, and they keep every token in mode-600 files, never in argv or on screen. The examples use the kitchen `boss`.
+**One-time setup for a kitchen.** Run these yourself from a shell, with the kitchen's deployed build already carrying plow-chat and its dependencies. They need `curl` and `jq`, and they keep every token in mode-600 files, never in argv or on screen. The examples use the kitchen `boss`; substitute the full name `kitchen open` prints (`Kitchen "<name>" is open`), which carries the repo's prefix, so a kitchen `boss` opened in a `widget` repo is `widget-boss`.
 
 1. Make the directory:
 
