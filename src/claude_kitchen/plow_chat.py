@@ -77,8 +77,10 @@ class Bridge:
     seen: dict = field(init=False)
 
     def __post_init__(self):
-        self.seen = {chat: set(uids) for chat, uids in json.loads(self.cursor.read_text()).items()} \
-            if self.cursor.exists() else {}
+        record = json.loads(self.cursor.read_text()) if self.cursor.exists() else {}
+        if not all(isinstance(uids, list) for uids in record.values()):
+            sys.exit(f"plow-chat: {self.cursor} is not a list of message uids per chat; delete it to start fresh")
+        self.seen = {chat: set(uids) for chat, uids in record.items()}
 
     def _save(self):
         atomic_write_json(self.cursor, {chat: sorted(uids) for chat, uids in self.seen.items()})  # mkstemp: mode 600
@@ -108,11 +110,18 @@ class Bridge:
         newest = page["data"]
         if chat in self.seen:
             unread = list(newest)
-            while page["has_more"] and not self.seen[chat] & {m["uid"] for m in page["data"]}:
+            while not (found := bool(self.seen[chat] & {m["uid"] for m in page["data"]})) and page["has_more"]:
                 page = await self._page(chat, page["data"][-1]["uid"])
                 if page is None:
                     return
                 unread += page["data"]
+            if self.seen[chat] and not found:
+                # Every message we recorded has left the history, so "unseen"
+                # would be the whole chat: replaying it to a sous that acts on
+                # texts is the one outcome worse than missing some.
+                log(f"chat {chat}: none of its recorded messages is in its history any more; "
+                    f"recording its {len(unread)} messages WITHOUT delivering them")
+                unread = []
             for message in reversed(unread):  # newest-first → oldest-first
                 if message["uid"] in self.seen[chat]:
                     continue

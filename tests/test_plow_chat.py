@@ -197,6 +197,25 @@ def test_a_transient_plow_error_retries_instead_of_stranding_the_text():
 
     run_bridge(scenario)
 
+
+def test_a_record_that_matches_nothing_in_history_replays_nothing(tmp_path, capsys):
+    """Every recorded message has left the chat's history (or the record is
+    stale): replaying the whole chat to a sous that acts on texts is worse
+    than skipping it, so the chat is re-recorded and only new texts flow."""
+    fake, cursor = FakePlow(), tmp_path / "last_seen.json"
+    for i in range(3):
+        fake.add(HOME, SAM, f"old command {i}")
+    cursor.write_text(json.dumps({HOME: ["msg_long_gone"]}))
+
+    async def scenario(fake, bridge, delivered):
+        await fake.inbound(HOME, SAM, "new text")
+        await eventually(lambda: delivered)
+        await asyncio.sleep(0.2)
+        assert [c for c, _ in delivered] == ["new text"]
+        assert "WITHOUT delivering them" in capsys.readouterr().err
+
+    run_bridge(scenario, fake, cursor)
+
 @pytest.mark.parametrize("mode, token, error", [
     (0o644, TOKEN, "chmod 600"),
     (0o600, "\n", "token is empty"),
