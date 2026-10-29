@@ -8,7 +8,6 @@ import asyncio
 import json
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -53,9 +52,12 @@ def load_config(directory: Path) -> Config:
     mode = token_file.stat().st_mode & 0o777
     if mode != 0o600:
         sys.exit(f"plow-chat: {token_file} is mode {mode:o}; run chmod 600 {token_file}")
+    token = token_file.read_text().strip()
+    if not token:
+        sys.exit(f"plow-chat: {token_file} is empty; write the line's agent token into it")
     raw = json.loads((directory / "config.json").read_text())
     return Config(
-        token=token_file.read_text().strip(),
+        token=token,
         senders=raw["senders"],
         chats=frozenset(raw["chats"]),
         base_url=raw.get("base_url", DEFAULT_BASE_URL),
@@ -67,60 +69,48 @@ class Bridge:
     config: Config
     client: httpx.AsyncClient
     deliver: callable  # async (content, meta) -> None
-    # Per-chat high-water mark: the created_at of the newest message handled,
-    # plus the uids handled at exactly that instant (Plow stamps created_at
-    # with the transaction's now(), so two messages can share one). Persisted
-    # so a restart replays nothing older and misses nothing newer.
+    # Per chat, the uids of every message on the last page read, persisted so
+    # a restart replays nothing and misses nothing that is still on the page.
+    # Uids, not timestamps: inbound created_at is the sender's send time,
+    # outbound is the server's, so a late inbound can sort below our own echo.
     cursor: Path
-    marks: dict = field(init=False)
+    seen: dict = field(init=False)
 
     def __post_init__(self):
-        self.marks = json.loads(self.cursor.read_text()) if self.cursor.exists() else {}
+        self.seen = {chat: set(uids) for chat, uids in json.loads(self.cursor.read_text()).items()} \
+            if self.cursor.exists() else {}
 
-    def _handled(self, chat: str, message: dict) -> bool:
-        mark = self.marks[chat]
-        if not mark["at"]:
-            return False
-        at, then = datetime.fromisoformat(message["created_at"]), datetime.fromisoformat(mark["at"])
-        return at < then or (at == then and message["uid"] in mark["uids"])
-
-    def _advance(self, chat: str, messages: list[dict]):
-        """Move the mark to the newest of `messages`, keeping every uid at that instant."""
-        mark = self.marks.get(chat, {"at": "", "uids": []})
-        for message in messages:
-            if mark["at"] and datetime.fromisoformat(message["created_at"]) == datetime.fromisoformat(mark["at"]):
-                mark["uids"].append(message["uid"])
-            else:
-                mark = {"at": message["created_at"], "uids": [message["uid"]]}
-        self.marks[chat] = mark
-        atomic_write_json(self.cursor, self.marks)  # mkstemp: mode 600
+    def _save(self):
+        atomic_write_json(self.cursor, {chat: sorted(uids) for chat, uids in self.seen.items()})  # mkstemp: mode 600
 
     async def sync(self, chat: str):
-        """Hand the sous every inbound text in `chat` newer than its mark,
-        oldest first. The REST page is the record and a socket frame only a
-        doorbell, so live, reconnect and restart share this one path and an
-        out-of-order frame can't skip a text. A chat with no mark yet is only
-        measured, so its history is never replayed. A chat Plow refuses is
-        logged and skipped, so one bad uid can't starve the others."""
+        """Hand the sous every inbound text in `chat`'s newest page that it
+        hasn't seen, oldest first. The REST page is the record and a socket
+        frame only a doorbell, so live, reconnect and restart share this one
+        path. A chat seen for the first time is only recorded, so its history
+        is never replayed. A chat Plow refuses is logged and skipped, so one
+        bad uid can't starve the others."""
         r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": CATCH_UP_LIMIT})
         if r.is_error:
             log(f"HTTP {r.status_code} reading chat {chat}; skipped")
             return
         messages = r.json()["data"][::-1]  # newest-first → oldest-first
-        if chat not in self.marks:
-            self._advance(chat, messages)
-            return
-        for message in messages:
-            if self._handled(chat, message):
-                continue
-            if message["direction"] == "inbound":
-                name = self.config.senders.get((message.get("sender") or {}).get("provider_key"))
-                if name is None:
-                    log_dropped(message)
-                else:
-                    await self.deliver(message["body"], {"from": name, "chat": chat})
-            # Advanced only after delivery, so a crash mid-send can't suppress it.
-            self._advance(chat, [message])
+        if chat in self.seen:
+            for message in messages:
+                if message["uid"] in self.seen[chat]:
+                    continue
+                if message["direction"] == "inbound":
+                    name = self.config.senders.get((message.get("sender") or {}).get("provider_key"))
+                    if name is None:
+                        log_dropped(message)
+                    else:
+                        await self.deliver(message["body"], {"from": name, "chat": chat})
+                # Recorded only after delivery, so a crash mid-send can't suppress it.
+                self.seen[chat].add(message["uid"])
+                self._save()
+        # Only the page can be read again, so it is all the record needs.
+        self.seen[chat] = {message["uid"] for message in messages}
+        self._save()
 
     async def on_frame(self, message: dict):
         chat = message["chat_uid"]

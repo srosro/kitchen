@@ -154,12 +154,34 @@ def test_texts_stamped_at_the_same_instant_are_each_delivered():
 
     run_bridge(scenario)
 
-def test_load_config_refuses_token_readable_by_others(tmp_path):
+
+def test_a_text_stamped_before_our_own_echo_is_still_delivered():
+    """Inbound created_at is the sender's send time; a text that reaches Plow
+    after the sous's reply echo sorts below it on the page."""
+    async def scenario(fake, bridge, delivered):
+        sent_at = fake.add(OTHER, SAM, "clock reference")["created_at"]  # an instant before the reply
+        await bridge.reply(HOME, "on it")
+        await asyncio.sleep(0.2)  # the echo's frame has been synced
+        await fake.inbound(HOME, SAM, "sent before your reply, landed after", created_at=sent_at)
+        await eventually(lambda: delivered)
+        assert [c for c, _ in delivered] == ["sent before your reply, landed after"]
+
+    run_bridge(scenario)
+
+@pytest.mark.parametrize("mode, token, error", [
+    (0o644, TOKEN, "chmod 600"),
+    (0o600, "\n", "token is empty"),
+], ids=["readable-by-others", "empty"])
+def test_load_config_refuses_a_bad_token_file(tmp_path, mode, token, error):
     (tmp_path / "config.json").write_text(json.dumps({"senders": {SAM: "sam"}, "chats": [HOME]}))
-    token = tmp_path / "token"
-    token.write_text(TOKEN)
-    token.chmod(0o644)
-    with pytest.raises(SystemExit, match="chmod 600"):
+    (tmp_path / "token").write_text(token)
+    (tmp_path / "token").chmod(mode)
+    with pytest.raises(SystemExit, match=error):
         load_config(tmp_path)
-    token.chmod(0o600)
+
+
+def test_load_config_reads_a_private_token(tmp_path):
+    (tmp_path / "config.json").write_text(json.dumps({"senders": {SAM: "sam"}, "chats": [HOME]}))
+    (tmp_path / "token").write_text(TOKEN)
+    (tmp_path / "token").chmod(0o600)
     assert load_config(tmp_path).token == TOKEN

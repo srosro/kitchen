@@ -320,13 +320,13 @@ A kitchen whose state dir holds `plow-chat/config.json` also loads the `plow-cha
    LINE=ln_...   # the uid you picked
    ```
 
-   Create the agent that holds the line, keep its line-scoped token, and discard the account token. A 409 means you already have an agent on that line, so pick another line or remove that agent first.
+   Create the agent that holds the line, keep its line-scoped token, and discard the account token only once the agent token is in hand. A 409 means you already have an agent on that line, so pick another line or remove that agent first.
 
    ```sh
    jq -n --arg line "$LINE" '{line_uid: $line, provider: "self_hosted", name: "boss-sous"}' \
      | curl -fsS -X POST $API/v1/agents -H @account.header -H 'Content-Type: application/json' -d @- \
-     | jq -r .token > token
-   chmod 600 token && rm activation.json account.header
+     | jq -r '.token // empty' > token
+   if [ -s token ]; then chmod 600 token && rm activation.json account.header; else rm token; echo "No agent token; account.header kept for a retry."; fi
    ```
 
 4. First text. Text anything to the line's number from your phone. That opens your 1:1 chat with the line; until the sous is listening, Plow may answer it as unserved. Look up the chat uid and write the config, using your own number in E.164 form:

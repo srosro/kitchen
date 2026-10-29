@@ -80,7 +80,8 @@ class FakePlow:
             await self._broadcast(message)  # Plow echoes the agent's own sends
             return JSONResponse(message, status_code=201)
         limit = int(request.query_params.get("limit", 20))
-        return JSONResponse({"data": self.history[chat][::-1][:limit], "has_more": False})
+        newest_first = sorted(self.history[chat], key=lambda m: m["created_at"], reverse=True)  # as Plow orders
+        return JSONResponse({"data": newest_first[:limit], "has_more": False})
 
     async def _ws(self, websocket):
         await websocket.accept()
