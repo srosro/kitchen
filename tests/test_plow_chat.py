@@ -142,6 +142,18 @@ def test_a_flood_of_dropped_texts_never_replays_old_ones():
 
     run_bridge(scenario)
 
+
+def test_texts_stamped_at_the_same_instant_are_each_delivered():
+    async def scenario(fake, bridge, delivered):
+        first = await fake.inbound(HOME, SAM, "first")
+        await eventually(lambda: delivered)
+        await fake.inbound(HOME, PLUCAS, "same instant", created_at=first["created_at"])
+        await eventually(lambda: len(delivered) == 2)
+        await asyncio.sleep(0.2)
+        assert [c for c, _ in delivered] == ["first", "same instant"]
+
+    run_bridge(scenario)
+
 def test_load_config_refuses_token_readable_by_others(tmp_path):
     (tmp_path / "config.json").write_text(json.dumps({"senders": {SAM: "sam"}, "chats": [HOME]}))
     token = tmp_path / "token"

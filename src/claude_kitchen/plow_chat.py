@@ -67,16 +67,32 @@ class Bridge:
     config: Config
     client: httpx.AsyncClient
     deliver: callable  # async (content, meta) -> None
-    # Per-chat high-water mark, the created_at of the newest message handled,
-    # persisted so a restart replays nothing older and misses nothing newer.
+    # Per-chat high-water mark: the created_at of the newest message handled,
+    # plus the uids handled at exactly that instant (Plow stamps created_at
+    # with the transaction's now(), so two messages can share one). Persisted
+    # so a restart replays nothing older and misses nothing newer.
     cursor: Path
     marks: dict = field(init=False)
 
     def __post_init__(self):
         self.marks = json.loads(self.cursor.read_text()) if self.cursor.exists() else {}
 
-    def _advance(self, chat: str, created_at: str):
-        self.marks[chat] = created_at
+    def _handled(self, chat: str, message: dict) -> bool:
+        mark = self.marks[chat]
+        if not mark["at"]:
+            return False
+        at, then = datetime.fromisoformat(message["created_at"]), datetime.fromisoformat(mark["at"])
+        return at < then or (at == then and message["uid"] in mark["uids"])
+
+    def _advance(self, chat: str, messages: list[dict]):
+        """Move the mark to the newest of `messages`, keeping every uid at that instant."""
+        mark = self.marks.get(chat, {"at": "", "uids": []})
+        for message in messages:
+            if mark["at"] and datetime.fromisoformat(message["created_at"]) == datetime.fromisoformat(mark["at"]):
+                mark["uids"].append(message["uid"])
+            else:
+                mark = {"at": message["created_at"], "uids": [message["uid"]]}
+        self.marks[chat] = mark
         atomic_write_json(self.cursor, self.marks)  # mkstemp: mode 600
 
     async def sync(self, chat: str):
@@ -92,11 +108,10 @@ class Bridge:
             return
         messages = r.json()["data"][::-1]  # newest-first → oldest-first
         if chat not in self.marks:
-            self._advance(chat, messages[-1]["created_at"] if messages else "")
+            self._advance(chat, messages)
             return
-        mark = self.marks[chat]
         for message in messages:
-            if mark and datetime.fromisoformat(message["created_at"]) <= datetime.fromisoformat(mark):
+            if self._handled(chat, message):
                 continue
             if message["direction"] == "inbound":
                 name = self.config.senders.get((message.get("sender") or {}).get("provider_key"))
@@ -105,7 +120,7 @@ class Bridge:
                 else:
                     await self.deliver(message["body"], {"from": name, "chat": chat})
             # Advanced only after delivery, so a crash mid-send can't suppress it.
-            self._advance(chat, message["created_at"])
+            self._advance(chat, [message])
 
     async def on_frame(self, message: dict):
         chat = message["chat_uid"]

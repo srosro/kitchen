@@ -29,21 +29,23 @@ class FakePlow:
             WebSocketRoute("/v1/ws", self._ws),
         ])
 
-    def _message(self, chat, direction, body, handle=None):
+    def _message(self, chat, direction, body, handle=None, created_at=None):
         sender = {"type": "member", "provider_key": handle} if handle else {"type": "agent"}
         n = next(self._uids)
         message = {"uid": f"msg_{n}", "chat_uid": chat, "direction": direction, "body": body,
-                   "sender": sender, "created_at": (self._epoch + timedelta(milliseconds=n)).isoformat()}
+                   "sender": sender,
+                   "created_at": created_at or (self._epoch + timedelta(milliseconds=n)).isoformat()}
         self.history[chat].append(message)
         return message
 
-    def add(self, chat, handle, body):
-        """A member's text lands while no socket hears it."""
-        return self._message(chat, "inbound", body, handle)
+    def add(self, chat, handle, body, created_at=None):
+        """A member's text lands while no socket hears it. Pass `created_at`
+        to stamp it at an existing instant, as one Plow transaction does."""
+        return self._message(chat, "inbound", body, handle, created_at)
 
-    async def inbound(self, chat, handle, body):
+    async def inbound(self, chat, handle, body, created_at=None):
         """A member texts the line, and every open socket hears it."""
-        message = self.add(chat, handle, body)
+        message = self.add(chat, handle, body, created_at)
         await self._broadcast(message)
         return message
 
