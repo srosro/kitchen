@@ -288,6 +288,58 @@ A kitchen whose state dir holds `plow-chat/config.json` also loads the `plow-cha
 
 `config.json` may also set `base_url` (default `https://api.plow.co`). Only texts whose sender **and** chat are both listed reach the sous. The rest are dropped and logged with the chat uid, and `reply` refuses any chat not in `chats`.
 
+**One-time setup for a kitchen.** Run these yourself from a shell, with the kitchen's deployed build already carrying plow-chat and its dependencies. They need `curl` and `jq`, and they keep every token in mode-600 files, never in argv or on screen. The examples use the kitchen `boss`.
+
+1. Make the directory:
+
+   ```sh
+   mkdir -p -m 700 ~/.claude-kitchen/boss/plow-chat && cd ~/.claude-kitchen/boss/plow-chat && umask 077
+   API=https://api.plow.co
+   ```
+
+2. Activation text. This prints the exact text and number. Send it from your phone:
+
+   ```sh
+   curl -fsS -X POST $API/v1/auth/activate -H 'Content-Type: application/json' -d '{}' > activation.json
+   jq -r '"Text \"Plow Activate: \(.display_code)\" to \(.send_to)"' activation.json
+   ```
+
+   Once it is sent, store your account token. Plow returns it only once, and the command says `still pending` if your text hasn't landed yet:
+
+   ```sh
+   jq '{activation_secret}' activation.json \
+     | curl -fsS -X POST $API/v1/auth/activate/redeem -H 'Content-Type: application/json' -d @- \
+     | jq -r 'if .status == "verified" then "Authorization: Bearer \(.token)" else error("still \(.status)") end' > account.header
+   ```
+
+3. Line choice. List the free iMessage lines and pick one:
+
+   ```sh
+   curl -fsS $API/v1/lines -H @account.header \
+     | jq -r '.data[] | select(.provider_type == "imessage" and .available) | "\(.uid)  \(.provider_key)"'
+   LINE=ln_...   # the uid you picked
+   ```
+
+   Create the agent that holds the line, keep its line-scoped token, and discard the account token. A 409 means you already have an agent on that line, so pick another line or remove that agent first.
+
+   ```sh
+   jq -n --arg line "$LINE" '{line_uid: $line, provider: "self_hosted", name: "boss-sous"}' \
+     | curl -fsS -X POST $API/v1/agents -H @account.header -H 'Content-Type: application/json' -d @- \
+     | jq -r .token > token
+   chmod 600 token && rm activation.json account.header
+   ```
+
+4. First text. Text anything to the line's number from your phone. That opens your 1:1 chat with the line; until the sous is listening, Plow may answer it as unserved. Look up the chat uid and write the config, using your own number in E.164 form:
+
+   ```sh
+   printf 'Authorization: Bearer %s\n' "$(cat token)" > agent.header
+   curl -fsS $API/v1/chats -H @agent.header | jq -r '.data[] | "\(.uid)  \(.display_name // "")"'
+   rm agent.header
+   printf '{"senders": {"%s": "sam"}, "chats": ["%s"]}\n' "+1YOURNUMBER" "cht_..." > config.json
+   ```
+
+5. Sous restart. Exit the running sous (`/exit`), then from the project root run `kitchen open --resume boss`. The sous now loads `server:plow-chat`. Text the line once more: the text arrives as a `plow-chat` tag, and the reply comes back to your phone.
+
 **Adding someone who doesn't own the line.** Plow opens a 1:1 chat only for the line's owner. Anyone else reaches the line through a group: the owner starts an iMessage group containing that person and the line's number, and someone in it texts. Plow creates the chat on that first message (the owner doesn't have to be the one who speaks), and the line's agent token already covers chats created on its line later. Then:
 
 1. Text the group once. That message is dropped, and the log line `plow-chat: dropped msg_…: … in chat cht_… is not allowlisted` names the new chat uid.
