@@ -134,8 +134,11 @@ class Bridge:
                 log("socket closed")
             except httpx.HTTPStatusError as e:
                 log(f"HTTP {e.response.status_code} from {e.request.url.path}")
-            except (OSError, httpx.HTTPError, websockets.WebSocketException) as e:
-                log(f"connection lost ({type(e).__name__})")
+            except Exception as e:
+                # Any failure — a dropped socket or a frame we can't parse —
+                # reconnects; the supervisor is a detached task and must
+                # never die quietly while the sous waits for texts.
+                log(f"reconnecting after {type(e).__name__}: {e}")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, MAX_BACKOFF)
 
