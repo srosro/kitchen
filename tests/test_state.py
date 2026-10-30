@@ -265,3 +265,5 @@ def test_optional_channels_load_only_for_the_kitchen_holding_their_credential(tm
         assert servers["plow-chat"] == {"command": "kitchen", "args": ["plow-chat-server", "boss"]}
     if "discord" in servers:
         assert servers["discord"]["env"] == {"DISCORD_STATE_DIR": str(state_dir("boss") / "discord"), "DISCORD_ACCESS_MODE": "static"}
+        plugin = Path(servers["discord"]["args"][2])
+        assert (plugin / "server.ts").is_file() and json.loads((plugin / "package.json").read_text())["scripts"]["start"]

@@ -15,3 +15,6 @@ docs/
 --full-page
 redesign-*.png
 .kata.local.toml
+
+# bun install target of the vendored Discord channel server
+src/claude_kitchen/discord/node_modules/

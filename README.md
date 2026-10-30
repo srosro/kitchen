@@ -292,7 +292,7 @@ Then restart the sous: `/exit`, then `kitchen open --resume boss` from the proje
 
 ## Messaging the sous on Discord
 
-A kitchen whose state dir holds `discord/.env` also loads the official Discord channel plugin's server, run with [Bun](https://bun.sh) from the `claude-plugins-official` marketplace checkout. Unlike plow-chat it is allowlisted: the server runs in static access mode, so only the Discord user IDs in `discord/access.json` at boot are heard, and pairing is off. Create the bot per the plugin's README (enable Message Content Intent, turn Public Bot off, invite it to a private server), then:
+A kitchen whose state dir holds `discord/.env` also loads the official Discord channel plugin's server, run with [Bun](https://bun.sh) from the copy vendored at `src/claude_kitchen/discord` (version 0.0.4, pinned so it changes only through review). Unlike plow-chat it is allowlisted: the server runs in static access mode, so only the Discord user IDs in `discord/access.json` at boot are heard, and pairing is off. Create the bot per the plugin's README (enable Message Content Intent, turn Public Bot off, invite it to a private server), then:
 
 ```sh
 mkdir -p -m 700 ~/.claude-kitchen/widget-boss/discord

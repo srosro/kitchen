@@ -21,7 +21,9 @@ MCP_CONFIG_NAME = "kitchen-mcp.json"
 # config.
 LEGACY_MCP_CONFIG_NAME = ".mcp.json"
 
-DISCORD_PLUGIN = Path.home() / ".claude/plugins/marketplaces/claude-plugins-official/external_plugins/discord"
+# The official discord@claude-plugins-official channel server, vendored at
+# 0.0.4 so the code a permission-bypassing sous runs only changes in review.
+DISCORD_PLUGIN = Path(__file__).parent / "discord"
 
 
 def state_root() -> Path:
