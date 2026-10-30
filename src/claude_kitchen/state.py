@@ -22,7 +22,9 @@ MCP_CONFIG_NAME = "kitchen-mcp.json"
 LEGACY_MCP_CONFIG_NAME = ".mcp.json"
 
 # The official discord@claude-plugins-official channel server, vendored at
-# 0.0.4 so the code a permission-bypassing sous runs only changes in review.
+# plugin version 0.0.4 (its package.json still reads 0.0.1) so the code a
+# permission-bypassing sous runs only changes in review. bunfig.toml freezes
+# installs to the vendored bun.lock.
 DISCORD_PLUGIN = Path(__file__).parent / "discord"
 
 
