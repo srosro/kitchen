@@ -20,6 +20,7 @@ class FakePlow:
         self.history = defaultdict(list)  # chat -> messages, oldest first
         self.sent = []  # (chat, body) the agent posted
         self.sockets = []
+        self.flaky = set()  # chats whose next read answers 503
         self._uids = itertools.count(1)
         self.app = Starlette(routes=[
             Route("/v1/ws/ticket", self._ticket, methods=["POST"]),
@@ -27,19 +28,20 @@ class FakePlow:
             WebSocketRoute("/v1/ws", self._ws),
         ])
 
-    def _message(self, chat, body, handle=None):
+    def _message(self, chat, body, handle=None, late=False):
         sender = {"type": "member", "display_name": NAMES.get(handle, handle), "provider_key": handle} if handle else {"type": "agent"}
         message = {"uid": f"msg_{next(self._uids)}", "chat_uid": chat, "body": body, "sender": sender}
-        self.history[chat].append(message)
+        # A late text was sent before the newest one, so Plow sorts it below it.
+        self.history[chat].insert(len(self.history[chat]) - late, message)
         return message
 
-    def add(self, chat, handle, body):
+    def add(self, chat, handle, body, late=False):
         """A member's text lands while no socket hears it."""
-        return self._message(chat, body, handle)
+        return self._message(chat, body, handle, late)
 
-    async def inbound(self, chat, handle, body):
+    async def inbound(self, chat, handle, body, late=False):
         """A member texts the line, and every open socket hears it."""
-        message = self.add(chat, handle, body)
+        message = self.add(chat, handle, body, late)
         await self._broadcast(message)
         return message
 
@@ -64,6 +66,9 @@ class FakePlow:
         if not self._authorized(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         chat = request.path_params["chat"]
+        if chat in self.flaky and request.method == "GET":
+            self.flaky.discard(chat)
+            return JSONResponse({"error": "unavailable"}, status_code=503)
         if request.method == "POST":
             body = (await request.json())["body"]
             self.sent.append((chat, body))
@@ -81,7 +86,7 @@ class FakePlow:
             while True:
                 await websocket.receive_text()
         except WebSocketDisconnect:
-            pass
+            self.sockets = [ws for ws in self.sockets if ws is not websocket]
 
     async def serve(self):
         """Start on a free localhost port; returns (base_url, uvicorn server)."""

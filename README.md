@@ -266,7 +266,7 @@ The root sous's own Stop hook does not notify its own socket, preventing an echo
 │   ├── sous.pid              # duplicate-sous guard
 │   ├── cooks/<name>.json     # backend, status, response, session, context
 │   ├── codex-home/           # clean-room Codex homes, when used
-│   ├── plow-chat/            # optional: plow-credentials (600), last_uid.json
+│   ├── plow-chat/            # optional: plow-credentials (600), last_seen.json
 │   └── notes/                # handoff, log, and long task briefs
 └── projects/<slug>/wiki/
     ├── mistakes.md           # durable lessons

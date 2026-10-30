@@ -30,7 +30,7 @@ def run_bridge(scenario, fake=None, cursor=None):
     supervisor live against `fake` (a fresh one by default). Pass the same
     fake and cursor twice to restart the server against the same chat."""
     fake = fake or FakePlow()
-    cursor = cursor or Path(tempfile.mkdtemp()) / "last_uid.json"
+    cursor = cursor or Path(tempfile.mkdtemp()) / "last_seen.json"
 
     async def main():
         base_url, server = await fake.serve()
@@ -89,7 +89,7 @@ def test_reconnect_catches_up_without_duplicates():
 
 
 def test_restart_delivers_texts_sent_while_down_exactly_once(tmp_path):
-    fake, cursor = FakePlow(), tmp_path / "last_uid.json"
+    fake, cursor = FakePlow(), tmp_path / "last_seen.json"
 
     async def before_restart(fake, bridge, delivered):
         await fake.inbound(HOME, SAM, "before restart")
@@ -104,6 +104,39 @@ def test_restart_delivers_texts_sent_while_down_exactly_once(tmp_path):
     fake.add(HOME, SAM, "while down")
     run_bridge(after_restart, fake, cursor)
     assert cursor.stat().st_mode & 0o777 == 0o600
+
+
+def test_a_late_text_never_replays_an_earlier_one_after_restart(tmp_path):
+    fake, cursor = FakePlow(), tmp_path / "last_seen.json"
+
+    async def before_restart(fake, bridge, delivered):
+        await fake.inbound(HOME, SAM, "sent second, landed first")
+        await fake.inbound(HOME, PLUCAS, "sent first, landed second", late=True)
+        await eventually(lambda: len(delivered) == 2)
+
+    async def after_restart(fake, bridge, delivered):
+        await fake.inbound(HOME, SAM, "marker")
+        await eventually(lambda: delivered)
+        await asyncio.sleep(0.2)
+        assert [c for c, _ in delivered] == ["marker"]
+
+    run_bridge(before_restart, fake, cursor)
+    run_bridge(after_restart, fake, cursor)
+
+
+def test_a_transient_catch_up_error_retries_instead_of_stranding_the_gap():
+    async def scenario(fake, bridge, delivered):
+        await fake.inbound(HOME, SAM, "before")
+        await eventually(lambda: delivered)
+        await fake.drop_sockets()
+        fake.add(HOME, SAM, "during the gap")
+        fake.flaky.add(HOME)  # the catch-up after this reconnect answers 503
+        await eventually(lambda: len(delivered) == 2)  # caught up on the retry
+        await fake.inbound(HOME, SAM, "after")
+        await eventually(lambda: "after" in [c for c, _ in delivered])
+        await asyncio.sleep(0.2)
+        assert [c for c, _ in delivered] == ["before", "during the gap", "after"]
+    run_bridge(scenario)
 
 
 def test_reads_the_credential_file_plow_agents_mint_writes(tmp_path):

@@ -9,7 +9,6 @@ import asyncio
 import json
 import sys
 from dataclasses import dataclass, field
-from itertools import takewhile
 from pathlib import Path
 
 import httpx
@@ -23,6 +22,7 @@ from claude_kitchen.state import atomic_write_json, plow_chat_dir
 
 CREDENTIALS = "plow-credentials"  # written mode 600 by `plow-agents mint LINE --credential-file`
 RECONNECT_DELAY = 5
+PAGE = 50
 
 
 def log(msg: str):
@@ -39,33 +39,39 @@ def read_credentials(directory: Path) -> dict:
 class Bridge:
     client: httpx.AsyncClient
     deliver: callable  # async (content, meta) -> None
-    cursor: Path  # chat -> uid of the last message taken, so a restart replays nothing
-    last: dict = field(init=False)
-    taken: set = field(default_factory=set)  # uids taken this run: socket and catch-up overlap
+    # Chat -> uids of its latest messages taken, persisted so neither the
+    # socket/catch-up overlap nor a restart takes one twice. Uids, not a
+    # high-water mark: a text sent earlier can land later and sort below one
+    # already taken.
+    cursor: Path
+    taken: dict = field(init=False)
 
     def __post_init__(self):
-        self.last = json.loads(self.cursor.read_text()) if self.cursor.exists() else {}
+        self.taken = json.loads(self.cursor.read_text()) if self.cursor.exists() else {}
 
     async def take(self, message: dict):
         """Hand a member's text to the sous once; our own sends and Plow's
         system notes are only recorded."""
-        if message["uid"] in self.taken:
+        uids = self.taken.setdefault(message["chat_uid"], [])
+        if message["uid"] in uids:
             return
-        self.taken.add(message["uid"])
         if message["sender"]["type"] == "member":
             await self.deliver(message["body"], {"from": message["sender"]["display_name"], "chat": message["chat_uid"]})
-        self.last[message["chat_uid"]] = message["uid"]  # after delivery, so a crash mid-send can't suppress it
-        atomic_write_json(self.cursor, self.last)
+        uids.append(message["uid"])  # after delivery, so a crash mid-send can't suppress it
+        del uids[:-2 * PAGE]
+        atomic_write_json(self.cursor, self.taken)
 
     async def catch_up(self, chat: str):
-        """Take what reached `chat` while the socket was down: Plow pages only
-        backwards, so read the newest page back to the last uid taken. A gap of
-        more than one page loses its oldest texts."""
-        r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": 50})
+        """Take what reached `chat` while the socket was down, from its newest
+        page: Plow pages only backwards. A gap of more than one page loses its
+        oldest texts. A busy or failing Plow raises into the reconnect retry."""
+        r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": PAGE})
+        if r.status_code == 429 or r.status_code >= 500:
+            r.raise_for_status()
         if r.is_error:
             log(f"HTTP {r.status_code} reading chat {chat}; skipped")
             return
-        for message in reversed(list(takewhile(lambda m: m["uid"] != self.last[chat], r.json()["data"]))):
+        for message in reversed(r.json()["data"]):
             await self.take(message)
 
     async def reply(self, chat: str, text: str) -> str:
@@ -85,7 +91,7 @@ class Bridge:
                 r = await self.client.post("/v1/ws/ticket", json={})
                 r.raise_for_status()
                 async with websockets.connect(f"{ws_url}?ticket={r.json()['ticket']}") as ws:
-                    for chat in list(self.last):
+                    for chat in list(self.taken):
                         await self.catch_up(chat)
                     log("connected")
                     async for raw in ws:
@@ -137,7 +143,7 @@ async def run_server(kitchen: str):
     headers = {"Authorization": f"Bearer {credentials['PLOW_AGENT_TOKEN']}"}
     async with httpx.AsyncClient(base_url=credentials["PLOW_API_BASE"], headers=headers, timeout=30) as client, \
             stdio_server() as (read_stream, write_stream):
-        bridge = Bridge(client, lambda content, meta: push(write_stream, content, meta), directory / "last_uid.json")
+        bridge = Bridge(client, lambda content, meta: push(write_stream, content, meta), directory / "last_seen.json")
         supervisor = asyncio.create_task(bridge.run())
         try:
             await server.run(read_stream, write_stream, init_options)
