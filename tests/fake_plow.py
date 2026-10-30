@@ -4,7 +4,6 @@ import asyncio
 import itertools
 import socket
 from collections import defaultdict
-from datetime import UTC, datetime, timedelta
 
 import uvicorn
 from starlette.applications import Starlette
@@ -21,40 +20,32 @@ class FakePlow:
         self.history = defaultdict(list)  # chat -> messages, oldest first
         self.sent = []  # (chat, body) the agent posted
         self.sockets = []
-        self.missing = set()  # chats that answer 404, as a deleted or mistyped uid does
-        self.flaky = set()  # chats whose next read answers 503
         self._uids = itertools.count(1)
-        self._epoch = datetime.now(UTC)
         self.app = Starlette(routes=[
             Route("/v1/ws/ticket", self._ticket, methods=["POST"]),
             Route("/v1/chats/{chat}/messages", self._messages, methods=["GET", "POST"]),
             WebSocketRoute("/v1/ws", self._ws),
         ])
 
-    def _message(self, chat, direction, body, handle=None, created_at=None):
+    def _message(self, chat, body, handle=None):
         sender = {"type": "member", "display_name": NAMES.get(handle, handle), "provider_key": handle} if handle else {"type": "agent"}
-        n = next(self._uids)
-        message = {"uid": f"msg_{n}", "chat_uid": chat, "direction": direction, "body": body,
-                   "sender": sender,
-                   "created_at": created_at or (self._epoch + timedelta(milliseconds=n)).isoformat()}
+        message = {"uid": f"msg_{next(self._uids)}", "chat_uid": chat, "body": body, "sender": sender}
         self.history[chat].append(message)
         return message
 
-    def add(self, chat, handle, body, created_at=None):
-        """A member's text lands while no socket hears it. Pass `created_at`
-        to stamp it at an existing instant, as one Plow transaction does."""
-        return self._message(chat, "inbound", body, handle, created_at)
+    def add(self, chat, handle, body):
+        """A member's text lands while no socket hears it."""
+        return self._message(chat, body, handle)
 
-    async def inbound(self, chat, handle, body, created_at=None):
+    async def inbound(self, chat, handle, body):
         """A member texts the line, and every open socket hears it."""
-        message = self.add(chat, handle, body, created_at)
+        message = self.add(chat, handle, body)
         await self._broadcast(message)
         return message
 
     async def _broadcast(self, message):
         for ws in list(self.sockets):
-            await ws.send_json({"event_type": "message_received", "chat_id": message["chat_uid"],
-                                "data": {"type": "message_received", "message": message}})
+            await ws.send_json({"event_type": "message_received", "data": {"message": message}})
 
     async def drop_sockets(self):
         for ws in list(self.sockets):
@@ -73,23 +64,14 @@ class FakePlow:
         if not self._authorized(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         chat = request.path_params["chat"]
-        if chat in self.missing:
-            return JSONResponse({"error": "not_found"}, status_code=404)
-        if chat in self.flaky and request.method == "GET":
-            self.flaky.discard(chat)
-            return JSONResponse({"error": "unavailable"}, status_code=503)
         if request.method == "POST":
             body = (await request.json())["body"]
             self.sent.append((chat, body))
-            message = self._message(chat, "outbound", body)
+            message = self._message(chat, body)
             await self._broadcast(message)  # Plow echoes the agent's own sends
             return JSONResponse(message, status_code=201)
         limit = int(request.query_params.get("limit", 20))
-        newest_first = sorted(self.history[chat], key=lambda m: m["created_at"], reverse=True)  # as Plow orders
-        after = request.query_params.get("starting_after")
-        if after:
-            newest_first = newest_first[[m["uid"] for m in newest_first].index(after) + 1:]
-        return JSONResponse({"data": newest_first[:limit], "has_more": len(newest_first) > limit})
+        return JSONResponse({"data": self.history[chat][::-1][:limit]})  # newest first, as Plow orders
 
     async def _ws(self, websocket):
         await websocket.accept()

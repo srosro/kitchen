@@ -266,7 +266,7 @@ The root sous's own Stop hook does not notify its own socket, preventing an echo
 │   ├── sous.pid              # duplicate-sous guard
 │   ├── cooks/<name>.json     # backend, status, response, session, context
 │   ├── codex-home/           # clean-room Codex homes, when used
-│   ├── plow-chat/            # optional: token (600), last_seen.json
+│   ├── plow-chat/            # optional: plow-credentials (600), last_uid.json
 │   └── notes/                # handoff, log, and long task briefs
 └── projects/<slug>/wiki/
     ├── mistakes.md           # durable lessons
@@ -277,60 +277,18 @@ The root sous's own Stop hook does not notify its own socket, preventing an echo
 
 ## Texting the sous (plow-chat)
 
-A kitchen whose state dir holds `plow-chat/token` also loads the `plow-chat` channel when `kitchen open` starts its sous. Texts to a Plow line then arrive as `<channel source="plow-chat" from="<name>" chat="<chat uid>">`, and the sous answers with its `reply` tool. Kitchens without that file are unchanged.
+A kitchen whose state dir holds `plow-chat/plow-credentials` also loads the `plow-chat` channel when `kitchen open` starts its sous. Texts to that Plow line arrive as `<channel source="plow-chat" from="<name>" chat="<chat uid>">`, and the sous answers with its `reply` tool. There is no allowlist: Plow delivers only chats the line's account owns, meaning the owner's 1:1 and any iMessage group the owner was in when its first text arrived. Every member of those chats speaks with head-chef authority. Anyone who has both numbers can start such a group, so the owner should treat every group with the line as trusted.
 
-```text
-~/.claude-kitchen/<kitchen>/plow-chat/
-├── token            # the line's agent token, chmod 600; the server refuses anything looser
-└── last_seen.json   # per-chat high-water mark; texts sent while the sous was down arrive on restart
+**Setup**, using [`plow-agents`](https://github.com/plow-pbc/plow-agents#quickstart) and the kitchen name `kitchen open` prints (a kitchen `boss` opened in a `widget` repo is `widget-boss`):
+
+```sh
+plow-agents login                 # text the printed phrase from your phone
+plow-agents lines                 # pick a free line
+mkdir -p -m 700 ~/.claude-kitchen/boss/plow-chat
+plow-agents mint ln_... --credential-file ~/.claude-kitchen/boss/plow-chat/plow-credentials
 ```
 
-There is no allowlist: the sous hears every chat Plow delivers, and every member of it, with head-chef authority, named by `from` as Plow names them. Plow delivers only the chats the line's account owns. Those are the owner's 1:1 with the line (a 1:1 from anyone else is never created) and any iMessage group the owner was in when its first text arrived. Plow matches the owner by phone number, so nobody else can pose as them. Anyone who has both numbers, though, can start a group with the owner and the line, and that group is served too.
-
-**One-time setup for a kitchen.** Run these yourself from a shell, with the kitchen's deployed build already carrying plow-chat and its dependencies. They need `curl` and `jq`, and they keep every token in mode-600 files, never in argv or on screen. The examples use the kitchen `boss`; substitute the full name `kitchen open` prints (`Kitchen "<name>" is open`), which carries the repo's prefix, so a kitchen `boss` opened in a `widget` repo is `widget-boss`.
-
-1. Make the directory:
-
-   ```sh
-   mkdir -p -m 700 ~/.claude-kitchen/boss/plow-chat && cd ~/.claude-kitchen/boss/plow-chat && umask 077
-   API=https://api.plow.co
-   ```
-
-2. Activation text. This prints the exact text and number. Send it from your phone:
-
-   ```sh
-   curl -fsS -X POST $API/v1/auth/activate -H 'Content-Type: application/json' -d '{}' > activation.json
-   jq -r '"Text \"Plow Activate: \(.display_code)\" to \(.send_to)"' activation.json
-   ```
-
-   Once it is sent, store your account token. Plow returns it only once, and the command says `still pending` if your text hasn't landed yet:
-
-   ```sh
-   jq '{activation_secret}' activation.json \
-     | curl -fsS -X POST $API/v1/auth/activate/redeem -H 'Content-Type: application/json' -d @- \
-     | jq -r 'if .status == "verified" then "Authorization: Bearer \(.token)" else error("still \(.status)") end' > account.header
-   ```
-
-3. Line choice. List the free iMessage lines and pick one:
-
-   ```sh
-   curl -fsS $API/v1/lines -H @account.header \
-     | jq -r '.data[] | select(.provider_type == "imessage" and .available) | "\(.uid)  \(.provider_key)"'
-   LINE=ln_...   # the uid you picked
-   ```
-
-   Create the agent that holds the line, keep its line-scoped token, and discard the account token only once the agent token is in hand. A 409 means you already have an agent on that line, so pick another line or remove that agent first.
-
-   ```sh
-   jq -n --arg line "$LINE" '{line_uid: $line, provider: "self_hosted", name: "boss-sous"}' \
-     | curl -fsS -X POST $API/v1/agents -H @account.header -H 'Content-Type: application/json' -d @- \
-     | jq -r '.token // empty' > token
-   if [ -s token ]; then chmod 600 token && rm activation.json account.header; else rm token; echo "No agent token; account.header kept for a retry."; fi
-   ```
-
-4. Sous restart. Exit the running sous (`/exit`), then from the project root run `kitchen open --resume boss`. The sous now loads `server:plow-chat`. Text the line from your phone: the text arrives as a `plow-chat` tag, and the reply comes back to your phone.
-
-**Adding someone who doesn't own the line.** Plow opens a 1:1 chat only for the line's owner. Anyone else reaches the line through a group: the owner starts an iMessage group containing that person and the line's number. The group's first text, from anyone in it, reaches the sous with no config change and no restart. The owner stays in the group, so they see every exchange between the sous and the collaborator.
+Then restart the sous: `/exit`, then `kitchen open --resume boss` from the project root. Text the line to check it. A new group needs no setup: add the line's number to it.
 
 ## Customize the workflow
 

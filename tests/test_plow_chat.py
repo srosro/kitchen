@@ -1,17 +1,22 @@
 """Tests for the plow-chat channel server, against a fake Plow API."""
 import asyncio
-import json
 import tempfile
 from pathlib import Path
 
 import httpx
 import pytest
 
-from claude_kitchen.plow_chat import Bridge, Config, load_config
+from claude_kitchen import plow_chat
+from claude_kitchen.plow_chat import Bridge, read_credentials
 from tests.fake_plow import TOKEN, FakePlow
 
 SAM, PLUCAS, STRANGER = "+15550000001", "+15550000002", "+15550000099"
-HOME, OTHER, GONE = "cht_home", "cht_other", "cht_gone"
+HOME = "cht_home"
+
+
+@pytest.fixture(autouse=True)
+def quick_reconnect(monkeypatch):
+    monkeypatch.setattr(plow_chat, "RECONNECT_DELAY", 0.05)
 
 
 async def eventually(predicate, timeout=5):
@@ -25,18 +30,17 @@ def run_bridge(scenario, fake=None, cursor=None):
     supervisor live against `fake` (a fresh one by default). Pass the same
     fake and cursor twice to restart the server against the same chat."""
     fake = fake or FakePlow()
-    cursor = cursor or Path(tempfile.mkdtemp()) / "last_seen.json"
+    cursor = cursor or Path(tempfile.mkdtemp()) / "last_uid.json"
 
     async def main():
         base_url, server = await fake.serve()
-        config = Config(token=TOKEN, base_url=base_url)
         delivered = []
 
         async def deliver(content, meta):
             delivered.append((content, meta))
 
         async with httpx.AsyncClient(base_url=base_url, headers={"Authorization": f"Bearer {TOKEN}"}) as client:
-            bridge = Bridge(config, client, deliver, cursor)
+            bridge = Bridge(client, deliver, cursor)
             supervisor = asyncio.create_task(bridge.run())
             await eventually(lambda: fake.sockets)
             try:
@@ -48,23 +52,15 @@ def run_bridge(scenario, fake=None, cursor=None):
 
 
 @pytest.mark.parametrize("handle, name", [(PLUCAS, "Patrick"), (STRANGER, STRANGER)], ids=["named", "unnamed"])
-def test_any_member_is_delivered_by_name(handle, name):
+def test_any_member_is_delivered_by_name_without_the_chats_history(handle, name):
     async def scenario(fake, bridge, delivered):
         await fake.inbound(HOME, handle, "can you look at the mba?")
         await eventually(lambda: delivered)
-        assert delivered == [("can you look at the mba?", {"from": name, "chat": HOME})]
-    run_bridge(scenario)
-
-
-def test_a_new_chat_delivers_its_first_text_without_its_history():
-    async def scenario(fake, bridge, delivered):
-        await fake.inbound("cht_new_group", PLUCAS, "hi from the new group")
-        await eventually(lambda: delivered)
         await asyncio.sleep(0.2)
-        assert delivered == [("hi from the new group", {"from": "Patrick", "chat": "cht_new_group"})]
+        assert delivered == [("can you look at the mba?", {"from": name, "chat": HOME})]
 
     fake = FakePlow()
-    fake.add("cht_new_group", SAM, "said before the sous was listening")
+    fake.add(HOME, SAM, "said before the sous was listening")
     run_bridge(scenario, fake)
 
 
@@ -74,13 +70,13 @@ def test_reply_sends_and_its_echo_never_reaches_the_sous():
         assert fake.sent == [(HOME, "on it")]
         await fake.inbound(HOME, SAM, "marker")
         await eventually(lambda: delivered)
-        assert [c for c, _ in delivered] == ["marker"], "the reply's outbound echo must not reach the sous"
+        assert [c for c, _ in delivered] == ["marker"]
     run_bridge(scenario)
 
 
-def test_reconnect_catches_up_without_replay_or_duplicates():
+def test_reconnect_catches_up_without_duplicates():
     async def scenario(fake, bridge, delivered):
-        await fake.inbound(HOME, SAM, "before")  # live, delivered once
+        await fake.inbound(HOME, SAM, "before")
         await eventually(lambda: delivered)
         await fake.drop_sockets()
         fake.add(HOME, SAM, "during the gap")
@@ -89,14 +85,11 @@ def test_reconnect_catches_up_without_replay_or_duplicates():
         await eventually(lambda: len(delivered) == 3)
         await asyncio.sleep(0.2)
         assert [c for c, _ in delivered] == ["before", "during the gap", "after"]
-
-    fake = FakePlow()
-    fake.add(HOME, SAM, "history from last week")  # a first-ever start must not replay it
-    run_bridge(scenario, fake)
+    run_bridge(scenario)
 
 
 def test_restart_delivers_texts_sent_while_down_exactly_once(tmp_path):
-    fake, cursor = FakePlow(), tmp_path / "last_seen.json"
+    fake, cursor = FakePlow(), tmp_path / "last_uid.json"
 
     async def before_restart(fake, bridge, delivered):
         await fake.inbound(HOME, SAM, "before restart")
@@ -113,111 +106,7 @@ def test_restart_delivers_texts_sent_while_down_exactly_once(tmp_path):
     assert cursor.stat().st_mode & 0o777 == 0o600
 
 
-
-def test_a_chat_plow_refuses_is_skipped_and_logged(tmp_path, capsys):
-    fake, cursor = FakePlow(), tmp_path / "last_seen.json"
-    fake.missing.add(GONE)
-    cursor.write_text(json.dumps({GONE: ["msg_1"]}))  # read before, deleted since
-
-    async def scenario(fake, bridge, delivered):
-        await fake.inbound(HOME, SAM, "still reachable")
-        await eventually(lambda: delivered)
-        assert f"HTTP 404 reading chat {GONE}; skipped" in capsys.readouterr().err
-
-    run_bridge(scenario, fake, cursor)
-
-
-def test_texts_stamped_at_the_same_instant_are_each_delivered():
-    async def scenario(fake, bridge, delivered):
-        first = await fake.inbound(HOME, SAM, "first")
-        await eventually(lambda: delivered)
-        await fake.inbound(HOME, PLUCAS, "same instant", created_at=first["created_at"])
-        await eventually(lambda: len(delivered) == 2)
-        await asyncio.sleep(0.2)
-        assert [c for c, _ in delivered] == ["first", "same instant"]
-
-    run_bridge(scenario)
-
-
-def test_a_text_stamped_before_our_own_echo_is_still_delivered():
-    """Inbound created_at is the sender's send time; a text that reaches Plow
-    after the sous's reply echo sorts below it on the page."""
-    async def scenario(fake, bridge, delivered):
-        sent_at = fake.add(OTHER, SAM, "clock reference")["created_at"]  # an instant before the reply
-        await bridge.reply(HOME, "on it")
-        await asyncio.sleep(0.2)  # the echo's frame has been synced
-        await fake.inbound(HOME, SAM, "sent before your reply, landed after", created_at=sent_at)
-        await eventually(lambda: delivered)
-        assert [c for c, _ in delivered] == ["sent before your reply, landed after"]
-
-    run_bridge(scenario)
-
-
-def test_a_long_absence_delivers_every_text_past_the_first_page(tmp_path):
-    fake, cursor = FakePlow(), tmp_path / "last_seen.json"
-
-    async def first_run(fake, bridge, delivered):
-        await fake.inbound(HOME, SAM, "hello")  # the chat is known, so the next start catches it up
-        await eventually(lambda: delivered)
-
-    missed = [f"text {i}" for i in range(60)]  # more than one 50-message page
-
-    async def after_absence(fake, bridge, delivered):
-        await eventually(lambda: len(delivered) == len(missed))
-        await asyncio.sleep(0.2)
-        assert [c for c, _ in delivered] == missed
-
-    run_bridge(first_run, fake, cursor)
-    for body in missed:
-        fake.add(HOME, SAM, body)
-    run_bridge(after_absence, fake, cursor)
-
-
-@pytest.mark.parametrize("known", [True, False], ids=["known-chat", "new-chat"])
-def test_a_transient_plow_error_retries_instead_of_stranding_the_text(known):
-    async def scenario(fake, bridge, delivered):
-        if known:
-            await fake.inbound(HOME, SAM, "hello")
-            await eventually(lambda: delivered)
-        fake.flaky.add(HOME)  # the read this text triggers answers 503
-        await fake.inbound(HOME, SAM, "are you there?")
-        await eventually(lambda: [c for c, _ in delivered][-1:] == ["are you there?"])  # after the reconnect's catch-up
-        await asyncio.sleep(0.2)
-        assert [c for c, _ in delivered] == ["hello"] * known + ["are you there?"]
-
-    run_bridge(scenario)
-
-
-def test_a_record_that_matches_nothing_in_history_replays_nothing(tmp_path, capsys):
-    """Every recorded message has left the chat's history (or the record is
-    stale): replaying the whole chat to a sous that acts on texts is worse
-    than skipping it, so the chat is re-recorded and only new texts flow."""
-    fake, cursor = FakePlow(), tmp_path / "last_seen.json"
-    for i in range(3):
-        fake.add(HOME, SAM, f"old command {i}")
-    cursor.write_text(json.dumps({HOME: ["msg_long_gone"]}))
-
-    async def scenario(fake, bridge, delivered):
-        await fake.inbound(HOME, SAM, "new text")
-        await eventually(lambda: delivered)
-        await asyncio.sleep(0.2)
-        assert [c for c, _ in delivered] == ["new text"]
-        assert "WITHOUT delivering them" in capsys.readouterr().err
-
-    run_bridge(scenario, fake, cursor)
-
-@pytest.mark.parametrize("mode, token, error", [
-    (0o644, TOKEN, "chmod 600"),
-    (0o600, "\n", "token is empty"),
-], ids=["readable-by-others", "empty"])
-def test_load_config_refuses_a_bad_token_file(tmp_path, mode, token, error):
-    (tmp_path / "token").write_text(token)
-    (tmp_path / "token").chmod(mode)
-    with pytest.raises(SystemExit, match=error):
-        load_config(tmp_path)
-
-
-def test_load_config_reads_a_private_token(tmp_path):
-    (tmp_path / "token").write_text(TOKEN)
-    (tmp_path / "token").chmod(0o600)
-    assert load_config(tmp_path).token == TOKEN
+def test_reads_the_credential_file_plow_agents_mint_writes(tmp_path):
+    (tmp_path / "plow-credentials").write_text(
+        f"PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN={TOKEN}\n# plow-agent-uid: 73f5\n")
+    assert read_credentials(tmp_path) == {"PLOW_API_BASE": "https://api.plow.co", "PLOW_AGENT_TOKEN": TOKEN}
