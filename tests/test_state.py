@@ -7,7 +7,7 @@ import pytest
 
 from claude_kitchen.state import (
     state_dir, write_status, read_status, update_status,
-    project_slug, namespaced, wiki_dir, notes_dir, plow_chat_dir, channel_servers, channel_flags,
+    project_slug, namespaced, wiki_dir, notes_dir, channel_servers, channel_flags,
 )
 
 
@@ -248,16 +248,20 @@ class TestWikiAndNotesDirs:
         assert d == tmp_path / ".claude-kitchen" / "risotto" / "notes"
 
 
-@pytest.mark.parametrize("configured, flags", [
-    (False, ["server:kitchen"]),
-    (True, ["server:kitchen", "server:plow-chat"]),
+@pytest.mark.parametrize("credentials, flags", [
+    ([], ["server:kitchen"]),
+    (["plow-chat/plow-credentials"], ["server:kitchen", "server:plow-chat"]),
+    (["discord/.env"], ["server:kitchen", "server:discord"]),
 ])
-def test_plow_chat_channel_loads_only_for_the_kitchen_holding_a_line_credential(tmp_path, monkeypatch, configured, flags):
+def test_optional_channels_load_only_for_the_kitchen_holding_their_credential(tmp_path, monkeypatch, credentials, flags):
     monkeypatch.setenv("HOME", str(tmp_path))
-    if configured:
-        plow_chat_dir("boss").mkdir(parents=True)
-        (plow_chat_dir("boss") / "plow-credentials").write_text("PLOW_AGENT_TOKEN=t\n")
+    for path in credentials:
+        (state_dir("boss") / path).parent.mkdir(parents=True)
+        (state_dir("boss") / path).write_text("TOKEN=t\n")
     assert channel_flags("boss") == flags
     assert channel_flags("other-kitchen") == ["server:kitchen"]
-    if configured:
-        assert channel_servers("boss")["plow-chat"] == {"command": "kitchen", "args": ["plow-chat-server", "boss"]}
+    servers = channel_servers("boss")
+    if "plow-chat" in servers:
+        assert servers["plow-chat"] == {"command": "kitchen", "args": ["plow-chat-server", "boss"]}
+    if "discord" in servers:
+        assert servers["discord"]["env"] == {"DISCORD_STATE_DIR": str(state_dir("boss") / "discord"), "DISCORD_ACCESS_MODE": "static"}

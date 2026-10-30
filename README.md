@@ -290,6 +290,18 @@ plow-agents mint ln_... --credential-file ~/.claude-kitchen/widget-boss/plow-cha
 
 Then restart the sous: `/exit`, then `kitchen open --resume boss` from the project root. Text the line to check it. A new group needs no setup: add the line's number to it.
 
+## Messaging the sous on Discord
+
+A kitchen whose state dir holds `discord/.env` also loads the official Discord channel plugin's server, run with [Bun](https://bun.sh) from the `claude-plugins-official` marketplace checkout. Unlike plow-chat it is allowlisted: the server runs in static access mode, so only the Discord user IDs in `discord/access.json` at boot are heard, and pairing is off. Create the bot per the plugin's README (enable Message Content Intent, turn Public Bot off, invite it to a private server), then:
+
+```sh
+mkdir -p -m 700 ~/.claude-kitchen/widget-boss/discord
+install -m 600 /dev/null ~/.claude-kitchen/widget-boss/discord/.env   # then add DISCORD_BOT_TOKEN=<token> in an editor
+echo '{"dmPolicy": "allowlist", "allowFrom": ["<your Discord user ID>"]}' > ~/.claude-kitchen/widget-boss/discord/access.json
+```
+
+Restart the sous as above, then DM the bot.
+
 ## Customize the workflow
 
 The orchestration behavior is intentionally not hard-coded:

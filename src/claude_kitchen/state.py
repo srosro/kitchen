@@ -21,6 +21,8 @@ MCP_CONFIG_NAME = "kitchen-mcp.json"
 # config.
 LEGACY_MCP_CONFIG_NAME = ".mcp.json"
 
+DISCORD_PLUGIN = Path.home() / ".claude/plugins/marketplaces/claude-plugins-official/external_plugins/discord"
+
 
 def state_root() -> Path:
     """Root of all kitchen state — one subdirectory per kitchen. This is the
@@ -46,11 +48,18 @@ def plow_chat_dir(kitchen: str) -> Path:
 
 def channel_servers(kitchen: str) -> dict:
     """The MCP servers a sous loads, each one a channel: the kitchen's own,
-    plus plow-chat once this kitchen holds a line's agent credential. Both run the
-    `kitchen` on PATH, the deployed install."""
+    plus plow-chat once this kitchen holds a line's agent credential, plus the
+    official Discord plugin's server once it holds a bot token. Static access
+    mode pins Discord to the allowlist on disk at boot: no pairing, and nothing
+    the sous writes to access.json takes effect."""
     servers = {"kitchen": {"command": "kitchen", "args": ["channel-server", kitchen]}}
     if (plow_chat_dir(kitchen) / "plow-credentials").exists():
         servers["plow-chat"] = {"command": "kitchen", "args": ["plow-chat-server", kitchen]}
+    if (state_dir(kitchen) / "discord" / ".env").exists():
+        servers["discord"] = {
+            "command": "bun", "args": ["run", "--cwd", str(DISCORD_PLUGIN), "--shell=bun", "--silent", "start"],
+            "env": {"DISCORD_STATE_DIR": str(state_dir(kitchen) / "discord"), "DISCORD_ACCESS_MODE": "static"},
+        }
     return servers
 
 
