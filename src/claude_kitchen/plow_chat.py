@@ -1,8 +1,9 @@
 """plow-chat channel server — bridges a Plow chat line to the sous.
 
-Holds the Plow chat API socket for the line's agent token, pushes each
-allowlisted inbound text into the sous as a `<channel source="plow-chat">` tag,
-and gives the sous a `reply` tool that posts back to allowlisted chats only.
+Holds the Plow chat API socket for the line's agent token, pushes each member's
+text into the sous as a `<channel source="plow-chat">` tag, and gives the sous a
+`reply` tool. No allowlist: Plow shows the token only the chats the line's
+owning account owns, so every chat and every member it delivers is served.
 """
 import asyncio
 import json
@@ -28,26 +29,15 @@ def log(msg: str):
     print(f"plow-chat: {msg}", file=sys.stderr, flush=True)
 
 
-def mask(value: str) -> str:
-    return "…***" if len(value) < 8 else f"…{value[-3:]}"
-
-
-def log_dropped(message: dict):
-    handle = (message.get("sender") or {}).get("provider_key") or ""
-    log(f"dropped {message['uid']}: sender {mask(handle)} in chat {message['chat_uid']} is not allowlisted")
-
-
 @dataclass(frozen=True)
 class Config:
     token: str
-    senders: dict[str, str]  # sender provider_key -> name the sous sees
-    chats: frozenset[str]
     base_url: str = DEFAULT_BASE_URL
 
 
 def load_config(directory: Path) -> Config:
-    """`config.json` holds the allowlist; the agent token sits beside it in a
-    mode-600 `token` file so it never reaches argv, env or the repo."""
+    """The line's agent token sits in a mode-600 `token` file so it never
+    reaches argv, env or the repo."""
     token_file = directory / "token"
     mode = token_file.stat().st_mode & 0o777
     if mode != 0o600:
@@ -55,13 +45,7 @@ def load_config(directory: Path) -> Config:
     token = token_file.read_text().strip()
     if not token:
         sys.exit(f"plow-chat: {token_file} is empty; write the line's agent token into it")
-    raw = json.loads((directory / "config.json").read_text())
-    return Config(
-        token=token,
-        senders=raw["senders"],
-        chats=frozenset(raw["chats"]),
-        base_url=raw.get("base_url", DEFAULT_BASE_URL),
-    )
+    return Config(token=token)
 
 
 @dataclass
@@ -75,6 +59,9 @@ class Bridge:
     # outbound is the server's, so a late inbound can sort below our own echo.
     cursor: Path
     seen: dict = field(init=False)
+    # A chat whose first read hasn't landed yet -> the uid of the text that
+    # introduced it, so a failed read retries on reconnect without losing it.
+    new: dict = field(default_factory=dict)
 
     def __post_init__(self):
         record = json.loads(self.cursor.read_text()) if self.cursor.exists() else {}
@@ -87,8 +74,8 @@ class Bridge:
 
     async def _page(self, chat: str, starting_after: str = None) -> dict | None:
         """One page of `chat`, newest first. A busy or failing Plow (429, 5xx)
-        raises into the reconnect loop's backoff; any other refusal (a typo, a
-        re-created group) is logged and skipped so it can't starve the others."""
+        raises into the reconnect loop's backoff; any other refusal (a deleted
+        or re-created group) is logged and skipped so it can't starve the others."""
         params = {"limit": CATCH_UP_LIMIT, **({"starting_after": starting_after} if starting_after else {})}
         r = await self.client.get(f"/v1/chats/{chat}/messages", params=params)
         if r.status_code == 429 or r.status_code >= 500:
@@ -98,56 +85,48 @@ class Bridge:
             return None
         return r.json()
 
-    async def sync(self, chat: str):
+    async def sync(self, chat: str, fresh: str = None):
         """Hand the sous every inbound text in `chat` it hasn't seen, oldest
         first, paging back until it reaches messages it has. The REST record is
         the source and a socket frame only a doorbell, so live, reconnect and
-        restart share this one path. A chat seen for the first time is only
-        recorded, so its history is never replayed."""
+        restart share this one path. A chat seen for the first time has its
+        history recorded, never replayed: only `fresh`, the text whose frame
+        rang, and anything after it are new in it."""
+        if chat not in self.seen:
+            self.new.setdefault(chat, fresh)
         page = await self._page(chat)
         if page is None:
             return
         newest = page["data"]
-        if chat in self.seen:
-            unread = list(newest)
-            while not (found := bool(self.seen[chat] & {m["uid"] for m in page["data"]})) and page["has_more"]:
-                page = await self._page(chat, page["data"][-1]["uid"])
-                if page is None:
-                    return
-                unread += page["data"]
-            if self.seen[chat] and not found:
-                # Every message we recorded has left the history, so "unseen"
-                # would be the whole chat: replaying it to a sous that acts on
-                # texts is the one outcome worse than missing some.
-                log(f"chat {chat}: none of its recorded messages is in its history any more; "
-                    f"recording its {len(unread)} messages WITHOUT delivering them")
-                unread = []
-            for message in reversed(unread):  # newest-first → oldest-first
-                if message["uid"] in self.seen[chat]:
-                    continue
-                if message["direction"] == "inbound":
-                    name = self.config.senders.get((message.get("sender") or {}).get("provider_key"))
-                    if name is None:
-                        log_dropped(message)
-                    else:
-                        await self.deliver(message["body"], {"from": name, "chat": chat})
-                # Recorded only after delivery, so a crash mid-send can't suppress it.
-                self.seen[chat].add(message["uid"])
-                self._save()
+        if chat in self.new:
+            fresh, uids = self.new.pop(chat), [m["uid"] for m in newest]
+            self.seen[chat] = set(uids[uids.index(fresh) + 1:] if fresh in uids else uids)
+        unread = list(newest)
+        while not (found := bool(self.seen[chat] & {m["uid"] for m in page["data"]})) and page["has_more"]:
+            page = await self._page(chat, page["data"][-1]["uid"])
+            if page is None:
+                return
+            unread += page["data"]
+        if self.seen[chat] and not found:
+            # Every message we recorded has left the history, so "unseen"
+            # would be the whole chat: replaying it to a sous that acts on
+            # texts is the one outcome worse than missing some.
+            log(f"chat {chat}: none of its recorded messages is in its history any more; "
+                f"recording its {len(unread)} messages WITHOUT delivering them")
+            unread = []
+        for message in reversed(unread):  # newest-first → oldest-first
+            if message["uid"] in self.seen[chat]:
+                continue
+            if message["sender"]["type"] == "member":  # not our own sends, nor Plow's system notes
+                await self.deliver(message["body"], {"from": message["sender"]["display_name"], "chat": chat})
+            # Recorded only after delivery, so a crash mid-send can't suppress it.
+            self.seen[chat].add(message["uid"])
+            self._save()
         # The next read stops at the newest page, so it is all the record needs.
         self.seen[chat] = {message["uid"] for message in newest}
         self._save()
 
-    async def on_frame(self, message: dict):
-        chat = message["chat_uid"]
-        if chat in self.config.chats:
-            await self.sync(chat)
-        elif message["direction"] == "inbound":
-            log_dropped(message)
-
     async def reply(self, chat: str, text: str) -> str:
-        if chat not in self.config.chats:
-            raise ValueError(f"chat {chat} is not on the plow-chat allowlist; not sent")
         if not text.strip():
             raise ValueError("reply text is empty; not sent")
         r = await self.client.post(f"/v1/chats/{chat}/messages", json={"body": text})
@@ -157,7 +136,7 @@ class Bridge:
 
     async def run(self):
         """Hold the socket forever: fresh ticket per connect, sync every
-        allowed chat after each `connected`, back off exponentially on any drop."""
+        chat it knows of after each `connected`, back off exponentially on any drop."""
         backoff = 1
         ws_url = self.config.base_url.replace("http", "ws", 1) + "/v1/ws"
         while True:
@@ -168,14 +147,15 @@ class Bridge:
                     hello = json.loads(await ws.recv())
                     if hello.get("type") != "connected":
                         raise ConnectionError(f"expected a connected frame, got {hello.get('type')!r}")
-                    for chat in sorted(self.config.chats):
+                    for chat in sorted({*self.seen, *self.new}):
                         await self.sync(chat)
                     backoff = 1
                     log("connected")
                     async for raw in ws:
                         event = json.loads(raw)
                         if event.get("event_type") == "message_received":
-                            await self.on_frame(event["data"]["message"])
+                            message = event["data"]["message"]
+                            await self.sync(message["chat_uid"], message["uid"])
                 log("socket closed")
             except httpx.HTTPStatusError as e:
                 log(f"HTTP {e.response.status_code} from {e.request.url.path}")
@@ -191,9 +171,8 @@ class Bridge:
 REPLY_TOOL = types.Tool(
     name="reply",
     description=(
-        "Send a text message to a Plow chat (iMessage). Only chats on the "
-        "plow-chat allowlist are accepted; pass the `chat` attribute of the "
-        "<channel source=\"plow-chat\"> tag you are answering."
+        "Send a text message to a Plow chat (iMessage); pass the `chat` "
+        "attribute of the <channel source=\"plow-chat\"> tag you are answering."
     ),
     inputSchema={
         "type": "object",

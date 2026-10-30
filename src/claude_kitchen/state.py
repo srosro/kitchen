@@ -46,10 +46,10 @@ def plow_chat_dir(kitchen: str) -> Path:
 
 def channel_servers(kitchen: str) -> dict:
     """The MCP servers a sous loads, each one a channel: the kitchen's own,
-    plus plow-chat once that config exists for this kitchen. Both run the
+    plus plow-chat once this kitchen holds a line's agent token. Both run the
     `kitchen` on PATH, the deployed install."""
     servers = {"kitchen": {"command": "kitchen", "args": ["channel-server", kitchen]}}
-    if (plow_chat_dir(kitchen) / "config.json").exists():
+    if (plow_chat_dir(kitchen) / "token").exists():
         servers["plow-chat"] = {"command": "kitchen", "args": ["plow-chat-server", kitchen]}
     return servers
 

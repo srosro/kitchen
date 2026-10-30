@@ -13,6 +13,7 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocketDisconnect
 
 TOKEN = "agt_fake-token-xyz"
+NAMES = {"+15550000001": "Sam", "+15550000002": "Patrick"}  # as Plow names members it knows
 
 
 class FakePlow:
@@ -31,7 +32,7 @@ class FakePlow:
         ])
 
     def _message(self, chat, direction, body, handle=None, created_at=None):
-        sender = {"type": "member", "provider_key": handle} if handle else {"type": "agent"}
+        sender = {"type": "member", "display_name": NAMES.get(handle, handle), "provider_key": handle} if handle else {"type": "agent"}
         n = next(self._uids)
         message = {"uid": f"msg_{n}", "chat_uid": chat, "direction": direction, "body": body,
                    "sender": sender,
