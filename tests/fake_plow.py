@@ -23,12 +23,10 @@ class FakePlow:
         self.sockets = []
         self.missing = set()  # chats that answer 404, as a deleted or mistyped uid does
         self.flaky = set()  # chats whose next read answers 503
-        self.unowned = set()  # chats the line's owner is not in
         self._uids = itertools.count(1)
         self._epoch = datetime.now(UTC)
         self.app = Starlette(routes=[
             Route("/v1/ws/ticket", self._ticket, methods=["POST"]),
-            Route("/v1/chats/{chat}", self._chat),
             Route("/v1/chats/{chat}/messages", self._messages, methods=["GET", "POST"]),
             WebSocketRoute("/v1/ws", self._ws),
         ])
@@ -70,19 +68,6 @@ class FakePlow:
         if not self._authorized(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         return JSONResponse({"ticket": f"wst_{next(self._uids)}"}, status_code=201)
-
-    async def _chat(self, request):
-        if not self._authorized(request):
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-        chat = request.path_params["chat"]
-        if chat in self.missing:
-            return JSONResponse({"error": "not_found"}, status_code=404)
-        owner = [] if chat in self.unowned else [{"type": "member", "role": "owner", "provider_key": "+15550000001"}]
-        return JSONResponse({"uid": chat, "participants": [
-            {"type": "agent", "relationship": "self"},
-            {"type": "member", "role": "member", "provider_key": "+15550000077"},
-            *owner,
-        ]})
 
     async def _messages(self, request):
         if not self._authorized(request):

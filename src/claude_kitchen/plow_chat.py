@@ -1,9 +1,9 @@
 """plow-chat channel server — bridges a Plow chat line to the sous.
 
-Holds the Plow chat API socket for the line's agent token, pushes each inbound
+Holds the Plow chat API socket for the line's agent token, pushes each member's
 text into the sous as a `<channel source="plow-chat">` tag, and gives the sous a
-`reply` tool. Both work only in chats the line's owner is in, and every member
-of such a chat is heard, so a group the owner starts needs no config at all.
+`reply` tool. No allowlist: Plow shows the token only the chats the line's
+owning account owns, so every chat and every member it delivers is served.
 """
 import asyncio
 import json
@@ -59,7 +59,6 @@ class Bridge:
     # outbound is the server's, so a late inbound can sort below our own echo.
     cursor: Path
     seen: dict = field(init=False)
-    owned: dict = field(default_factory=dict)  # chat -> whether the line's owner is in it
 
     def __post_init__(self):
         record = json.loads(self.cursor.read_text()) if self.cursor.exists() else {}
@@ -70,29 +69,14 @@ class Bridge:
     def _save(self):
         atomic_write_json(self.cursor, {chat: sorted(uids) for chat, uids in self.seen.items()})  # mkstemp: mode 600
 
-    async def _get(self, path: str, **params) -> httpx.Response:
-        """A busy or failing Plow (429, 5xx) raises into the reconnect loop's
-        backoff; any other answer is the caller's to read."""
-        r = await self.client.get(path, params=params)
+    async def _page(self, chat: str, starting_after: str = None) -> dict | None:
+        """One page of `chat`, newest first. A busy or failing Plow (429, 5xx)
+        raises into the reconnect loop's backoff; any other refusal (a deleted
+        or re-created group) is logged and skipped so it can't starve the others."""
+        params = {"limit": CATCH_UP_LIMIT, **({"starting_after": starting_after} if starting_after else {})}
+        r = await self.client.get(f"/v1/chats/{chat}/messages", params=params)
         if r.status_code == 429 or r.status_code >= 500:
             r.raise_for_status()
-        return r
-
-    async def _owned(self, chat: str) -> bool:
-        """Whether the line's owner is in `chat`. Plow marks the member whose
-        handle is the owner's account `role: owner`, and only seats a chat on
-        the line when the owner is in its roster, so no one else can pose as
-        them. Cached: membership is read once per chat."""
-        if chat not in self.owned:
-            r = await self._get(f"/v1/chats/{chat}")
-            self.owned[chat] = r.is_success and any(p.get("role") == "owner" for p in r.json()["participants"])
-        return self.owned[chat]
-
-    async def _page(self, chat: str, starting_after: str = None) -> dict | None:
-        """One page of `chat`, newest first. A refusal (a typo, a re-created
-        group) is logged and skipped so it can't starve the others."""
-        params = {"limit": CATCH_UP_LIMIT, **({"starting_after": starting_after} if starting_after else {})}
-        r = await self._get(f"/v1/chats/{chat}/messages", **params)
         if r.is_error:
             log(f"HTTP {r.status_code} reading chat {chat}; skipped")
             return None
@@ -136,16 +120,7 @@ class Bridge:
         self.seen[chat] = {message["uid"] for message in newest}
         self._save()
 
-    async def on_frame(self, message: dict):
-        chat = message["chat_uid"]
-        if await self._owned(chat):
-            await self.sync(chat, message["uid"])
-        elif message["direction"] == "inbound":
-            log(f"dropped {message['uid']}: the line's owner is not in chat {chat}")
-
     async def reply(self, chat: str, text: str) -> str:
-        if not await self._owned(chat):
-            raise ValueError(f"the line's owner is not in chat {chat}; not sent")
         if not text.strip():
             raise ValueError("reply text is empty; not sent")
         r = await self.client.post(f"/v1/chats/{chat}/messages", json={"body": text})
@@ -173,7 +148,8 @@ class Bridge:
                     async for raw in ws:
                         event = json.loads(raw)
                         if event.get("event_type") == "message_received":
-                            await self.on_frame(event["data"]["message"])
+                            message = event["data"]["message"]
+                            await self.sync(message["chat_uid"], message["uid"])
                 log("socket closed")
             except httpx.HTTPStatusError as e:
                 log(f"HTTP {e.response.status_code} from {e.request.url.path}")
@@ -189,9 +165,8 @@ class Bridge:
 REPLY_TOOL = types.Tool(
     name="reply",
     description=(
-        "Send a text message to a Plow chat (iMessage). Only chats the line's "
-        "owner is in are accepted; pass the `chat` attribute of the "
-        "<channel source=\"plow-chat\"> tag you are answering."
+        "Send a text message to a Plow chat (iMessage); pass the `chat` "
+        "attribute of the <channel source=\"plow-chat\"> tag you are answering."
     ),
     inputSchema={
         "type": "object",

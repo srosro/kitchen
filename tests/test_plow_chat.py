@@ -22,11 +22,9 @@ async def eventually(predicate, timeout=5):
 
 def run_bridge(scenario, fake=None, cursor=None):
     """Run `scenario(fake, bridge, delivered)` with the bridge's socket
-    supervisor live against `fake` (a fresh one by default), whose OTHER chat
-    the line's owner is not in. Pass the same fake and cursor twice to restart
-    the server against the same chat."""
+    supervisor live against `fake` (a fresh one by default). Pass the same
+    fake and cursor twice to restart the server against the same chat."""
     fake = fake or FakePlow()
-    fake.unowned.add(OTHER)
     cursor = cursor or Path(tempfile.mkdtemp()) / "last_seen.json"
 
     async def main():
@@ -50,7 +48,7 @@ def run_bridge(scenario, fake=None, cursor=None):
 
 
 @pytest.mark.parametrize("handle, name", [(PLUCAS, "Patrick"), (STRANGER, STRANGER)], ids=["named", "unnamed"])
-def test_any_member_of_an_owned_chat_is_delivered_by_name(handle, name):
+def test_any_member_is_delivered_by_name(handle, name):
     async def scenario(fake, bridge, delivered):
         await fake.inbound(HOME, handle, "can you look at the mba?")
         await eventually(lambda: delivered)
@@ -58,17 +56,7 @@ def test_any_member_of_an_owned_chat_is_delivered_by_name(handle, name):
     run_bridge(scenario)
 
 
-def test_a_chat_without_the_owner_is_dropped_and_logged(capsys):
-    async def scenario(fake, bridge, delivered):
-        dropped = await fake.inbound(OTHER, SAM, "let me in")
-        await fake.inbound(HOME, SAM, "marker")  # once this lands, the drop was processed
-        await eventually(lambda: delivered)
-        assert delivered == [("marker", {"from": "Sam", "chat": HOME})]
-        assert f"dropped {dropped['uid']}" in capsys.readouterr().err
-    run_bridge(scenario)
-
-
-def test_a_new_chat_the_owner_is_in_delivers_its_first_text_without_its_history():
+def test_a_new_chat_delivers_its_first_text_without_its_history():
     async def scenario(fake, bridge, delivered):
         await fake.inbound("cht_new_group", PLUCAS, "hi from the new group")
         await eventually(lambda: delivered)
@@ -80,10 +68,8 @@ def test_a_new_chat_the_owner_is_in_delivers_its_first_text_without_its_history(
     run_bridge(scenario, fake)
 
 
-def test_reply_refuses_a_chat_without_the_owner_and_sends_to_one_with():
+def test_reply_sends_and_its_echo_never_reaches_the_sous():
     async def scenario(fake, bridge, delivered):
-        with pytest.raises(ValueError, match="owner is not in chat"):
-            await bridge.reply(OTHER, "hello")
         await bridge.reply(HOME, "on it")
         assert fake.sent == [(HOME, "on it")]
         await fake.inbound(HOME, SAM, "marker")
@@ -139,22 +125,6 @@ def test_a_chat_plow_refuses_is_skipped_and_logged(tmp_path, capsys):
         assert f"HTTP 404 reading chat {GONE}; skipped" in capsys.readouterr().err
 
     run_bridge(scenario, fake, cursor)
-
-
-def test_a_flood_of_dropped_texts_never_replays_old_ones():
-    async def scenario(fake, bridge, delivered):
-        await fake.inbound(HOME, SAM, "real")
-        await eventually(lambda: delivered)
-        for i in range(2001):
-            await fake.inbound(OTHER, STRANGER, f"spam {i}")
-        await fake.drop_sockets()
-        await eventually(lambda: fake.sockets)
-        await fake.inbound(HOME, SAM, "marker")
-        await eventually(lambda: len(delivered) >= 2)
-        await asyncio.sleep(0.2)
-        assert [c for c, _ in delivered] == ["real", "marker"]
-
-    run_bridge(scenario)
 
 
 def test_texts_stamped_at_the_same_instant_are_each_delivered():
