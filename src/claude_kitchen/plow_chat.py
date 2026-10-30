@@ -9,6 +9,7 @@ import asyncio
 import json
 import sys
 from dataclasses import dataclass, field
+from itertools import takewhile
 from pathlib import Path
 
 import httpx
@@ -62,16 +63,19 @@ class Bridge:
         atomic_write_json(self.cursor, self.taken)
 
     async def catch_up(self, chat: str):
-        """Take what reached `chat` while the socket was down, from its newest
-        page: Plow pages only backwards. A gap of more than one page loses its
-        oldest texts. A busy or failing Plow raises into the reconnect retry."""
+        """Take what reached `chat` while the socket was down: the newest
+        page's messages above the newest one taken. Plow pages only backwards,
+        so a gap of more than one page loses its oldest texts; what sits below a
+        taken text is history, never replayed. A busy or failing Plow raises
+        into the reconnect retry."""
         r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": PAGE})
         if r.status_code == 429 or r.status_code >= 500:
             r.raise_for_status()
         if r.is_error:
             log(f"HTTP {r.status_code} reading chat {chat}; skipped")
             return
-        for message in reversed(r.json()["data"]):
+        uids = self.taken[chat]
+        for message in reversed(list(takewhile(lambda m: m["uid"] not in uids, r.json()["data"]))):
             await self.take(message)
 
     async def reply(self, chat: str, text: str) -> str:

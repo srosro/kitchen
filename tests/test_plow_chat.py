@@ -56,8 +56,13 @@ def test_any_member_is_delivered_by_name_without_the_chats_history(handle, name)
     async def scenario(fake, bridge, delivered):
         await fake.inbound(HOME, handle, "can you look at the mba?")
         await eventually(lambda: delivered)
+        await fake.drop_sockets()  # the catch-up after reconnecting must not replay it either
+        await eventually(lambda: fake.sockets)
+        await fake.inbound(HOME, SAM, "marker")
+        await eventually(lambda: len(delivered) >= 2)
         await asyncio.sleep(0.2)
-        assert delivered == [("can you look at the mba?", {"from": name, "chat": HOME})]
+        assert delivered == [("can you look at the mba?", {"from": name, "chat": HOME}),
+                             ("marker", {"from": "Sam", "chat": HOME})]
 
     fake = FakePlow()
     fake.add(HOME, SAM, "said before the sous was listening")
@@ -74,13 +79,16 @@ def test_reply_sends_and_its_echo_never_reaches_the_sous():
     run_bridge(scenario)
 
 
-def test_reconnect_catches_up_without_duplicates():
+@pytest.mark.parametrize("flaky", [False, True], ids=["normal", "503-then-retry"])
+def test_reconnect_catches_up_without_duplicates(flaky):
     async def scenario(fake, bridge, delivered):
         await fake.inbound(HOME, SAM, "before")
         await eventually(lambda: delivered)
         await fake.drop_sockets()
         fake.add(HOME, SAM, "during the gap")
-        await eventually(lambda: fake.sockets)  # reconnected with a fresh ticket
+        if flaky:
+            fake.flaky.add(HOME)  # the first catch-up read answers 503
+        await eventually(lambda: len(delivered) == 2)
         await fake.inbound(HOME, SAM, "after")
         await eventually(lambda: len(delivered) == 3)
         await asyncio.sleep(0.2)
@@ -122,21 +130,6 @@ def test_a_late_text_never_replays_an_earlier_one_after_restart(tmp_path):
 
     run_bridge(before_restart, fake, cursor)
     run_bridge(after_restart, fake, cursor)
-
-
-def test_a_transient_catch_up_error_retries_instead_of_stranding_the_gap():
-    async def scenario(fake, bridge, delivered):
-        await fake.inbound(HOME, SAM, "before")
-        await eventually(lambda: delivered)
-        await fake.drop_sockets()
-        fake.add(HOME, SAM, "during the gap")
-        fake.flaky.add(HOME)  # the catch-up after this reconnect answers 503
-        await eventually(lambda: len(delivered) == 2)  # caught up on the retry
-        await fake.inbound(HOME, SAM, "after")
-        await eventually(lambda: "after" in [c for c, _ in delivered])
-        await asyncio.sleep(0.2)
-        assert [c for c, _ in delivered] == ["before", "during the gap", "after"]
-    run_bridge(scenario)
 
 
 def test_reads_the_credential_file_plow_agents_mint_writes(tmp_path):
