@@ -173,14 +173,17 @@ def test_a_long_absence_delivers_every_text_past_the_first_page(tmp_path):
     run_bridge(after_absence, fake, cursor)
 
 
-def test_a_transient_plow_error_retries_instead_of_stranding_the_text():
+@pytest.mark.parametrize("known", [True, False], ids=["known-chat", "new-chat"])
+def test_a_transient_plow_error_retries_instead_of_stranding_the_text(known):
     async def scenario(fake, bridge, delivered):
-        await fake.inbound(HOME, SAM, "hello")
-        await eventually(lambda: delivered)
+        if known:
+            await fake.inbound(HOME, SAM, "hello")
+            await eventually(lambda: delivered)
         fake.flaky.add(HOME)  # the read this text triggers answers 503
         await fake.inbound(HOME, SAM, "are you there?")
-        await eventually(lambda: len(delivered) == 2)  # delivered after the reconnect's catch-up
-        assert [c for c, _ in delivered] == ["hello", "are you there?"]
+        await eventually(lambda: [c for c, _ in delivered][-1:] == ["are you there?"])  # after the reconnect's catch-up
+        await asyncio.sleep(0.2)
+        assert [c for c, _ in delivered] == ["hello"] * known + ["are you there?"]
 
     run_bridge(scenario)
 

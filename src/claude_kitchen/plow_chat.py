@@ -59,6 +59,9 @@ class Bridge:
     # outbound is the server's, so a late inbound can sort below our own echo.
     cursor: Path
     seen: dict = field(init=False)
+    # A chat whose first read hasn't landed yet -> the uid of the text that
+    # introduced it, so a failed read retries on reconnect without losing it.
+    new: dict = field(default_factory=dict)
 
     def __post_init__(self):
         record = json.loads(self.cursor.read_text()) if self.cursor.exists() else {}
@@ -89,12 +92,15 @@ class Bridge:
         restart share this one path. A chat seen for the first time has its
         history recorded, never replayed: only `fresh`, the text whose frame
         rang, and anything after it are new in it."""
+        if chat not in self.seen:
+            self.new.setdefault(chat, fresh)
         page = await self._page(chat)
         if page is None:
             return
         newest = page["data"]
-        uids = [m["uid"] for m in newest]
-        self.seen.setdefault(chat, set(uids[uids.index(fresh) + 1:] if fresh in uids else uids))
+        if chat in self.new:
+            fresh, uids = self.new.pop(chat), [m["uid"] for m in newest]
+            self.seen[chat] = set(uids[uids.index(fresh) + 1:] if fresh in uids else uids)
         unread = list(newest)
         while not (found := bool(self.seen[chat] & {m["uid"] for m in page["data"]})) and page["has_more"]:
             page = await self._page(chat, page["data"][-1]["uid"])
@@ -130,7 +136,7 @@ class Bridge:
 
     async def run(self):
         """Hold the socket forever: fresh ticket per connect, sync every
-        chat already read after each `connected`, back off exponentially on any drop."""
+        chat it knows of after each `connected`, back off exponentially on any drop."""
         backoff = 1
         ws_url = self.config.base_url.replace("http", "ws", 1) + "/v1/ws"
         while True:
@@ -141,7 +147,7 @@ class Bridge:
                     hello = json.loads(await ws.recv())
                     if hello.get("type") != "connected":
                         raise ConnectionError(f"expected a connected frame, got {hello.get('type')!r}")
-                    for chat in sorted(self.seen):
+                    for chat in sorted({*self.seen, *self.new}):
                         await self.sync(chat)
                     backoff = 1
                     log("connected")
