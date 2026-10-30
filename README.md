@@ -266,7 +266,7 @@ The root sous's own Stop hook does not notify its own socket, preventing an echo
 │   ├── sous.pid              # duplicate-sous guard
 │   ├── cooks/<name>.json     # backend, status, response, session, context
 │   ├── codex-home/           # clean-room Codex homes, when used
-│   ├── plow-chat/            # optional: config.json, token (600), last_seen.json
+│   ├── plow-chat/            # optional: token (600), last_seen.json
 │   └── notes/                # handoff, log, and long task briefs
 └── projects/<slug>/wiki/
     ├── mistakes.md           # durable lessons
@@ -277,16 +277,15 @@ The root sous's own Stop hook does not notify its own socket, preventing an echo
 
 ## Texting the sous (plow-chat)
 
-A kitchen whose state dir holds `plow-chat/config.json` also loads the `plow-chat` channel when `kitchen open` starts its sous. Texts to a Plow line then arrive as `<channel source="plow-chat" from="<name>" chat="<chat uid>">`, and the sous answers with its `reply` tool. Kitchens without that file are unchanged.
+A kitchen whose state dir holds `plow-chat/token` also loads the `plow-chat` channel when `kitchen open` starts its sous. Texts to a Plow line then arrive as `<channel source="plow-chat" from="<name>" chat="<chat uid>">`, and the sous answers with its `reply` tool. Kitchens without that file are unchanged.
 
 ```text
 ~/.claude-kitchen/<kitchen>/plow-chat/
-├── config.json      # {"senders": {"<phone or email>": "<name>"}, "chats": ["cht_…"]}
 ├── token            # the line's agent token, chmod 600; the server refuses anything looser
 └── last_seen.json   # per-chat high-water mark; texts sent while the sous was down arrive on restart
 ```
 
-`config.json` may also set `base_url` (default `https://api.plow.co`). Only texts whose sender **and** chat are both listed reach the sous. The rest are dropped and logged with the chat uid, and `reply` refuses any chat not in `chats`.
+There is no allowlist. A chat is served when the line's owner is in it, which Plow reports as a member with `role: owner`: the owner's 1:1 with the line, and any iMessage group holding the owner and the line. Every member of such a chat reaches the sous with head-chef authority, named by `from` as Plow names them. Texts in any other chat are dropped and logged with the chat uid, and `reply` refuses those chats. Plow matches the owner by phone number, so nobody else can pose as them. Anyone who has both numbers, though, can start a group with the owner and the line, and that group is served too.
 
 **One-time setup for a kitchen.** Run these yourself from a shell, with the kitchen's deployed build already carrying plow-chat and its dependencies. They need `curl` and `jq`, and they keep every token in mode-600 files, never in argv or on screen. The examples use the kitchen `boss`; substitute the full name `kitchen open` prints (`Kitchen "<name>" is open`), which carries the repo's prefix, so a kitchen `boss` opened in a `widget` repo is `widget-boss`.
 
@@ -329,23 +328,9 @@ A kitchen whose state dir holds `plow-chat/config.json` also loads the `plow-cha
    if [ -s token ]; then chmod 600 token && rm activation.json account.header; else rm token; echo "No agent token; account.header kept for a retry."; fi
    ```
 
-4. First text. Text anything to the line's number from your phone. That opens your 1:1 chat with the line; until the sous is listening, Plow may answer it as unserved. Look up the chat uid and write the config, using your own number in E.164 form:
+4. Sous restart. Exit the running sous (`/exit`), then from the project root run `kitchen open --resume boss`. The sous now loads `server:plow-chat`. Text the line from your phone: the text arrives as a `plow-chat` tag, and the reply comes back to your phone.
 
-   ```sh
-   printf 'Authorization: Bearer %s\n' "$(cat token)" > agent.header
-   curl -fsS $API/v1/chats -H @agent.header | jq -r '.data[] | "\(.uid)  \(.display_name // "")"'
-   rm agent.header
-   printf '{"senders": {"%s": "sam"}, "chats": ["%s"]}\n' "+1YOURNUMBER" "cht_..." > config.json
-   ```
-
-5. Sous restart. Exit the running sous (`/exit`), then from the project root run `kitchen open --resume boss`. The sous now loads `server:plow-chat`. Text the line once more: the text arrives as a `plow-chat` tag, and the reply comes back to your phone.
-
-**Adding someone who doesn't own the line.** Plow opens a 1:1 chat only for the line's owner. Anyone else reaches the line through a group: the owner starts an iMessage group containing that person and the line's number, and someone in it texts. Plow creates the chat on that first message (the owner doesn't have to be the one who speaks), and the line's agent token already covers chats created on its line later. Then:
-
-1. Text the group once. That message is dropped, and the log line `plow-chat: dropped msg_…: … in chat cht_… is not allowlisted` names the new chat uid.
-2. Add that uid to `chats` and the person's number to `senders`, then reopen the kitchen.
-
-The owner stays in the group, so they see every exchange between the sous and the collaborator.
+**Adding someone who doesn't own the line.** Plow opens a 1:1 chat only for the line's owner. Anyone else reaches the line through a group: the owner starts an iMessage group containing that person and the line's number. The group's first text, from anyone in it, reaches the sous with no config change and no restart. The owner stays in the group, so they see every exchange between the sous and the collaborator.
 
 ## Customize the workflow
 

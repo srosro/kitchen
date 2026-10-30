@@ -20,17 +20,18 @@ async def eventually(predicate, timeout=5):
             await asyncio.sleep(0.01)
 
 
-def run_bridge(scenario, fake=None, cursor=None, chats=(HOME,)):
+def run_bridge(scenario, fake=None, cursor=None):
     """Run `scenario(fake, bridge, delivered)` with the bridge's socket
-    supervisor live against `fake` (a fresh one by default). Pass the same
-    fake and cursor twice to restart the server against the same chat."""
+    supervisor live against `fake` (a fresh one by default), whose OTHER chat
+    the line's owner is not in. Pass the same fake and cursor twice to restart
+    the server against the same chat."""
     fake = fake or FakePlow()
+    fake.unowned.add(OTHER)
     cursor = cursor or Path(tempfile.mkdtemp()) / "last_seen.json"
 
     async def main():
         base_url, server = await fake.serve()
-        config = Config(token=TOKEN, senders={SAM: "sam", PLUCAS: "plucas"},
-                        chats=frozenset(chats), base_url=base_url)
+        config = Config(token=TOKEN, base_url=base_url)
         delivered = []
 
         async def deliver(content, meta):
@@ -48,28 +49,40 @@ def run_bridge(scenario, fake=None, cursor=None, chats=(HOME,)):
     asyncio.run(main())
 
 
-def test_allowed_sender_is_delivered():
+@pytest.mark.parametrize("handle, name", [(PLUCAS, "Patrick"), (STRANGER, STRANGER)], ids=["named", "unnamed"])
+def test_any_member_of_an_owned_chat_is_delivered_by_name(handle, name):
     async def scenario(fake, bridge, delivered):
-        await fake.inbound(HOME, PLUCAS, "can you look at the mba?")
+        await fake.inbound(HOME, handle, "can you look at the mba?")
         await eventually(lambda: delivered)
-        assert delivered == [("can you look at the mba?", {"from": "plucas", "chat": HOME})]
+        assert delivered == [("can you look at the mba?", {"from": name, "chat": HOME})]
     run_bridge(scenario)
 
 
-@pytest.mark.parametrize("chat, handle", [(HOME, STRANGER), (OTHER, SAM)], ids=["sender", "chat"])
-def test_non_allowlisted_message_is_dropped_and_logged(chat, handle, capsys):
+def test_a_chat_without_the_owner_is_dropped_and_logged(capsys):
     async def scenario(fake, bridge, delivered):
-        dropped = await fake.inbound(chat, handle, "let me in")
+        dropped = await fake.inbound(OTHER, SAM, "let me in")
         await fake.inbound(HOME, SAM, "marker")  # once this lands, the drop was processed
         await eventually(lambda: delivered)
-        assert delivered == [("marker", {"from": "sam", "chat": HOME})]
+        assert delivered == [("marker", {"from": "Sam", "chat": HOME})]
         assert f"dropped {dropped['uid']}" in capsys.readouterr().err
     run_bridge(scenario)
 
 
-def test_reply_refuses_chat_not_on_allowlist_and_sends_to_allowed():
+def test_a_new_chat_the_owner_is_in_delivers_its_first_text_without_its_history():
     async def scenario(fake, bridge, delivered):
-        with pytest.raises(ValueError, match="not on the plow-chat allowlist"):
+        await fake.inbound("cht_new_group", PLUCAS, "hi from the new group")
+        await eventually(lambda: delivered)
+        await asyncio.sleep(0.2)
+        assert delivered == [("hi from the new group", {"from": "Patrick", "chat": "cht_new_group"})]
+
+    fake = FakePlow()
+    fake.add("cht_new_group", SAM, "said before the sous was listening")
+    run_bridge(scenario, fake)
+
+
+def test_reply_refuses_a_chat_without_the_owner_and_sends_to_one_with():
+    async def scenario(fake, bridge, delivered):
+        with pytest.raises(ValueError, match="owner is not in chat"):
             await bridge.reply(OTHER, "hello")
         await bridge.reply(HOME, "on it")
         assert fake.sent == [(HOME, "on it")]
@@ -115,16 +128,17 @@ def test_restart_delivers_texts_sent_while_down_exactly_once(tmp_path):
 
 
 
-def test_a_chat_plow_refuses_is_skipped_and_logged(capsys):
-    fake = FakePlow()
+def test_a_chat_plow_refuses_is_skipped_and_logged(tmp_path, capsys):
+    fake, cursor = FakePlow(), tmp_path / "last_seen.json"
     fake.missing.add(GONE)
+    cursor.write_text(json.dumps({GONE: ["msg_1"]}))  # read before, deleted since
 
     async def scenario(fake, bridge, delivered):
         await fake.inbound(HOME, SAM, "still reachable")
         await eventually(lambda: delivered)
         assert f"HTTP 404 reading chat {GONE}; skipped" in capsys.readouterr().err
 
-    run_bridge(scenario, fake, chats=(HOME, GONE))
+    run_bridge(scenario, fake, cursor)
 
 
 def test_a_flood_of_dropped_texts_never_replays_old_ones():
@@ -173,7 +187,8 @@ def test_a_long_absence_delivers_every_text_past_the_first_page(tmp_path):
     fake, cursor = FakePlow(), tmp_path / "last_seen.json"
 
     async def first_run(fake, bridge, delivered):
-        pass  # records the chat, so the next start reads it as a returning reader
+        await fake.inbound(HOME, SAM, "hello")  # the chat is known, so the next start catches it up
+        await eventually(lambda: delivered)
 
     missed = [f"text {i}" for i in range(60)]  # more than one 50-message page
 
@@ -190,10 +205,12 @@ def test_a_long_absence_delivers_every_text_past_the_first_page(tmp_path):
 
 def test_a_transient_plow_error_retries_instead_of_stranding_the_text():
     async def scenario(fake, bridge, delivered):
+        await fake.inbound(HOME, SAM, "hello")
+        await eventually(lambda: delivered)
         fake.flaky.add(HOME)  # the read this text triggers answers 503
         await fake.inbound(HOME, SAM, "are you there?")
-        await eventually(lambda: delivered)  # delivered after the reconnect's catch-up
-        assert [c for c, _ in delivered] == ["are you there?"]
+        await eventually(lambda: len(delivered) == 2)  # delivered after the reconnect's catch-up
+        assert [c for c, _ in delivered] == ["hello", "are you there?"]
 
     run_bridge(scenario)
 
@@ -221,7 +238,6 @@ def test_a_record_that_matches_nothing_in_history_replays_nothing(tmp_path, caps
     (0o600, "\n", "token is empty"),
 ], ids=["readable-by-others", "empty"])
 def test_load_config_refuses_a_bad_token_file(tmp_path, mode, token, error):
-    (tmp_path / "config.json").write_text(json.dumps({"senders": {SAM: "sam"}, "chats": [HOME]}))
     (tmp_path / "token").write_text(token)
     (tmp_path / "token").chmod(mode)
     with pytest.raises(SystemExit, match=error):
@@ -229,7 +245,6 @@ def test_load_config_refuses_a_bad_token_file(tmp_path, mode, token, error):
 
 
 def test_load_config_reads_a_private_token(tmp_path):
-    (tmp_path / "config.json").write_text(json.dumps({"senders": {SAM: "sam"}, "chats": [HOME]}))
     (tmp_path / "token").write_text(TOKEN)
     (tmp_path / "token").chmod(0o600)
     assert load_config(tmp_path).token == TOKEN

@@ -20,7 +20,7 @@ A finishing cook reaches you automatically as `← kitchen: <full response>`; ne
 
 ## Texts
 
-A `<channel source="plow-chat" from="<name>" chat="<id>">` tag is an iMessage to you. Only senders on this kitchen's plow-chat allowlist get through, and each carries head-chef authority: act on their text as you would on the head chef's. Name the sender, by `from`, in every report, handoff entry and log line about work they asked for, so the head chef can see who asked for what. Nothing you write outside the `reply` tool reaches them: answer with `reply`, passing the tag's `chat`, in plain text and a few short lines, because they read it on a phone.
+A `<channel source="plow-chat" from="<name>" chat="<id>">` tag is an iMessage to you. It comes from a member of a chat the head chef is in, and every such member carries head-chef authority: act on their text as you would on the head chef's. Name the sender, by `from`, in every report, handoff entry and log line about work they asked for, so the head chef can see who asked for what. Nothing you write outside the `reply` tool reaches them: answer with `reply`, passing the tag's `chat`, in plain text and a few short lines, because they read it on a phone.
 
 ## Specs
 

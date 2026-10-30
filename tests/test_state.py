@@ -252,11 +252,11 @@ class TestWikiAndNotesDirs:
     (False, ["server:kitchen"]),
     (True, ["server:kitchen", "server:plow-chat"]),
 ])
-def test_plow_chat_channel_loads_only_for_the_kitchen_holding_its_config(tmp_path, monkeypatch, configured, flags):
+def test_plow_chat_channel_loads_only_for_the_kitchen_holding_a_line_token(tmp_path, monkeypatch, configured, flags):
     monkeypatch.setenv("HOME", str(tmp_path))
     if configured:
         plow_chat_dir("boss").mkdir(parents=True)
-        (plow_chat_dir("boss") / "config.json").write_text("{}")
+        (plow_chat_dir("boss") / "token").write_text("t")
     assert channel_flags("boss") == flags
     assert channel_flags("other-kitchen") == ["server:kitchen"]
     if configured:
