@@ -284,8 +284,8 @@ A kitchen whose state dir holds `plow-chat/plow-credentials` also loads the `plo
 ```sh
 plow-agents login                 # text the printed phrase from your phone
 plow-agents lines                 # pick a free line
-mkdir -p -m 700 ~/.claude-kitchen/boss/plow-chat
-plow-agents mint ln_... --credential-file ~/.claude-kitchen/boss/plow-chat/plow-credentials
+mkdir -p -m 700 ~/.claude-kitchen/widget-boss/plow-chat
+plow-agents mint ln_... --credential-file ~/.claude-kitchen/widget-boss/plow-chat/plow-credentials
 ```
 
 Then restart the sous: `/exit`, then `kitchen open --resume boss` from the project root. Text the line to check it. A new group needs no setup: add the line's number to it.
