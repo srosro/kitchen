@@ -17,7 +17,8 @@ from claude_kitchen.tmux import (
 )
 from claude_kitchen.state import (
     state_dir, write_status, read_status, update_status,
-    project_slug, namespaced, wiki_dir, notes_dir, atomic_write_json, state_root,
+    project_slug, namespaced, wiki_dir, notes_dir, channel_servers,
+    atomic_write_json, state_root,
     MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME,
 )
 from claude_kitchen.models import max_context_for
@@ -488,14 +489,7 @@ def cmd_open(args):
         _sweep_cooks(base, name)
     else:
         tmux("new-session", "-d", "-s", SESSION, "-n", "_placeholder", kitchen=name)
-    mcp_config = {
-        "mcpServers": {
-            "kitchen": {
-                "command": "kitchen",
-                "args": ["channel-server", name],
-            }
-        }
-    }
+    mcp_config = {"mcpServers": channel_servers(name)}
     (base / MCP_CONFIG_NAME).write_text(json.dumps(mcp_config, indent=2) + "\n")
     # Self-heal kitchens opened before the rename: a legacy base/.mcp.json is
     # cook-discoverable and would still auto-spawn a channel-server.
@@ -1467,6 +1461,8 @@ def main():
 
     p_channel = sub.add_parser("channel-server", help="(internal) Run channel MCP server")
     p_channel.add_argument("kitchen", help="Kitchen name")
+    p_plow = sub.add_parser("plow-chat-server", help="(internal) Run the plow-chat channel MCP server")
+    p_plow.add_argument("kitchen", help="Kitchen name")
 
     args = parser.parse_args()
 
@@ -1501,3 +1497,6 @@ def main():
     elif args.command == "channel-server":
         from claude_kitchen.channel import main as channel_main
         channel_main(args.kitchen)
+    elif args.command == "plow-chat-server":
+        from claude_kitchen.plow_chat import main as plow_chat_main
+        plow_chat_main(args.kitchen)
