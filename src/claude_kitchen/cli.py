@@ -1,5 +1,6 @@
 """CLI entry point for claude-kitchen."""
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -16,7 +17,7 @@ from claude_kitchen.tmux import (
 )
 from claude_kitchen.state import (
     state_dir, write_status, read_status, update_status,
-    project_slug, namespaced, wiki_dir, notes_dir, atomic_write_json,
+    project_slug, namespaced, wiki_dir, notes_dir, atomic_write_json, state_root,
     MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME,
 )
 from claude_kitchen.models import max_context_for
@@ -580,6 +581,19 @@ def _validate_skill_path(raw: str) -> str:
     return str(p.resolve())
 
 
+def _trust_claude_dir(path: str):
+    """Pre-accept Claude's folder-trust dialog for `path`, which would stop a
+    cook booting in a dir Claude has never opened. Kitchens hiring at once
+    serialize on a lock so neither drops the other's grant."""
+    config = Path.home() / ".claude.json"
+    state_root().mkdir(exist_ok=True)
+    with open(state_root() / "claude-json.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        settings = json.loads(config.read_text())
+        settings.setdefault("projects", {}).setdefault(path, {})["hasTrustDialogAccepted"] = True
+        atomic_write_json(config, settings)
+
+
 def cmd_hire(args):
     kitchen = resolve_kitchen(args.kitchen)
     base = state_dir(kitchen)
@@ -651,11 +665,7 @@ def cmd_hire(args):
         if claim.returncode:
             sys.exit(f"tc claim {args.slot} failed for {name}; see its error above.")
         cwd = claim.stdout.strip()
-        # A slot Claude has never opened would stop the cook at its folder-trust dialog.
-        config = Path.home() / ".claude.json"
-        settings = json.loads(config.read_text())
-        settings.setdefault("projects", {}).setdefault(cwd, {})["hasTrustDialogAccepted"] = True
-        atomic_write_json(config, settings)
+        _trust_claude_dir(cwd)
     else:
         cwd = str(resolve_project(args.project or os.getcwd()))
 

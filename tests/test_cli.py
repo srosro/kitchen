@@ -784,6 +784,17 @@ class TestStatusPreservationAcrossNonStopWriters:
             cmd_hire(args)
         mock_spawn.assert_not_called()
 
+    def test_concurrent_slot_hires_each_keep_their_trust_grant(self, tmp_path):
+        """Kitchens hiring at once must not drop each other's trust grant: a lost
+        one stops that cook at Claude's folder-trust dialog."""
+        (tmp_path / ".claude.json").write_text(json.dumps({"projects": {f"/old{i}": {} for i in range(20000)}}))
+        env = {**os.environ, "HOME": str(tmp_path)}
+        hires = [subprocess.Popen([sys.executable, "-c", f"from claude_kitchen.cli import _trust_claude_dir; _trust_claude_dir('/slot{i}')"], env=env)
+                 for i in range(8)]
+        assert [p.wait() for p in hires] == [0] * 8
+        projects = json.loads((tmp_path / ".claude.json").read_text())["projects"]
+        assert all(projects[f"/slot{i}"] == {"hasTrustDialogAccepted": True} for i in range(8))
+
 class TestBrigadeAlignedOutput:
     """Per spec §Chunk 4: cmd_brigade output is one row per cook,
     column-aligned `<cook-name>  <status>  <ctx>`. Cook-name padded to
