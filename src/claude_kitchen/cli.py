@@ -585,9 +585,6 @@ def cmd_hire(args):
     base = state_dir(kitchen)
     name = args.name
     backend = args.backend
-    cwd = args.project or os.getcwd()
-    cwd = str(resolve_project(cwd))
-
     clean_room = getattr(args, "clean_room", False)
     # Clean-room isolation supports claude + codex. Gemini isolation is a
     # documented follow-up — fail clearly rather than silently no-op.
@@ -643,6 +640,18 @@ def cmd_hire(args):
 
     # Clean-room codex cooks get a fresh, isolated CODEX_HOME (no memory,
     # AGENTS.md, plugin registry, or user config). Claude/gemini: None.
+    # --slot: the cook works in a free ~/Hacking/<repo><N> that `tc claim` locks
+    # and branches as <kitchen>/<cook>, so kitchen and tc hand out slots under one
+    # lock; the branch keeps the slot taken until it is back on main.
+    if args.slot:
+        claim = subprocess.run(["tc", "claim", args.slot, f"{kitchen}/{name}"],
+                               stdout=subprocess.PIPE, text=True)
+        if claim.returncode:
+            sys.exit(f"tc claim {args.slot} found no slot for {name}.")
+        cwd = claim.stdout.strip()
+    else:
+        cwd = str(resolve_project(args.project or os.getcwd()))
+
     codex_home = str(_seed_codex_home(base, name, cwd)) if clean_room and backend == "codex" else None
 
     write_status(base, name, {"status": "booting", "agent": name, "backend": backend})
@@ -1386,7 +1395,9 @@ def main():
     p_hire.add_argument("name", help="Cook name")
     p_hire.add_argument("--backend", default="claude", choices=["claude", "codex", "gemini"])
     p_hire.add_argument("--kitchen", help="Target kitchen")
-    p_hire.add_argument("--project", help="Project path (defaults to cwd)")
+    where = p_hire.add_mutually_exclusive_group()
+    where.add_argument("--project", help="Project path (defaults to cwd)")
+    where.add_argument("--slot", metavar="REPO", help="Work in a free ~/Hacking/<REPO><N> slot claimed with `tc claim`")
     p_hire.add_argument("--role", help="Role from src/claude_kitchen/roles/ (all backends)")
     p_hire.add_argument("--effort", help="Reasoning effort (low, medium, high, xhigh, max, ultra; support is backend/model-dependent, Claude maps ultra to max)")
     p_hire.add_argument("--model", choices=[*CLAUDE_MODELS, *CODEX_MODELS], help="Model for the cook: fable, sonnet, or opus (Claude cooks; passed to `claude --model` verbatim, resolving the latest model in that tier), or astra (Codex cooks; passed to `codex -m` as gpt-6-astra). Omit to use the account default.")
