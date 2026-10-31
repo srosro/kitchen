@@ -7,7 +7,7 @@ import pytest
 
 from claude_kitchen.state import (
     state_dir, write_status, read_status, update_status,
-    project_slug, namespaced, wiki_dir, notes_dir, channel_servers, channel_flags,
+    project_slug, namespaced, wiki_dir, notes_dir, channel_servers, channel_flags, exec_discord_server,
 )
 
 
@@ -248,22 +248,23 @@ class TestWikiAndNotesDirs:
         assert d == tmp_path / ".claude-kitchen" / "risotto" / "notes"
 
 
-@pytest.mark.parametrize("credentials, flags", [
-    ([], ["server:kitchen"]),
-    (["plow-chat/plow-credentials"], ["server:kitchen", "server:plow-chat"]),
-    (["discord/.env"], ["server:kitchen", "server:discord"]),
+@pytest.mark.parametrize("credential, flags", [
+    (None, ["server:kitchen"]),
+    ("plow-chat/plow-credentials", ["server:kitchen", "server:plow-chat"]),
+    ("discord/.env", ["server:kitchen", "server:discord"]),
 ])
-def test_optional_channels_load_only_for_the_kitchen_holding_their_credential(tmp_path, monkeypatch, credentials, flags):
+def test_optional_channels_load_only_for_the_kitchen_holding_their_credential(tmp_path, monkeypatch, credential, flags):
     monkeypatch.setenv("HOME", str(tmp_path))
-    for path in credentials:
-        (state_dir("boss") / path).parent.mkdir(parents=True)
-        (state_dir("boss") / path).write_text("TOKEN=t\n")
+    if credential:
+        (state_dir("boss") / credential).parent.mkdir(parents=True)
+        (state_dir("boss") / credential).touch()
     assert channel_flags("boss") == flags
     assert channel_flags("other-kitchen") == ["server:kitchen"]
-    servers = channel_servers("boss")
-    if "plow-chat" in servers:
-        assert servers["plow-chat"] == {"command": "kitchen", "args": ["plow-chat-server", "boss"]}
-    if "discord" in servers:
-        assert servers["discord"]["env"] == {"DISCORD_STATE_DIR": str(state_dir("boss") / "discord"), "DISCORD_ACCESS_MODE": "static"}
-        plugin = Path(servers["discord"]["args"][2])
-        assert (plugin / "server.ts").is_file() and json.loads((plugin / "package.json").read_text())["scripts"]["start"]
+
+
+def test_discord_server_refuses_a_plugin_copy_that_is_not_the_reviewed_one(tmp_path, monkeypatch):
+    monkeypatch.setattr("claude_kitchen.state.DISCORD_PLUGIN", tmp_path)
+    for name in ("server.ts", "bun.lock", "package.json"):
+        (tmp_path / name).write_text("updated upstream\n")
+    with pytest.raises(SystemExit, match="refusing to start"):
+        exec_discord_server()

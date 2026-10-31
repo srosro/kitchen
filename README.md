@@ -292,15 +292,7 @@ Then restart the sous: `/exit`, then `kitchen open --resume boss` from the proje
 
 ## Messaging the sous on Discord
 
-A kitchen whose state dir holds `discord/.env` also loads the official Discord channel plugin's server, run with [Bun](https://bun.sh) from the copy vendored at `src/claude_kitchen/discord` (version 0.0.4, pinned so it changes only through review). Unlike plow-chat it is allowlisted: the server runs in static access mode, so only the Discord user IDs in `discord/access.json` at boot are heard, and pairing is off. Create the bot per the plugin's README (enable Message Content Intent, turn Public Bot off, invite it to a private server), then:
-
-```sh
-mkdir -p -m 700 ~/.claude-kitchen/widget-boss/discord
-install -m 600 /dev/null ~/.claude-kitchen/widget-boss/discord/.env   # then add DISCORD_BOT_TOKEN=<token> in an editor
-echo '{"dmPolicy": "allowlist", "allowFrom": ["<your Discord user ID>"]}' > ~/.claude-kitchen/widget-boss/discord/access.json
-```
-
-Restart the sous as above, then DM the bot.
+A kitchen whose state dir holds `discord/.env` (mode 600, `DISCORD_BOT_TOKEN=<token>`) also loads the official [Discord channel plugin](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/discord)'s server, run with [Bun](https://bun.sh) from the marketplace copy. Kitchen refuses to start it unless that copy is the reviewed 0.0.4. Only the Discord user IDs in `discord/access.json` at boot are heard (`{"dmPolicy": "allowlist", "allowFrom": ["<your ID>"]}`); pairing is off. Restart the sous as above, then DM the bot.
 
 ## Customize the workflow
 
