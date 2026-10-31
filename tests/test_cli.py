@@ -756,8 +756,11 @@ class TestStatusPreservationAcrossNonStopWriters:
         self, mock_rk, mock_state, mock_spawn, mock_wait, tmp_path, monkeypatch,
     ):
         """--slot hands the cook the dir `tc claim` printed, branched for this
-        cook; a claim that finds no slot stops the hire before anything boots."""
+        cook and already trusted by Claude; a claim that finds no slot stops the
+        hire before anything boots."""
         mock_state.return_value = tmp_path
+        monkeypatch.setenv("HOME", str(tmp_path))
+        (tmp_path / ".claude.json").write_text(json.dumps({"numStartups": 3, "projects": {"/other": {"x": 1}}}))
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
         tc = bin_dir / "tc"
@@ -770,6 +773,10 @@ class TestStatusPreservationAcrossNonStopWriters:
         cmd_hire(args)
         assert mock_spawn.call_args.kwargs["cwd"] == "/home/u/Hacking/plow3"
         assert (tmp_path / "argv").read_text() == "claim plow risotto/eng\n"
+        assert json.loads((tmp_path / ".claude.json").read_text()) == {
+            "numStartups": 3,
+            "projects": {"/other": {"x": 1}, "/home/u/Hacking/plow3": {"hasTrustDialogAccepted": True}},
+        }
 
         mock_spawn.reset_mock()
         args.slot = "none"

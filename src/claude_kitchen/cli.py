@@ -16,7 +16,7 @@ from claude_kitchen.tmux import (
 )
 from claude_kitchen.state import (
     state_dir, write_status, read_status, update_status,
-    project_slug, namespaced, wiki_dir, notes_dir,
+    project_slug, namespaced, wiki_dir, notes_dir, atomic_write_json,
     MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME,
 )
 from claude_kitchen.models import max_context_for
@@ -651,6 +651,11 @@ def cmd_hire(args):
         if claim.returncode:
             sys.exit(f"tc claim {args.slot} failed for {name}; see its error above.")
         cwd = claim.stdout.strip()
+        # A slot Claude has never opened would stop the cook at its folder-trust dialog.
+        config = Path.home() / ".claude.json"
+        settings = json.loads(config.read_text())
+        settings.setdefault("projects", {}).setdefault(cwd, {})["hasTrustDialogAccepted"] = True
+        atomic_write_json(config, settings)
     else:
         cwd = str(resolve_project(args.project or os.getcwd()))
 
