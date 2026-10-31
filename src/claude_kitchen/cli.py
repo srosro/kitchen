@@ -644,10 +644,12 @@ def cmd_hire(args):
     # and branches as <kitchen>/<cook>, so kitchen and tc hand out slots under one
     # lock; the branch keeps the slot taken until it is back on main.
     if args.slot:
+        if shutil.which("tc") is None:
+            sys.exit("tc not on PATH — --slot needs code-config's tc.")
         claim = subprocess.run(["tc", "claim", args.slot, f"{kitchen}/{name}"],
                                stdout=subprocess.PIPE, text=True)
         if claim.returncode:
-            sys.exit(f"tc claim {args.slot} found no slot for {name}.")
+            sys.exit(f"tc claim {args.slot} failed for {name}; see its error above.")
         cwd = claim.stdout.strip()
     else:
         cwd = str(resolve_project(args.project or os.getcwd()))

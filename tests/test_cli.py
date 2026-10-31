@@ -773,7 +773,7 @@ class TestStatusPreservationAcrossNonStopWriters:
 
         mock_spawn.reset_mock()
         args.slot = "none"
-        with pytest.raises(SystemExit, match="tc claim none found no slot for eng"):
+        with pytest.raises(SystemExit, match="tc claim none failed for eng"):
             cmd_hire(args)
         mock_spawn.assert_not_called()
 
