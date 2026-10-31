@@ -554,11 +554,7 @@ def _seed_codex_home(base: Path, name: str, cwd: str) -> Path:
         shutil.rmtree(home)  # re-hire under the same name must start fresh
     home.mkdir(parents=True)
     shutil.copyfile(Path.home() / ".codex" / "auth.json", home / "auth.json")
-    # Escape cwd for a TOML basic string (backslash + double-quote) so a path
-    # with those chars stays valid TOML — otherwise codex can't parse the trust
-    # grant and falls back to the (blocking) trust prompt.
-    key = cwd.replace("\\", "\\\\").replace('"', '\\"')
-    (home / "config.toml").write_text(f'[projects."{key}"]\ntrust_level = "trusted"\n')
+    (home / "config.toml").write_text(_codex_trust(cwd))
     return home
 
 
@@ -575,17 +571,31 @@ def _validate_skill_path(raw: str) -> str:
     return str(p.resolve())
 
 
-def _trust_claude_dir(path: str):
-    """Pre-accept Claude's folder-trust dialog for `path`, which would stop a
-    cook booting in a dir Claude has never opened. Kitchens hiring at once
-    serialize on a lock so neither drops the other's grant."""
-    config = Path.home() / ".claude.json"
+def _codex_trust(cwd: str) -> str:
+    """A config.toml entry trusting `cwd`, escaped for a TOML basic string
+    (backslash + double-quote) so codex can parse it — otherwise it falls back
+    to the (blocking) trust prompt."""
+    key = cwd.replace("\\", "\\\\").replace('"', '\\"')
+    return f'[projects."{key}"]\ntrust_level = "trusted"\n'
+
+
+def _trust_dir(path: str, backend: str):
+    """Pre-accept the folder-trust dialog that stops a cook booting in a dir its
+    CLI has never opened: Claude's in ~/.claude.json, Codex's in its config.toml.
+    Kitchens hiring at once serialize on a lock so neither drops the other's grant."""
     state_root().mkdir(exist_ok=True)
-    with open(state_root() / "claude-json.lock", "w") as lock:
+    with open(state_root() / "trust.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        settings = json.loads(config.read_text())
-        settings.setdefault("projects", {}).setdefault(path, {})["hasTrustDialogAccepted"] = True
-        atomic_write_json(config, settings)
+        if backend == "codex":
+            config = Path.home() / ".codex" / "config.toml"
+            text, entry = config.read_text(), _codex_trust(path)
+            if entry.partition("\n")[0] not in text:  # a second table for the dir is invalid TOML
+                config.write_text(f"{text.rstrip()}\n\n{entry}")
+        else:
+            config = Path.home() / ".claude.json"
+            settings = json.loads(config.read_text())
+            settings.setdefault("projects", {}).setdefault(path, {})["hasTrustDialogAccepted"] = True
+            atomic_write_json(config, settings)
 
 
 def cmd_hire(args):
@@ -659,7 +669,7 @@ def cmd_hire(args):
         if claim.returncode:
             sys.exit(f"tc claim {args.slot} failed for {name}; see its error above.")
         cwd = claim.stdout.strip()
-        _trust_claude_dir(cwd)
+        _trust_dir(cwd, backend)
     else:
         cwd = str(resolve_project(args.project or os.getcwd()))
 
