@@ -7,7 +7,7 @@ import pytest
 
 from claude_kitchen.state import (
     state_dir, write_status, read_status, update_status,
-    project_slug, namespaced, wiki_dir, notes_dir, channel_servers, channel_flags, exec_discord_server,
+    project_slug, namespaced, wiki_dir, notes_dir, channel_flags, exec_discord_server,
 )
 
 
