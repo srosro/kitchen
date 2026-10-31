@@ -88,15 +88,15 @@ class Bridge:
         """Take what reached `chat` while the socket was down: the newest
         page's messages above the newest one taken. Plow pages only backwards,
         so a gap of more than one page loses its oldest texts; what sits below a
-        taken text is history, never replayed. A busy or failing Plow raises
-        into the reconnect retry."""
+        taken text is history, never replayed; a text still in the burst counts
+        as taken. A busy or failing Plow raises into the reconnect retry."""
         r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": PAGE})
         if r.status_code == 429 or r.status_code >= 500:
             r.raise_for_status()
         if r.is_error:
             log(f"HTTP {r.status_code} reading chat {chat}; skipped")
             return
-        uids = self.taken[chat]
+        uids = self.taken[chat] + [m["uid"] for m in self.burst]
         for message in reversed(list(takewhile(lambda m: m["uid"] not in uids, r.json()["data"]))):
             await self.take(message)
 

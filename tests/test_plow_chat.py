@@ -70,6 +70,22 @@ def test_any_member_is_delivered_by_name_without_the_chats_history(handle, name)
     run_bridge(scenario, fake)
 
 
+def test_a_reconnect_inside_a_new_chats_first_burst_never_replays_its_history(monkeypatch):
+    monkeypatch.setattr(plow_chat, "BURST_SECONDS", 0.5)
+
+    async def scenario(fake, bridge, delivered):
+        await fake.inbound(HOME, SAM, "fresh")
+        await asyncio.sleep(0.05)  # heard, but its burst is still open
+        await fake.drop_sockets()
+        await eventually(lambda: delivered)
+        await asyncio.sleep(0.3)
+        assert [c for c, _ in delivered] == ["fresh"]
+
+    fake = FakePlow()
+    fake.add(HOME, SAM, "said before the sous was listening")
+    run_bridge(scenario, fake)
+
+
 def test_reply_sends_and_its_echo_never_reaches_the_sous():
     async def scenario(fake, bridge, delivered):
         await bridge.reply(HOME, "on it")
