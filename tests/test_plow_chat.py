@@ -17,6 +17,7 @@ HOME = "cht_home"
 @pytest.fixture(autouse=True)
 def quick_reconnect(monkeypatch):
     monkeypatch.setattr(plow_chat, "RECONNECT_DELAY", 0.05)
+    monkeypatch.setattr(plow_chat, "BURST_SECONDS", 0.1)
 
 
 async def eventually(predicate, timeout=5):
@@ -130,6 +131,31 @@ def test_a_late_text_never_replays_an_earlier_one_after_restart(tmp_path):
 
     run_bridge(before_restart, fake, cursor)
     run_bridge(after_restart, fake, cursor)
+
+
+@pytest.mark.parametrize("live", [True, False], ids=["socket", "catch-up"])
+def test_one_speakers_back_to_back_texts_reach_the_sous_as_one(live, tmp_path):
+    fake, cursor = FakePlow(), tmp_path / "last_seen.json"
+    texts = [(SAM, "add this to the page"), (SAM, "https://example.com/paper"), (PLUCAS, "me too")]
+
+    async def first_contact(fake, bridge, delivered):  # catch-up reads only chats the bridge has heard from
+        await fake.inbound(HOME, SAM, "hi")
+        await eventually(lambda: delivered)
+
+    async def burst(fake, bridge, delivered):
+        if live:
+            for handle, body in texts:
+                await fake.inbound(HOME, handle, body)
+        await eventually(lambda: len(delivered) >= 2)
+        await asyncio.sleep(0.3)
+        assert [(c, m["from"]) for c, m in delivered] == [
+            ("add this to the page\n\nhttps://example.com/paper", "Sam"), ("me too", "Patrick")]
+
+    run_bridge(first_contact, fake, cursor)
+    if not live:
+        for handle, body in texts:
+            fake.add(HOME, handle, body)
+    run_bridge(burst, fake, cursor)
 
 
 def test_reads_the_credential_file_plow_agents_mint_writes(tmp_path):

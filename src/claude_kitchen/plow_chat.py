@@ -24,6 +24,10 @@ from claude_kitchen.state import atomic_write_json, plow_chat_dir
 CREDENTIALS = "plow-credentials"  # written mode 600 by `plow-agents mint LINE --credential-file`
 RECONNECT_DELAY = 5
 PAGE = 50
+# One speaker's back-to-back texts are one tag: iMessage sends a text and the
+# link after it as two messages (0.83 s apart, measured). The window restarts
+# on each text; another speaker or chat ends it.
+BURST_SECONDS = 1.5
 
 
 def log(msg: str):
@@ -36,6 +40,10 @@ def read_credentials(directory: Path) -> dict:
     return dict(line.split("=", 1) for line in lines if "=" in line and not line.startswith("#"))
 
 
+def speaker(message: dict) -> tuple:
+    return message["chat_uid"], message["sender"]["type"], message["sender"].get("provider_key")
+
+
 @dataclass
 class Bridge:
     client: httpx.AsyncClient
@@ -46,21 +54,35 @@ class Bridge:
     # already taken.
     cursor: Path
     taken: dict = field(init=False)
+    burst: list = field(init=False, default_factory=list)  # one speaker's texts not yet handed over
+    due: float = 0.0  # loop time the burst closes at
 
     def __post_init__(self):
         self.taken = json.loads(self.cursor.read_text()) if self.cursor.exists() else {}
 
     async def take(self, message: dict):
-        """Hand a member's text to the sous once; our own sends and Plow's
-        system notes are only recorded."""
+        """Add a message to the burst once, handing the burst over first if
+        the message is someone else's or in another chat."""
         uids = self.taken.setdefault(message["chat_uid"], [])
-        if message["uid"] in uids:
+        if message["uid"] in uids or message["uid"] in [m["uid"] for m in self.burst]:
             return
-        if message["sender"]["type"] == "member":
-            await self.deliver(message["body"], {"from": message["sender"]["display_name"], "chat": message["chat_uid"]})
-        uids.append(message["uid"])  # after delivery, so a crash mid-send can't suppress it
+        if self.burst and speaker(self.burst[0]) != speaker(message):
+            await self.flush()
+        self.burst.append(message)
+        self.due = asyncio.get_running_loop().time() + BURST_SECONDS
+
+    async def flush(self):
+        """Hand a member's burst to the sous as one text; our own sends and
+        Plow's system notes are only recorded."""
+        first = self.burst[0]
+        if first["sender"]["type"] == "member":
+            body = "\n\n".join(m["body"] for m in self.burst)
+            await self.deliver(body, {"from": first["sender"]["display_name"], "chat": first["chat_uid"]})
+        uids = self.taken[first["chat_uid"]]
+        uids += [m["uid"] for m in self.burst]  # after delivery, so a crash mid-send can't suppress it
         del uids[:-2 * PAGE]
         atomic_write_json(self.cursor, self.taken)
+        self.burst = []
 
     async def catch_up(self, chat: str):
         """Take what reached `chat` while the socket was down: the newest
@@ -88,7 +110,8 @@ class Bridge:
 
     async def run(self):
         """Hold the socket forever: a fresh ticket per connect, catch up every
-        known chat once it is open, and take each message frame as it lands."""
+        known chat once it is open, take each message frame as it lands, and
+        hand the burst over once it goes quiet."""
         ws_url = str(self.client.base_url).rstrip("/").replace("http", "ws", 1) + "/v1/ws"
         while True:
             try:
@@ -98,11 +121,16 @@ class Bridge:
                     for chat in list(self.taken):
                         await self.catch_up(chat)
                     log("connected")
-                    async for raw in ws:
+                    while True:
+                        quiet = max(0, self.due - asyncio.get_running_loop().time()) if self.burst else None
+                        try:
+                            raw = await asyncio.wait_for(ws.recv(), quiet)
+                        except TimeoutError:
+                            await self.flush()
+                            continue
                         event = json.loads(raw)
                         if event.get("event_type") == "message_received":
                             await self.take(event["data"]["message"])
-                log("socket closed")
             except Exception as e:
                 # The supervisor is a detached task: it must never die quietly
                 # while the sous waits for texts.
