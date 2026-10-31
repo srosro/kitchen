@@ -805,11 +805,11 @@ class TestStatusPreservationAcrossNonStopWriters:
         args = self._fake_tc(tmp_path, monkeypatch, "codex")
         (tmp_path / ".codex").mkdir()
         config = tmp_path / ".codex" / "config.toml"
-        config.write_text('model = "x"\n\n[projects."/other"]\ntrust_level = "trusted"\n')
+        config.write_text('model = "x"\n\n[projects."/home/u/Hacking/plow33"]\ntrust_level = "trusted"\n')
         cmd_hire(args)
         cmd_hire(args)
         assert tomllib.loads(config.read_text())["projects"] == {
-            "/other": {"trust_level": "trusted"}, "/home/u/Hacking/plow3": {"trust_level": "trusted"}}
+            "/home/u/Hacking/plow33": {"trust_level": "trusted"}, "/home/u/Hacking/plow3": {"trust_level": "trusted"}}
 
         config.write_text('[projects."/home/u/Hacking/plow3"]\ntrust_level = "untrusted"\n')
         cmd_hire(args)

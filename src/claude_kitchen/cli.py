@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -588,9 +589,9 @@ def _trust_dir(path: str, backend: str):
         fcntl.flock(lock, fcntl.LOCK_EX)
         if backend == "codex":
             config = Path.home() / ".codex" / "config.toml"
-            text, entry = config.read_text(), _codex_trust(path)
-            if entry.partition("\n")[0] not in text:  # a second table for the dir is invalid TOML
-                config.write_text(f"{text.rstrip()}\n\n{entry}")
+            text = config.read_text()
+            if path not in tomllib.loads(text).get("projects", {}):  # a second table for it is invalid TOML
+                config.write_text(f"{text.rstrip()}\n\n{_codex_trust(path)}")
         else:
             config = Path.home() / ".claude.json"
             settings = json.loads(config.read_text())
