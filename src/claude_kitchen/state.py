@@ -93,7 +93,7 @@ def atomic_write_json(path: Path, data: dict, mode: int = 0o600):
     try:
         with os.fdopen(fd, "w") as f:
             os.fchmod(f.fileno(), mode)
-            f.write(json.dumps(data) + "\n")
+            f.write(json.dumps(data, indent=2) + "\n")
         os.replace(tmp, path)
     except BaseException:
         try:
