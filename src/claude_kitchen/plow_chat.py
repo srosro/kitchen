@@ -51,7 +51,7 @@ def sender_name(sender: dict) -> str | None:
     if sender["type"] == "member":
         return sender["display_name"]
     if sender["type"] == "agent" and sender["relationship"] == "peer":
-        return sender["line"]["display_name"]
+        return sender["line"].get("display_name") or sender["line"]["provider_key"]
     return None
 
 
