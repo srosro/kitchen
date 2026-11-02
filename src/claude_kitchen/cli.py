@@ -1172,31 +1172,41 @@ def _ctx_for_channel(tokens):
     return f"{pct}% ({inp_k}k/{mx_k}k)"
 
 
+def _install_claude_hooks(settings: Path) -> list[str]:
+    """Append a `kitchen hook` entry to each Claude hook event that lacks one,
+    leaving every other key and hook untouched. Backs the file up and keeps its
+    mode before writing. Returns the events it added."""
+    cmd = {"type": "command", "command": "kitchen hook"}
+    entries = {"Stop": {"hooks": [cmd]}, "UserPromptSubmit": {"matcher": "", "hooks": [cmd]}}
+    data = json.loads(settings.read_text()) if settings.exists() else {}
+    hooks = data.setdefault("hooks", {})
+    added = [ev for ev in entries if not any(
+        h.get("command") == cmd["command"] for e in hooks.get(ev, []) for h in e.get("hooks", []))]
+    if not added:
+        return added
+    for ev in added:
+        hooks.setdefault(ev, []).append(entries[ev])
+    mode = 0o600
+    if settings.exists():
+        mode = settings.stat().st_mode & 0o777
+        shutil.copy2(settings, settings.with_name(f"{settings.name}.bak-kitchen-{datetime.now():%Y%m%d-%H%M%S}"))
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    tmp = settings.with_name(f"{settings.name}.kitchen-tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    tmp.chmod(mode)
+    os.replace(tmp, settings)
+    return added
+
+
 def cmd_setup(args):
-    """Check hook installation and environment. Print what's needed."""
+    """Install kitchen's Claude hooks, check the environment, print what's needed."""
     all_good = True
-    claude_hook_cmd = "kitchen hook"
     codex_hook_cmd = "kitchen"
 
     # --- Claude Code hooks ---
     claude_settings = Path.home() / ".claude" / "settings.json"
-    if claude_settings.exists() and claude_hook_cmd in claude_settings.read_text():
-        print("✅ Claude hooks installed")
-    else:
-        all_good = False
-        stop_entry = json.dumps(
-            {"hooks": [{"type": "command", "command": claude_hook_cmd}]},
-            indent=2,
-        )
-        prompt_entry = json.dumps(
-            {"matcher": "", "hooks": [{"type": "command", "command": claude_hook_cmd}]},
-            indent=2,
-        )
-        print(f"❌ Claude hooks not found in {claude_settings}")
-        print(f"   Add to the \"hooks\" key in {claude_settings}:")
-        print(f'   "Stop": [{stop_entry}],')
-        print(f'   "UserPromptSubmit": [{prompt_entry}]')
-        print()
+    added = _install_claude_hooks(claude_settings)
+    print(f"✅ Claude hooks {'added (' + ', '.join(added) + ') to ' + str(claude_settings) if added else 'installed'}")
 
     # --- mcp SDK ---
     try:
