@@ -1471,7 +1471,7 @@ def main():
 
     sub.add_parser("hook-agy", help="Antigravity/gemini hook handler (called by agy hooks via stdin, not directly)")
 
-    sub.add_parser("setup", help="Check hook installation status")
+    sub.add_parser("setup", help="Install kitchen's Claude hooks and check the environment")
 
     sub.add_parser(
         "statusline-segment",
