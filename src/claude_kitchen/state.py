@@ -79,7 +79,7 @@ def channel_flags(kitchen: str) -> list[str]:
     return [f"server:{name}" for name in channel_servers(kitchen)]
 
 
-def atomic_write_json(path: Path, data: dict):
+def atomic_write_json(path: Path, data: dict, mode: int = 0o600):
     """Atomic JSON write via temp-then-os.replace. Concurrent writers
     never share a temp filename and never replace each other's in-flight
     file. Readers see either the previous or the new full file — never
@@ -92,6 +92,7 @@ def atomic_write_json(path: Path, data: dict):
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as f:
+            os.fchmod(f.fileno(), mode)
             f.write(json.dumps(data) + "\n")
         os.replace(tmp, path)
     except BaseException:

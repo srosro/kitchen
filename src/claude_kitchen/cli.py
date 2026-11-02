@@ -1178,7 +1178,8 @@ def _install_claude_hooks(settings: Path) -> list[str]:
     mode before writing. Returns the events it added."""
     cmd = {"type": "command", "command": "kitchen hook"}
     entries = {"Stop": {"hooks": [cmd]}, "UserPromptSubmit": {"matcher": "", "hooks": [cmd]}}
-    data = json.loads(settings.read_text()) if settings.exists() else {}
+    raw = settings.read_text() if settings.exists() else None
+    data = json.loads(raw) if raw else {}
     hooks = data.setdefault("hooks", {})
     added = [ev for ev in entries if not any(
         h.get("command") == cmd["command"] for e in hooks.get(ev, []) for h in e.get("hooks", []))]
@@ -1187,14 +1188,11 @@ def _install_claude_hooks(settings: Path) -> list[str]:
     for ev in added:
         hooks.setdefault(ev, []).append(entries[ev])
     mode = 0o600
-    if settings.exists():
+    if raw is not None:
         mode = settings.stat().st_mode & 0o777
-        shutil.copy2(settings, settings.with_name(f"{settings.name}.bak-kitchen-{datetime.now():%Y%m%d-%H%M%S}"))
-    settings.parent.mkdir(parents=True, exist_ok=True)
-    tmp = settings.with_name(f"{settings.name}.kitchen-tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n")
-    tmp.chmod(mode)
-    os.replace(tmp, settings)
+        backup = settings.with_name(f"{settings.name}.bak-kitchen-{datetime.now():%Y%m%d-%H%M%S}")
+        atomic_write_json(backup, json.loads(raw), mode=mode)
+    atomic_write_json(settings, data, mode=mode)
     return added
 
 
