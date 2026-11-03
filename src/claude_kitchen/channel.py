@@ -9,7 +9,7 @@ from typing import get_args, get_origin
 from mcp.server.lowlevel import NotificationOptions, Server
 from mcp.server.stdio import stdio_server
 from mcp.shared.message import SessionMessage
-from mcp.types import JSONRPCMessage, JSONRPCNotification
+from mcp.types import JSONRPCMessage, JSONRPCNotification, TextContent, Tool
 
 SOCK_NAME = "kitchen.sock"
 
@@ -68,6 +68,37 @@ def _refuse_if_deaf(capabilities):
             f"{CHANNEL_CAPABILITY} in {', '.join(missing)} in "
             f"create_initialization_options (channel.py)."
         )
+
+
+def reply_server(name: str, medium: str, reply):
+    """A chat channel's MCP server and init options: one `reply` tool, sent
+    through `reply(chat, text) -> str`, and the channel capability."""
+    server = Server(name)
+    tool = Tool(
+        name="reply",
+        description=(f"Send a message to a {medium}; pass the `chat` attribute of the "
+                     f"<channel source=\"{name}\"> tag you are answering."),
+        inputSchema={
+            "type": "object",
+            "properties": {"chat": {"type": "string"}, "text": {"type": "string"}},
+            "required": ["chat", "text"],
+        },
+    )
+
+    @server.list_tools()
+    async def list_tools():
+        return [tool]
+
+    @server.call_tool()
+    async def call_tool(_: str, arguments: dict):
+        return [TextContent(type="text", text=await reply(arguments["chat"], arguments["text"]))]
+
+    options = server.create_initialization_options(
+        notification_options=NotificationOptions(),
+        experimental_capabilities={CHANNEL_CAPABILITY: {}},
+    )
+    _refuse_if_deaf(options.capabilities)
+    return server, options
 
 
 async def push(write_stream, content: str, meta: dict):

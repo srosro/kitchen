@@ -14,12 +14,10 @@ from itertools import takewhile
 from pathlib import Path
 
 import httpx
-import mcp.types as types
 import websockets
-from mcp.server.lowlevel import NotificationOptions, Server
 from mcp.server.stdio import stdio_server
 
-from claude_kitchen.channel import CHANNEL_CAPABILITY, _refuse_if_deaf, push
+from claude_kitchen.channel import push, reply_server
 from claude_kitchen.state import atomic_write_json, plow_chat_dir, read_env
 
 CREDENTIALS = "plow-credentials"  # written mode 600 by `plow-agents mint LINE --credential-file`
@@ -144,39 +142,12 @@ class Bridge:
             await asyncio.sleep(RECONNECT_DELAY)
 
 
-REPLY_TOOL = types.Tool(
-    name="reply",
-    description=(
-        "Send a text message to a Plow chat (iMessage); pass the `chat` "
-        "attribute of the <channel source=\"plow-chat\"> tag you are answering."
-    ),
-    inputSchema={
-        "type": "object",
-        "properties": {"chat": {"type": "string"}, "text": {"type": "string"}},
-        "required": ["chat", "text"],
-    },
-)
-
 
 async def run_server(kitchen: str):
     directory = plow_chat_dir(kitchen)
     credentials = read_env(directory / CREDENTIALS)  # PLOW_API_BASE, PLOW_AGENT_TOKEN
-    server = Server("plow-chat")
     bridge = None  # bound once the HTTP client and stdio streams are open
-
-    @server.list_tools()
-    async def list_tools():
-        return [REPLY_TOOL]
-
-    @server.call_tool()
-    async def call_tool(name: str, arguments: dict):
-        return [types.TextContent(type="text", text=await bridge.reply(arguments["chat"], arguments["text"]))]
-
-    init_options = server.create_initialization_options(
-        notification_options=NotificationOptions(),
-        experimental_capabilities={CHANNEL_CAPABILITY: {}},
-    )
-    _refuse_if_deaf(init_options.capabilities)
+    server, init_options = reply_server("plow-chat", "Plow chat (iMessage)", lambda chat, text: bridge.reply(chat, text))
 
     headers = {"Authorization": f"Bearer {credentials['PLOW_AGENT_TOKEN']}"}
     async with httpx.AsyncClient(base_url=credentials["PLOW_API_BASE"], headers=headers, timeout=30) as client, \

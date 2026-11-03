@@ -14,13 +14,11 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import mcp.types as types
 import websockets
-from mcp.server.lowlevel import NotificationOptions, Server
 from mcp.server.stdio import stdio_server
 
 from claude_kitchen import nostr
-from claude_kitchen.channel import CHANNEL_CAPABILITY, _refuse_if_deaf, push
+from claude_kitchen.channel import push, reply_server
 from claude_kitchen.state import atomic_write_json, read_env, state_dir
 
 CREDENTIALS = "buzz-credentials"  # BUZZ_RELAY_URL and the member key's hex BUZZ_PRIVATE_KEY, mode 600
@@ -153,39 +151,12 @@ class Bridge:
             await asyncio.sleep(RECONNECT_DELAY)
 
 
-REPLY_TOOL = types.Tool(
-    name="reply",
-    description=(
-        "Send a message to a Buzz channel or DM; pass the `chat` attribute of "
-        "the <channel source=\"buzz\"> tag you are answering."
-    ),
-    inputSchema={
-        "type": "object",
-        "properties": {"chat": {"type": "string"}, "text": {"type": "string"}},
-        "required": ["chat", "text"],
-    },
-)
-
 
 async def run_server(kitchen: str):
     directory = state_dir(kitchen) / "buzz"
     credentials = read_env(directory / CREDENTIALS)
-    server = Server("buzz")
     bridge = None  # bound once the stdio streams are open
-
-    @server.list_tools()
-    async def list_tools():
-        return [REPLY_TOOL]
-
-    @server.call_tool()
-    async def call_tool(name: str, arguments: dict):
-        return [types.TextContent(type="text", text=await bridge.reply(arguments["chat"], arguments["text"]))]
-
-    init_options = server.create_initialization_options(
-        notification_options=NotificationOptions(),
-        experimental_capabilities={CHANNEL_CAPABILITY: {}},
-    )
-    _refuse_if_deaf(init_options.capabilities)
+    server, init_options = reply_server("buzz", "Buzz channel or DM", lambda chat, text: bridge.reply(chat, text))
 
     async with stdio_server() as (read_stream, write_stream):
         bridge = Bridge(bytes.fromhex(credentials["BUZZ_PRIVATE_KEY"]),
