@@ -8,6 +8,7 @@ from claude_kitchen.buzz import Bridge
 
 CEDAR, SAM, ASPEN = (bytes.fromhex(f"{n:064x}") for n in (3, 5, 7))
 DM = "62db2030-9ac5-472b-8533-dadf656179c9"
+EOSE = ["EOSE", "messages"]  # the relay's end of a subscription's stored events
 
 
 class FakeSocket:
@@ -54,7 +55,7 @@ def test_delivers_other_members_texts_by_name(tmp_path, frames, expected):
     b, delivered = bridge(tmp_path)
 
     async def go():
-        for f in [membership(SAM, CEDAR, ASPEN), *frames]:
+        for f in [membership(SAM, CEDAR, ASPEN), EOSE, *frames]:
             await b.handle(f)
 
     asyncio.run(go())
@@ -65,10 +66,12 @@ def test_a_text_is_delivered_once_across_replays_and_restarts(tmp_path):
     text = say(SAM, "once")
     first, delivered = bridge(tmp_path)
     asyncio.run(first.handle(membership(SAM, CEDAR)))
+    asyncio.run(first.handle(EOSE))
     asyncio.run(first.handle(text))
     asyncio.run(first.handle(text))
     again, redelivered = bridge(tmp_path)
     asyncio.run(again.handle(membership(SAM, CEDAR)))
+    asyncio.run(again.handle(EOSE))
     asyncio.run(again.handle(text))
     assert len(delivered) == 1 and redelivered == []
     resubscribe = [f for f in again.ws.sent if f[:2] == ["REQ", "messages"]][-1]
@@ -92,3 +95,20 @@ def test_follows_a_channel_once_added_and_replies_only_where_it_is_a_member(tmp_
     assert any(f[:2] == ["REQ", "messages"] and f[2]["#h"] == [DM] for f in b.ws.sent)
     assert (sent["kind"], sent["content"], sent["tags"]) == (9, "hello Sam", [["h", DM]])
     assert result == f"sent {sent['id']}"
+
+
+def test_an_interrupted_replay_is_resumed_from_before_it_started(tmp_path):
+    older, newer = say(SAM, "older"), say(SAM, "newer")
+    older[2]["created_at"] += 10
+    newer[2]["created_at"] += 20
+    first, delivered = bridge(tmp_path)
+    asyncio.run(first.handle(membership(SAM, CEDAR)))
+    since = first.state["since"]
+    asyncio.run(first.handle(["EVENT", "messages", newer[2]]))  # stored events arrive newest first; socket drops
+    again, redelivered = bridge(tmp_path)
+    asyncio.run(again.handle(membership(SAM, CEDAR)))
+    asyncio.run(again.handle(["EVENT", "messages", newer[2]]))
+    asyncio.run(again.handle(["EVENT", "messages", older[2]]))
+    asyncio.run(again.handle(EOSE))
+    assert delivered == [] and again.ws.sent[-1][2]["since"] == since
+    assert [text for text, _ in redelivered] == ["older", "newer"]

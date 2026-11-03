@@ -51,6 +51,10 @@ class Bridge:
     names: dict = field(init=False, default_factory=dict)
     ws: object = None
     pending: dict = field(init=False, default_factory=dict)  # event id -> future of its OK
+    # Stored texts of the current message subscription, held until its EOSE:
+    # the relay replays newest first, so taking one early would move the
+    # resume point past older ones a dropped socket never delivered.
+    replay: list | None = None
 
     def __post_init__(self):
         self.me = nostr.public_key(self.secret).hex()
@@ -68,12 +72,17 @@ class Bridge:
             atomic_write_json(self.cursor, self.state)
         if self.channels:
             await self.send("REQ", "profiles", {"kinds": [PROFILE], "authors": sorted(self.members)})
+            self.replay = []
             await self.send("REQ", "messages", {"kinds": [MESSAGE], "#h": sorted(self.channels),
                                                 "since": self.state["since"]})
 
     async def handle(self, frame: list):
         if frame[0] == "OK" and frame[1] in self.pending:
             self.pending.pop(frame[1]).set_result(frame)
+        if frame[:2] == ["EOSE", "messages"]:
+            replay, self.replay = self.replay, None
+            for event in sorted(replay, key=lambda e: e["created_at"]):
+                await self.take(event)
         if frame[0] != "EVENT":
             return
         event = frame[2]
@@ -86,6 +95,8 @@ class Bridge:
         elif event["kind"] == PROFILE:
             profile = json.loads(event["content"] or "{}")
             self.names[event["pubkey"]] = profile.get("display_name") or profile.get("name")
+        elif event["kind"] == MESSAGE and self.replay is not None:
+            self.replay.append(event)
         elif event["kind"] == MESSAGE:
             await self.take(event)
 
