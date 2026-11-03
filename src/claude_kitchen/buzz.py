@@ -14,10 +14,10 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import nostr_sdk
 import websockets
 from mcp.server.stdio import stdio_server
 
-from claude_kitchen import nostr
 from claude_kitchen.channel import push, reply_server
 from claude_kitchen.state import atomic_write_json, read_env, state_dir
 
@@ -37,7 +37,7 @@ def tag_values(event: dict, name: str) -> list[str]:
 
 @dataclass
 class Bridge:
-    secret: bytes
+    keys: nostr_sdk.Keys
     deliver: callable  # async (content, meta) -> None
     # Where to resume and what was already delivered, persisted so neither a
     # reconnect nor a restart delivers a text twice.
@@ -56,12 +56,16 @@ class Bridge:
     follows: int = 0  # message subscriptions issued; frames of a replaced one are dropped
 
     def __post_init__(self):
-        self.me = nostr.public_key(self.secret).hex()
+        self.me = self.keys.public_key().to_hex()
         self.state = json.loads(self.cursor.read_text()) if self.cursor.exists() else None
 
     @property
     def subscription(self) -> str:
         return f"messages-{self.follows}"
+
+    def sign(self, kind: int, content: str, tags: list) -> dict:
+        builder = nostr_sdk.EventBuilder(nostr_sdk.Kind(kind), content).tags([nostr_sdk.Tag.parse(t) for t in tags])
+        return json.loads(builder.finalize(self.keys).as_json())
 
     async def send(self, *frame):
         await self.ws.send(json.dumps(list(frame)))
@@ -124,7 +128,7 @@ class Bridge:
             raise ValueError("reply text is empty; not sent")
         if chat not in self.channels:
             raise ValueError(f"not a member of {chat}; not sent")
-        event = nostr.event(self.secret, MESSAGE, text, [["h", chat]])
+        event = self.sign(MESSAGE, text, [["h", chat]])
         ok = asyncio.get_running_loop().create_future()
         self.pending[event["id"]] = ok
         try:
@@ -144,7 +148,7 @@ class Bridge:
                 async with websockets.connect(url) as ws:
                     self.ws = ws
                     challenge = json.loads(await ws.recv())
-                    auth = nostr.event(self.secret, 22242, "", [["relay", url], ["challenge", challenge[1]]])
+                    auth = self.sign(22242, "", [["relay", url], ["challenge", challenge[1]]])
                     await self.send("AUTH", auth)
                     if not (ok := json.loads(await ws.recv()))[2]:
                         raise RuntimeError(f"relay refused this key: {ok[3]}")
@@ -168,7 +172,7 @@ async def run_server(kitchen: str):
     server, init_options = reply_server("buzz", "Buzz channel or DM", lambda chat, text: bridge.reply(chat, text))
 
     async with stdio_server() as (read_stream, write_stream):
-        bridge = Bridge(bytes.fromhex(credentials["BUZZ_PRIVATE_KEY"]),
+        bridge = Bridge(nostr_sdk.Keys.parse(credentials["BUZZ_PRIVATE_KEY"]),
                         lambda content, meta: push(write_stream, content, meta), directory / "last_seen.json")
         supervisor = asyncio.create_task(bridge.run(credentials["BUZZ_RELAY_URL"]))
         try:

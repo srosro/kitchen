@@ -1,12 +1,16 @@
 import asyncio
+import itertools
 import json
+import time
 
+import nostr_sdk
 import pytest
 
-from claude_kitchen import nostr
 from claude_kitchen.buzz import Bridge
 
-CEDAR, SAM, ASPEN = (bytes.fromhex(f"{n:064x}") for n in (3, 5, 7))
+KEYS = nostr_sdk.Keys.generate()  # the sous's own member key
+CEDAR, SAM, ASPEN = KEYS.public_key().to_hex(), "5" * 64, "7" * 64
+IDS = itertools.count()
 DM = "62db2030-9ac5-472b-8533-dadf656179c9"
 SUB = "messages-1"  # a fresh bridge's first message subscription
 EOSE = ["EOSE", SUB]  # the relay's end of its stored events
@@ -26,30 +30,32 @@ def bridge(tmp_path):
     async def deliver(content, meta):
         delivered.append((content, meta))
 
-    b = Bridge(CEDAR, deliver, tmp_path / "last_seen.json")
+    b = Bridge(KEYS, deliver, tmp_path / "last_seen.json")
     b.ws = FakeSocket()
     return b, delivered
 
 
-def frame(secret, kind, content="", tags=()):
-    return ["EVENT", "sub", nostr.event(secret, kind, content, list(tags))]
+def event(author, kind, content="", tags=()):
+    """A relay-delivered event; the bridge trusts the relay, so it is unsigned."""
+    return {"id": f"{next(IDS):064x}", "pubkey": author, "created_at": int(time.time()), "kind": kind,
+            "tags": list(tags), "content": content}
 
 
 def membership(*members):
-    return frame(SAM, 39002, tags=[["d", DM], *(["p", nostr.public_key(m).hex()] for m in members)])
+    return ["EVENT", "members", event(SAM, 39002, tags=[["d", DM], *(["p", m] for m in members)])]
 
 
-def profile(secret, name):
-    return frame(secret, 0, json.dumps({"display_name": name}))
+def profile(author, name):
+    return ["EVENT", "profiles", event(author, 0, json.dumps({"display_name": name}))]
 
 
-def say(secret, text, sub=SUB):
-    return ["EVENT", sub, nostr.event(secret, 9, text, [["h", DM]])]
+def say(author, text, sub=SUB):
+    return ["EVENT", sub, event(author, 9, text, [["h", DM]])]
 
 
 @pytest.mark.parametrize("frames,expected", [
     pytest.param([profile(SAM, "Sam"), say(SAM, "hi Cedar")], [("hi Cedar", "Sam")], id="named"),
-    pytest.param([say(ASPEN, "hey")], [("hey", nostr.public_key(ASPEN).hex()[:8])], id="no-profile"),
+    pytest.param([say(ASPEN, "hey")], [("hey", ASPEN[:8])], id="no-profile"),
     pytest.param([say(CEDAR, "my own reply"), say(SAM, " \n")], [], id="own-and-blank"),
 ])
 def test_delivers_other_members_texts_by_name(tmp_path, frames, expected):
