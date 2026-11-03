@@ -53,7 +53,6 @@ def public_key(secret: bytes) -> bytes:
 
 def sign(secret: bytes, msg: bytes, aux: bytes) -> bytes:
     d0 = int.from_bytes(secret, "big")
-    assert 0 < d0 < N, "secret key out of range"
     pub = _mul(d0)
     d = d0 if pub[1] % 2 == 0 else N - d0
     t = (d ^ int.from_bytes(_tagged("BIP0340/aux", aux), "big")).to_bytes(32, "big")
