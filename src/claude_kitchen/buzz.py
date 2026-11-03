@@ -109,8 +109,11 @@ class Bridge:
         event = nostr.event(self.secret, MESSAGE, text, [["h", chat]])
         ok = asyncio.get_running_loop().create_future()
         self.pending[event["id"]] = ok
-        await self.send("EVENT", event)
-        _, _, accepted, message = await asyncio.wait_for(ok, 15)
+        try:
+            await self.send("EVENT", event)
+            _, _, accepted, message = await asyncio.wait_for(ok, 15)
+        finally:
+            self.pending.pop(event["id"], None)  # so an OK arriving after the timeout finds nothing to resolve
         if not accepted:
             raise RuntimeError(f"relay refused the reply: {message}")
         return f"sent {event['id']}"
