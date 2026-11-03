@@ -7,7 +7,8 @@ import httpx
 import pytest
 
 from claude_kitchen import plow_chat
-from claude_kitchen.plow_chat import Bridge, read_credentials
+from claude_kitchen.plow_chat import CREDENTIALS, Bridge
+from claude_kitchen.state import read_env
 from tests.fake_plow import TOKEN, FakePlow
 
 SAM, PLUCAS, STRANGER = "+15550000001", "+15550000002", "+15550000099"
@@ -185,4 +186,4 @@ def test_one_speakers_back_to_back_texts_reach_the_sous_as_one(live, tmp_path):
 def test_reads_the_credential_file_plow_agents_mint_writes(tmp_path):
     (tmp_path / "plow-credentials").write_text(
         f"PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN={TOKEN}\n# plow-agent-uid: 73f5\n")
-    assert read_credentials(tmp_path) == {"PLOW_API_BASE": "https://api.plow.co", "PLOW_AGENT_TOKEN": TOKEN}
+    assert read_env(tmp_path / CREDENTIALS) == {"PLOW_API_BASE": "https://api.plow.co", "PLOW_AGENT_TOKEN": TOKEN}

@@ -1482,6 +1482,8 @@ def main():
     p_channel.add_argument("kitchen", help="Kitchen name")
     p_plow = sub.add_parser("plow-chat-server", help="(internal) Run the plow-chat channel MCP server")
     p_plow.add_argument("kitchen", help="Kitchen name")
+    p_buzz = sub.add_parser("buzz-server", help="(internal) Run the Buzz channel MCP server")
+    p_buzz.add_argument("kitchen", help="Kitchen name")
     sub.add_parser("discord-server", help="(internal) Run the pinned Discord channel MCP server")
 
     args = parser.parse_args()
@@ -1520,6 +1522,9 @@ def main():
     elif args.command == "plow-chat-server":
         from claude_kitchen.plow_chat import main as plow_chat_main
         plow_chat_main(args.kitchen)
+    elif args.command == "buzz-server":
+        from claude_kitchen.buzz import main as buzz_main
+        buzz_main(args.kitchen)
     elif args.command == "discord-server":
         from claude_kitchen.state import exec_discord_server
         exec_discord_server()

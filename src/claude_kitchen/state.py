@@ -54,13 +54,21 @@ def plow_chat_dir(kitchen: str) -> Path:
     return state_dir(kitchen) / "plow-chat"
 
 
+def read_env(path: Path) -> dict:
+    """The KEY=value lines of a credential file."""
+    lines = path.read_text().splitlines()
+    return dict(line.split("=", 1) for line in lines if "=" in line and not line.startswith("#"))
+
+
 def channel_servers(kitchen: str) -> dict:
     """The MCP servers a sous loads, each one a channel: the kitchen's own,
-    plus plow-chat or Discord once this kitchen holds its credential. All run the
-    `kitchen` on PATH, the deployed install."""
+    plus plow-chat, Buzz or Discord once this kitchen holds its credential. All
+    run the `kitchen` on PATH, the deployed install."""
     servers = {"kitchen": {"command": "kitchen", "args": ["channel-server", kitchen]}}
     if (plow_chat_dir(kitchen) / "plow-credentials").exists():
         servers["plow-chat"] = {"command": "kitchen", "args": ["plow-chat-server", kitchen]}
+    if (state_dir(kitchen) / "buzz" / "buzz-credentials").exists():
+        servers["buzz"] = {"command": "kitchen", "args": ["buzz-server", kitchen]}
     if (state_dir(kitchen) / "discord" / ".env").exists():
         # Static access: only the allowlist on disk at boot is heard, never paired or edited live.
         env = {"DISCORD_STATE_DIR": str(state_dir(kitchen) / "discord"), "DISCORD_ACCESS_MODE": "static"}

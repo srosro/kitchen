@@ -20,7 +20,7 @@ from mcp.server.lowlevel import NotificationOptions, Server
 from mcp.server.stdio import stdio_server
 
 from claude_kitchen.channel import CHANNEL_CAPABILITY, _refuse_if_deaf, push
-from claude_kitchen.state import atomic_write_json, plow_chat_dir
+from claude_kitchen.state import atomic_write_json, plow_chat_dir, read_env
 
 CREDENTIALS = "plow-credentials"  # written mode 600 by `plow-agents mint LINE --credential-file`
 RECONNECT_DELAY = 5
@@ -33,12 +33,6 @@ BURST_SECONDS = 1.5
 
 def log(msg: str):
     print(f"plow-chat: {msg}", file=sys.stderr, flush=True)
-
-
-def read_credentials(directory: Path) -> dict:
-    """`PLOW_API_BASE` and `PLOW_AGENT_TOKEN`, from the env file `plow-agents mint` writes."""
-    lines = (directory / CREDENTIALS).read_text().splitlines()
-    return dict(line.split("=", 1) for line in lines if "=" in line and not line.startswith("#"))
 
 
 def speaker(message: dict) -> tuple:
@@ -166,7 +160,7 @@ REPLY_TOOL = types.Tool(
 
 async def run_server(kitchen: str):
     directory = plow_chat_dir(kitchen)
-    credentials = read_credentials(directory)
+    credentials = read_env(directory / CREDENTIALS)  # PLOW_API_BASE, PLOW_AGENT_TOKEN
     server = Server("plow-chat")
     bridge = None  # bound once the HTTP client and stdio streams are open
 
