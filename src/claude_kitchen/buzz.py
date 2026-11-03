@@ -53,10 +53,15 @@ class Bridge:
     # the relay replays newest first, so taking one early would move the
     # resume point past older ones a dropped socket never delivered.
     replay: list | None = None
+    follows: int = 0  # message subscriptions issued; frames of a replaced one are dropped
 
     def __post_init__(self):
         self.me = nostr.public_key(self.secret).hex()
         self.state = json.loads(self.cursor.read_text()) if self.cursor.exists() else None
+
+    @property
+    def subscription(self) -> str:
+        return f"messages-{self.follows}"
 
     async def send(self, *frame):
         await self.ws.send(json.dumps(list(frame)))
@@ -70,14 +75,16 @@ class Bridge:
             atomic_write_json(self.cursor, self.state)
         if self.channels:
             await self.send("REQ", "profiles", {"kinds": [PROFILE], "authors": sorted(self.members)})
-            self.replay = []
-            await self.send("REQ", "messages", {"kinds": [MESSAGE], "#h": sorted(self.channels),
-                                                "since": self.state["since"]})
+            if self.follows:
+                await self.send("CLOSE", self.subscription)
+            self.follows, self.replay = self.follows + 1, []
+            await self.send("REQ", self.subscription, {"kinds": [MESSAGE], "#h": sorted(self.channels),
+                                                       "since": self.state["since"]})
 
     async def handle(self, frame: list):
         if frame[0] == "OK" and frame[1] in self.pending:
             self.pending.pop(frame[1]).set_result(frame)
-        if frame[:2] == ["EOSE", "messages"]:
+        if frame[:2] == ["EOSE", self.subscription]:
             replay, self.replay = self.replay, None
             for event in sorted(replay, key=lambda e: e["created_at"]):
                 await self.take(event)
@@ -93,6 +100,8 @@ class Bridge:
         elif event["kind"] == PROFILE:
             profile = json.loads(event["content"] or "{}")
             self.names[event["pubkey"]] = profile.get("display_name") or profile.get("name")
+        elif event["kind"] == MESSAGE and frame[1] != self.subscription:
+            return
         elif event["kind"] == MESSAGE and self.replay is not None:
             self.replay.append(event)
         elif event["kind"] == MESSAGE:
