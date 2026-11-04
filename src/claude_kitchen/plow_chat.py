@@ -23,10 +23,12 @@ from claude_kitchen.state import atomic_write_json, plow_chat_dir, read_env
 CREDENTIALS = "plow-credentials"  # written mode 600 by `plow-agents mint LINE --credential-file`
 RECONNECT_DELAY = 5
 PAGE = 50
-# One speaker's back-to-back texts are one tag: iMessage sends a text and the
-# link after it as two messages (0.83 s apart, measured). The window restarts
+# One speaker's back-to-back texts are one tag. iMessage sends a link as its
+# own message only after the sender's phone fetches the preview, so the link
+# lands well after the text before it: under 6 s for 95% of links in 90 days
+# of Plow inbound, and only 35% under the old 1.5 s. The window restarts
 # on each text; another speaker or chat ends it.
-BURST_SECONDS = 1.5
+BURST_SECONDS = 6.0
 
 
 def log(msg: str):
