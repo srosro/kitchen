@@ -7,7 +7,7 @@ import pytest
 
 from claude_kitchen.state import (
     state_dir, write_status, read_status, update_status,
-    project_slug, namespaced, wiki_dir, notes_dir, channel_flags, exec_discord_server,
+    project_slug, namespaced, wiki_dir, notes_dir, channel_flags, channel_servers, exec_discord_server,
 )
 
 
@@ -252,6 +252,7 @@ class TestWikiAndNotesDirs:
     (None, ["server:kitchen"]),
     ("plow-chat/plow-credentials", ["server:kitchen", "server:plow-chat"]),
     ("discord/.env", ["server:kitchen", "server:discord"]),
+    ("swarm/credential.json", ["server:kitchen", "server:swarm"]),
 ])
 def test_optional_channels_load_only_for_the_kitchen_holding_their_credential(tmp_path, monkeypatch, credential, flags):
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -268,3 +269,11 @@ def test_discord_server_refuses_a_plugin_copy_that_is_not_the_reviewed_one(tmp_p
         (tmp_path / name).write_text("updated upstream\n")
     with pytest.raises(SystemExit, match="refusing to start"):
         exec_discord_server()
+
+
+def test_swarm_channel_is_the_swarm_binary_on_this_kitchens_credential(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    credential = state_dir("boss") / "swarm" / "credential.json"
+    credential.parent.mkdir(parents=True)
+    credential.touch()
+    assert channel_servers("boss")["swarm"] == {"command": "swarm", "args": ["mcp", "--credential", str(credential)]}

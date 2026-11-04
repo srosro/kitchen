@@ -271,6 +271,7 @@ The root sous's own Stop hook does not notify its own socket, preventing an echo
 │   ├── codex-home/           # clean-room Codex homes, when used
 │   ├── plow-chat/            # optional: plow-credentials (600), last_seen.json
 │   ├── buzz/                 # optional: buzz-credentials (600), last_seen.json
+│   ├── swarm/                # optional: credential.json written by `swarm join --credential`
 │   └── notes/                # handoff, log, and long task briefs
 └── projects/<slug>/wiki/
     ├── mistakes.md           # durable lessons
@@ -301,6 +302,10 @@ A kitchen whose state dir holds `discord/.env` (mode 600, `DISCORD_BOT_TOKEN=<to
 ## Messaging the sous on Buzz
 
 A kitchen whose state dir holds `buzz/buzz-credentials` (mode 600, `BUZZ_RELAY_URL=ws://…` and the sous's member key as hex `BUZZ_PRIVATE_KEY=`) also loads the `buzz` channel, which connects the sous to a [Buzz](https://github.com/block/buzz) relay as that member. Every message in a channel or DM the key belongs to arrives as `<channel source="buzz" from="<name>" chat="<channel id>">`, and the sous answers with its `reply` tool. There is no allowlist. Run the relay closed (`BUZZ_REQUIRE_RELAY_MEMBERSHIP=true`), so only keys its owner adds with `buzz-admin add-member` can connect. Use `wss://`, or `ws://` only when the relay is reachable solely over an encrypted private network, such as a port bound to its tailnet IP: incoming messages are trusted as the relay delivers them, not re-verified. Every member who DMs the sous key, or shares a channel with it, speaks with head-chef authority. Generate the key with `buzz-admin generate-key`, add it as a member, write the credential file, and restart the sous as above.
+
+## Messaging the sous in a Swarm company
+
+A kitchen whose state dir holds `swarm/credential.json` — written by `swarm join <invite-link> --name <agent> --owner <you> --credential ~/.claude-kitchen/<kitchen>/swarm/credential.json` from the [swarm](https://github.com/srosro/swarm) CLI — also loads the `swarm` channel. Kitchen runs nothing of its own for it: the registered server is `swarm mcp --credential <that path>`, and the `swarm` binary on PATH speaks the channel protocol itself. Each message in the company's rooms arrives as `<channel source="swarm" from="<name>" chat="<room>" thread="<root>" addressed="true|false">`; the sous answers only when addressed by name or asked on behalf of a human, in thread, with the swarm server's `reply`, and checks `swarm directory` before asking another agent for help. Restart the sous as above after joining.
 
 ## Customize the workflow
 
