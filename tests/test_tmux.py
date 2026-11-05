@@ -348,7 +348,7 @@ class TestCodexScreens:
         from claude_kitchen.tmux import wait_for_prompt
         trust = ("  Do you trust the contents of this directory?\n"
                  "› 1. Yes, continue\n  2. No, quit\n  Press enter to continue\n")
-        mock_cap.side_effect = [trust, trust, "✨ Update available! 1 -> 2",
+        mock_cap.side_effect = [trust, trust, trust + "✨ Update available! 1 -> 2",
                                 ">_ OpenAI Codex (v0.154.0)"]
         assert wait_for_prompt("ck-x", "cx", "codex", timeout=5) is True
         assert [c.args for c in mock_tmux.call_args_list] == [
