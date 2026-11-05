@@ -368,18 +368,6 @@ class TestCodexScreens:
         assert fake.state["pasted_text"] is None
         assert fake.state["enter"] == 0
 
-    @pytest.mark.parametrize("pane", [CODEX_IDLE, CODEX_BUSY])
-    @patch("claude_kitchen.tmux.time.sleep", return_value=None)
-    @patch("claude_kitchen.tmux.tmux")
-    @patch("claude_kitchen.tmux.capture_pane")
-    def test_ticket_sent_at_the_chat_prompt(self, mock_cap, mock_tmux, mock_sleep, pane):
-        from claude_kitchen.tmux import send_keys
-        mock_cap.side_effect = [pane] + [pane + "› a ticket\n"] * 50
-        fake = _tmux_cursor()
-        mock_tmux.side_effect = fake
-        send_keys("ck-x", "cx", "a ticket", backend="codex")
-        assert fake.state["pasted_text"] == "a ticket"
-
 
 class TestBusyMarkerHit:
     """Pure marker-match logic against the real captured tails."""
@@ -641,17 +629,20 @@ class TestSendKeysVerifiedSubmit:
         assert fake.state["enter"] == 1
         assert fake.state["pasted_text"] == text
 
+    @pytest.mark.parametrize("pane", [CODEX_IDLE, CODEX_BUSY])
     @patch("claude_kitchen.tmux.time.sleep", return_value=None)
     @patch("claude_kitchen.tmux.tmux")
     @patch("claude_kitchen.tmux.capture_pane")
-    def test_first_enter_submits(self, mock_cap, mock_tmux, mock_sleep):
+    def test_first_enter_submits(self, mock_cap, mock_tmux, mock_sleep, pane):
+        """Idle or mid-turn, a codex cook at its composer takes the ticket."""
         from claude_kitchen.tmux import send_keys
-        mock_cap.side_effect = _settle_stable()
+        mock_cap.side_effect = [pane] + [pane + f"› {_SETTLE_HEAD}\n"] * 50
         # cursor_x: empty (pre-paste) → payload (precondition) → empty (accepted).
         fake = _tmux_cursor()
         mock_tmux.side_effect = fake
         send_keys("ck-x", "cx", _SETTLE_HEAD, backend="codex")
         assert fake.state["enter"] == 1
+        assert fake.state["pasted_text"] == _SETTLE_HEAD
 
     @patch("claude_kitchen.tmux.time.sleep", return_value=None)
     @patch("claude_kitchen.tmux.tmux")
