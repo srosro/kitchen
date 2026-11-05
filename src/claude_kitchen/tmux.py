@@ -264,9 +264,9 @@ def wait_for_prompt(kitchen: str, window: str, backend: str,
                     return True
                 screen = next((s for s in ("Update available!",
                                            "Do you trust the contents")
-                               if s in content), None)
-                if (backend == "codex" and screen
-                        and screen not in codex_answered):
+                               if s in content and s not in codex_answered),
+                              None)
+                if backend == "codex" and screen:
                     tmux("send-keys", "-t", target(window), "3", "Enter",
                          kitchen=kitchen, check=True)
                     codex_answered.add(screen)
