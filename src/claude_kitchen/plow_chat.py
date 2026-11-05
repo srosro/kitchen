@@ -2,12 +2,13 @@
 
 Holds the Plow chat API socket for the line's agent credential, pushes each
 member's text into the sous as a `<channel source="plow-chat">` tag, and gives
-the sous a `reply` tool. No allowlist: Plow shows the credential only the chats
+the sous `reply` and `send_file` tools. No allowlist: Plow shows the credential only the chats
 the line's account owns, so every participant it delivers — a person or a peer
 agent's line — is served.
 """
 import asyncio
 import json
+import mimetypes
 import sys
 from dataclasses import dataclass, field
 from itertools import takewhile
@@ -16,6 +17,7 @@ from pathlib import Path
 import httpx
 import websockets
 from mcp.server.stdio import stdio_server
+from mcp.types import Tool
 
 from claude_kitchen.channel import push, reply_server
 from claude_kitchen.state import atomic_write_json, plow_chat_dir, read_env
@@ -29,6 +31,37 @@ PAGE = 50
 # 72% of links (6 s: 95%; 1.5 s: 35%), traded for less delay per text. The
 # window restarts on each text; another speaker or chat ends it.
 BURST_SECONDS = 3.0
+MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024
+MAX_ATTACHMENTS = 4  # per message
+UPLOAD_TIMEOUT = httpx.Timeout(30, read=120)
+# No system files, so a guess doesn't change from one machine to another.
+STANDARD_TYPES = mimetypes.MimeTypes(filenames=())
+# Plow's spelling of the types the standard library misses or names differently.
+CONTENT_TYPES = {
+    ".3gp": "video/3gpp",
+    ".amr": "audio/amr",
+    ".avi": "video/x-msvideo",
+    ".caf": "audio/x-caf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".epub": "application/epub+zip",
+    ".gz": "application/x-gzip",
+    ".ico": "image/x-icon",
+    ".ics": "text/calendar",
+    ".key": "application/x-iwork-keynote-sffkey",
+    ".m4a": "audio/x-m4a",
+    ".m4v": "video/x-m4v",
+    ".mid": "audio/midi",
+    ".midi": "audio/midi",
+    ".numbers": "application/x-iwork-numbers-sffnumbers",
+    ".pages": "application/x-iwork-pages-sffpages",
+    ".pkpass": "application/vnd.apple.pkpass",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".rtf": "text/rtf",
+    ".vcf": "text/vcard",
+    ".wav": "audio/x-wav",
+    ".webp": "image/webp",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
 
 
 def log(msg: str):
@@ -47,6 +80,38 @@ def sender_name(sender: dict) -> str | None:
     if sender["type"] == "agent" and sender["relationship"] == "peer":
         return sender["line"].get("display_name") or sender["line"]["provider_key"]
     return None
+
+
+def content_type_of(file: Path) -> str:
+    """The type to declare for `file`; Plow decides whether it accepts it."""
+    content_type = CONTENT_TYPES.get(file.suffix.lower()) or STANDARD_TYPES.guess_type(file.name)[0]
+    if content_type is None:
+        raise ValueError(f"can't tell the file type of {file.name} from its extension; not sent")
+    return content_type
+
+
+def attachable(path: str) -> Path:
+    """The file at `path`, once it passes every check that needs no Plow."""
+    file = Path(path).expanduser()
+    if not file.is_file():
+        raise ValueError(f"{file} is not a file; not sent")
+    size = file.stat().st_size
+    if not 0 < size <= MAX_ATTACHMENT_BYTES:
+        raise ValueError(f"{file.name} is {size} bytes; Plow takes 1 byte up to 100 MiB; not sent")
+    content_type_of(file)
+    return file
+
+
+def sent(r: httpx.Response, what: str) -> str:
+    """Report a message send, failing unless Plow will deliver it. A held send
+    answers 200 and is never delivered."""
+    if r.is_error:
+        raise RuntimeError(f"Plow refused the {what} with HTTP {r.status_code}: {r.text}")
+    message = r.json()
+    if message.get("held"):
+        raise RuntimeError(f"Plow held the {what} and will never deliver it: {message['reason']}")
+    return f"sent {message['uid']}"
+
 
 
 @dataclass
@@ -109,10 +174,36 @@ class Bridge:
     async def reply(self, chat: str, text: str) -> str:
         if not text.strip():
             raise ValueError("reply text is empty; not sent")
-        r = await self.client.post(f"/v1/chats/{chat}/messages", json={"body": text})
+        return sent(await self.client.post(f"/v1/chats/{chat}/messages", json={"body": text}), "reply")
+
+    async def upload(self, chat: str, file: Path) -> str:
+        """Declare `file` on `chat` and upload its bytes; returns its attachment uid."""
+        data = await asyncio.to_thread(file.read_bytes)
+        r = await self.client.post(f"/v1/chats/{chat}/attachments", json={
+            "filename": file.name, "content_type": content_type_of(file), "size_bytes": len(data),
+        })
         if r.is_error:
-            raise RuntimeError(f"Plow refused the reply with HTTP {r.status_code}")
-        return f"sent {r.json()['uid']}"
+            raise RuntimeError(f"Plow refused {file.name} with HTTP {r.status_code}: {r.text}; nothing sent")
+        attachment = r.json()
+        # Its own client: the signed URL is the provider's, and the shared client
+        # would hand it the Plow token.
+        async with httpx.AsyncClient(timeout=UPLOAD_TIMEOUT) as provider:
+            r = await provider.put(attachment["upload_url"], content=data, headers=attachment["upload_headers"])
+        # By status alone: an httpx error would print the signed URL, and Plow
+        # sends without checking the upload landed.
+        if not r.is_success:
+            raise RuntimeError(f"uploading {file.name} failed with HTTP {r.status_code}; nothing sent")
+        return attachment["uid"]
+
+    async def send_file(self, chat: str, paths: list[str], caption: str = "") -> str:
+        """Send local files on `chat` as one message, or nothing if any fails."""
+        if not 1 <= len(paths) <= MAX_ATTACHMENTS:
+            raise ValueError(f"{len(paths)} files given; a message takes 1 to {MAX_ATTACHMENTS}; nothing sent")
+        files = [attachable(path) for path in paths]  # all of them before Plow hears of any
+        uids = [await self.upload(chat, file) for file in files]
+        return sent(await self.client.post(f"/v1/chats/{chat}/messages", json={
+            "attachment_uids": uids, "body": caption,
+        }), "file")
 
     async def run(self):
         """Hold the socket forever: a fresh ticket per connect, catch up every
@@ -144,12 +235,39 @@ class Bridge:
             await asyncio.sleep(RECONNECT_DELAY)
 
 
+SEND_FILE = Tool(
+    name="send_file",
+    description=(
+        "Send 1 to 4 local files (images, PDFs, video, audio or documents, up to 100 MiB "
+        "each) to a Plow chat (iMessage) as one message, with an optional caption; pass "
+        "the `chat` attribute of the <channel source=\"plow-chat\"> tag you are answering. "
+        "If any file fails, nothing is sent."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "chat": {"type": "string"},
+            "paths": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": MAX_ATTACHMENTS},
+            "caption": {"type": "string"},
+        },
+        "required": ["chat", "paths"],
+    },
+)
+
+
+async def call(bridge: Bridge, name: str, arguments: dict) -> str:
+    """Run the Bridge method a tool names, with its arguments as keywords."""
+    if name not in ("reply", SEND_FILE.name):
+        raise ValueError(f"unknown tool {name}")
+    return await getattr(bridge, name)(**arguments)
+
 
 async def run_server(kitchen: str):
     directory = plow_chat_dir(kitchen)
     credentials = read_env(directory / CREDENTIALS)  # PLOW_API_BASE, PLOW_AGENT_TOKEN
     bridge = None  # bound once the HTTP client and stdio streams are open
-    server, init_options = reply_server("plow-chat", "Plow chat (iMessage)", lambda chat, text: bridge.reply(chat, text))
+    server, init_options = reply_server("plow-chat", "Plow chat (iMessage)",
+                                        lambda name, arguments: call(bridge, name, arguments), SEND_FILE)
 
     headers = {"Authorization": f"Bearer {credentials['PLOW_AGENT_TOKEN']}"}
     async with httpx.AsyncClient(base_url=credentials["PLOW_API_BASE"], headers=headers, timeout=30) as client, \

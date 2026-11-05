@@ -205,6 +205,7 @@ The sous runs these commands under the hood. You can also use them directly from
 | `kitchen hire <cook> [options]` | Spawn a cook and wait until its interactive prompt is ready. |
 | `kitchen roles` | List the packaged cook roles. |
 | `kitchen ticket <cook> "message"` | Deliver a verified message to a cook. |
+| `kitchen ticket sous --kitchen <kitchen> "message"` | From a sous, deliver a ticket to another kitchen's sous over its channel socket; exits non-zero if that sous is not listening. |
 | `kitchen peek <cook> [--full]` | Capture the cook's current pane or full scrollback. |
 | `kitchen brigade [kitchen]` | Show live cook status and known context usage. |
 | `kitchen clock-out <cook>` | Hard-kill a cook and remove its managed state. |
@@ -282,7 +283,7 @@ The root sous's own Stop hook does not notify its own socket, preventing an echo
 
 ## Texting the sous (plow-chat)
 
-A kitchen whose state dir holds `plow-chat/plow-credentials` also loads the `plow-chat` channel when `kitchen open` starts its sous. Texts to that Plow line arrive as `<channel source="plow-chat" from="<name>" chat="<chat uid>">`, and the sous answers with its `reply` tool. There is no allowlist: Plow delivers only chats the line's account owns, meaning the owner's 1:1 and any iMessage group the owner was in when its first text arrived. Every member of those chats speaks with head-chef authority, and so does any other agent's Plow line in them: its texts arrive under that line's name. Anyone who has both numbers can start such a group, so the owner should treat every group with the line as trusted.
+A kitchen whose state dir holds `plow-chat/plow-credentials` also loads the `plow-chat` channel when `kitchen open` starts its sous. Texts to that Plow line arrive as `<channel source="plow-chat" from="<name>" chat="<chat uid>">`, and the sous answers with its `reply` tool, or sends up to four local files as one message with `send_file`. There is no allowlist: Plow delivers only chats the line's account owns, meaning the owner's 1:1 and any iMessage group the owner was in when its first text arrived. Every member of those chats speaks with head-chef authority, and so does any other agent's Plow line in them: its texts arrive under that line's name. Anyone who has both numbers can start such a group, so the owner should treat every group with the line as trusted.
 
 **Setup**, using [`plow-agents`](https://github.com/plow-pbc/plow-agents#quickstart) and the kitchen name `kitchen open` prints (a kitchen `boss` opened in a `widget` repo is `widget-boss`):
 

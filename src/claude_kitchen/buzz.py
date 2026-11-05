@@ -169,7 +169,7 @@ async def run_server(kitchen: str):
     directory = state_dir(kitchen) / "buzz"
     credentials = read_env(directory / CREDENTIALS)
     bridge = None  # bound once the stdio streams are open
-    server, init_options = reply_server("buzz", "Buzz channel or DM", lambda chat, text: bridge.reply(chat, text))
+    server, init_options = reply_server("buzz", "Buzz channel or DM", lambda _, arguments: bridge.reply(**arguments))
 
     async with stdio_server() as (read_stream, write_stream):
         bridge = Bridge(nostr_sdk.Keys.parse(credentials["BUZZ_PRIVATE_KEY"]),
