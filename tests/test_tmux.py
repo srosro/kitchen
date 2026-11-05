@@ -307,10 +307,78 @@ GEMINI_BUSY = (
     "esc to cancel                                    Gemini 3.5 Flash (Medium)\n"
 )
 
+# A signed-out codex cook's first screen (codex-cli 0.154.0).
+CODEX_SIGNIN = (
+    "  Welcome to Codex, OpenAI's command-line coding agent\n"
+    "> 1. Sign in with ChatGPT\n"
+    "  2. Sign in with Device Code\n"
+    "  3. Provide your own API key\n"
+    "     Pay for what you use\n"
+    "  Press enter to continue\n"
+)
+
 
 def _tail(raw):
     """Mirror _pane_tail's filtering so marker tests can run on raw captures."""
     return [ln for ln in raw.splitlines() if ln.strip()][-40:]
+
+
+class TestCodexScreens:
+    @patch("claude_kitchen.tmux.time")
+    @patch("claude_kitchen.tmux.tmux")
+    @patch("claude_kitchen.tmux.capture_pane")
+    def test_hire_presses_nothing_on_signin(self, mock_cap, mock_tmux, mock_time):
+        """`3` + Enter on the sign-in screen selects "Provide your own API key";
+        hire must leave a signed-out cook alone and fail at the stall."""
+        from claude_kitchen.tmux import wait_for_prompt
+        clock = [0]
+        def now():
+            clock[0] += 10
+            return clock[0]
+        mock_time.time.side_effect = now
+        mock_cap.return_value = CODEX_SIGNIN
+        assert wait_for_prompt("ck-x", "cx", "codex", timeout=1000) is False
+        mock_tmux.assert_not_called()
+
+    @patch("claude_kitchen.tmux.time.sleep", return_value=None)
+    @patch("claude_kitchen.tmux.tmux")
+    @patch("claude_kitchen.tmux.capture_pane")
+    def test_trust_dialog_is_still_answered(self, mock_cap, mock_tmux, mock_sleep):
+        from claude_kitchen.tmux import wait_for_prompt
+        mock_cap.side_effect = [
+            "  Do you trust the contents of this directory?\n"
+            "› 1. Yes, continue\n  2. No, quit\n  Press enter to continue\n",
+            ">_ OpenAI Codex (v0.154.0)",
+        ]
+        assert wait_for_prompt("ck-x", "cx", "codex", timeout=5) is True
+        assert ("send-keys", "-t", "kitchen:cx", "3", "Enter") in [
+            c.args for c in mock_tmux.call_args_list]
+
+    @pytest.mark.parametrize("pane", [CODEX_SIGNIN, "› 1. Yes, continue\n  2. No, quit\n"])
+    @patch("claude_kitchen.tmux.tmux")
+    @patch("claude_kitchen.tmux.capture_pane")
+    def test_ticket_refused_off_the_chat_prompt(self, mock_cap, mock_tmux, pane):
+        """A ticket must never be typed into a sign-in or picker screen."""
+        from claude_kitchen.tmux import send_keys
+        mock_cap.return_value = pane
+        fake = _tmux_cursor()
+        mock_tmux.side_effect = fake
+        with pytest.raises(RuntimeError, match="not at the codex chat prompt"):
+            send_keys("ck-x", "cx", "a ticket", backend="codex")
+        assert fake.state["pasted_text"] is None
+        assert fake.state["enter"] == 0
+
+    @pytest.mark.parametrize("pane", [CODEX_IDLE, CODEX_BUSY])
+    @patch("claude_kitchen.tmux.time.sleep", return_value=None)
+    @patch("claude_kitchen.tmux.tmux")
+    @patch("claude_kitchen.tmux.capture_pane")
+    def test_ticket_sent_at_the_chat_prompt(self, mock_cap, mock_tmux, mock_sleep, pane):
+        from claude_kitchen.tmux import send_keys
+        mock_cap.side_effect = [pane] + [pane + "› a ticket\n"] * 50
+        fake = _tmux_cursor()
+        mock_tmux.side_effect = fake
+        send_keys("ck-x", "cx", "a ticket", backend="codex")
+        assert fake.state["pasted_text"] == "a ticket"
 
 
 class TestBusyMarkerHit:
@@ -446,15 +514,15 @@ def _settle_stable():
     def cap(session, window, full=False):
         calls["n"] += 1
         if calls["n"] == 1:
-            return "idle transcript\n> "
-        return f"transcript line\n> {_SETTLE_HEAD} landed\n"  # head present, stable
+            return "idle transcript\n› "
+        return f"transcript line\n› {_SETTLE_HEAD} landed\n"  # head present, stable
 
     return cap
 
 
 def _settle_no_signal(session, window, full=False):
     """Settle-poll never sees the head → paste never positively observed."""
-    return "idle transcript, head never appears\n> "
+    return "idle transcript, head never appears\n› "
 
 
 _SPINNER_GLYPHS = "✻✽✶✳✢"
@@ -477,7 +545,7 @@ def _settle_spinner():
     def cap(session, window, full=False):
         calls["n"] += 1
         if calls["n"] == 1:
-            return "idle transcript\n> "
+            return "idle transcript\n› "
         g = _SPINNER_GLYPHS[calls["n"] % len(_SPINNER_GLYPHS)]
         return (f"{g} Infusing… ({calls['n']}s · ↓ {calls['n']}.1k tokens)\n"
                 f"> {_SETTLE_HEAD} landed\n")
@@ -558,7 +626,7 @@ class TestSendKeysVerifiedSubmit:
 
         def offscreen_pane(session, window, full=False):
             captures["n"] += 1
-            return "idle transcript\n> " if captures["n"] == 1 else visible_tail
+            return "idle transcript\n› " if captures["n"] == 1 else visible_tail
 
         assert len(text) < 1000
         assert head[:24] not in visible_tail
