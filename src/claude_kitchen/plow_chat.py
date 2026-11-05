@@ -3,7 +3,8 @@
 Holds the Plow chat API socket for the line's agent credential, pushes each
 member's text into the sous as a `<channel source="plow-chat">` tag, and gives
 the sous `reply` and `send_file` tools. No allowlist: Plow shows the credential only the chats
-the line's account owns, so every chat and every member it delivers is served.
+the line's account owns, so every participant it delivers — a person or a peer
+agent's line — is served.
 """
 import asyncio
 import json
@@ -25,10 +26,12 @@ from claude_kitchen.state import atomic_write_json, plow_chat_dir
 CREDENTIALS = "plow-credentials"  # written mode 600 by `plow-agents mint LINE --credential-file`
 RECONNECT_DELAY = 5
 PAGE = 50
-# One speaker's back-to-back texts are one tag: iMessage sends a text and the
-# link after it as two messages, measured from 0.83 s up to 1.50 s apart. The
+# One speaker's back-to-back texts are one tag. iMessage sends a link as its
+# own message only after the sender's phone fetches the preview, so the link
+# lands well after the text before it. In 90 days of Plow inbound, 3 s caught
+# 72% of links (6 s: 95%; 1.5 s: 35%), traded for less delay per text. The
 # window restarts on each text; another speaker or chat ends it.
-BURST_SECONDS = 2.0
+BURST_SECONDS = 3.0
 MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024
 MAX_ATTACHMENTS = 4  # per message
 UPLOAD_TIMEOUT = httpx.Timeout(30, read=120)
@@ -104,7 +107,17 @@ def sent(r: httpx.Response, what: str) -> str:
 
 
 def speaker(message: dict) -> tuple:
-    return message["chat_uid"], message["sender"]["type"], message["sender"].get("provider_key")
+    return message["chat_uid"], json.dumps(message["sender"], sort_keys=True)
+
+
+def sender_name(sender: dict) -> str | None:
+    """A participant's name: a person's, or a peer agent's line; None for this
+    line's own sends and Plow's system notes."""
+    if sender["type"] == "member":
+        return sender["display_name"]
+    if sender["type"] == "agent" and sender["relationship"] == "peer":
+        return sender["line"].get("display_name") or sender["line"]["provider_key"]
+    return None
 
 
 @dataclass
@@ -135,12 +148,13 @@ class Bridge:
         self.due = asyncio.get_running_loop().time() + BURST_SECONDS
 
     async def flush(self):
-        """Hand a member's burst to the sous as one text; our own sends and
-        Plow's system notes are only recorded."""
+        """Hand a participant's burst to the sous as one text; our own sends,
+        Plow's system notes and text-less messages (tapbacks, bare
+        attachments) are only recorded."""
         first = self.burst[0]
-        if first["sender"]["type"] == "member":
-            body = "\n\n".join(m["body"] for m in self.burst)
-            await self.deliver(body, {"from": first["sender"]["display_name"], "chat": first["chat_uid"]})
+        body = "\n\n".join(m["body"] for m in self.burst if m["body"].strip())
+        if body and (name := sender_name(first["sender"])):
+            await self.deliver(body, {"from": name, "chat": first["chat_uid"]})
         uids = self.taken[first["chat_uid"]]
         uids += [m["uid"] for m in self.burst]  # after delivery, so a crash mid-send can't suppress it
         del uids[:-2 * PAGE]

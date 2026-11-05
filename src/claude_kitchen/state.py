@@ -1,4 +1,5 @@
 """State management for claude-kitchen."""
+import hashlib
 import json
 import os
 import re
@@ -20,6 +21,15 @@ MCP_CONFIG_NAME = "kitchen-mcp.json"
 # remove them on close so existing kitchens stop leaking a cook-discoverable
 # config.
 LEGACY_MCP_CONFIG_NAME = ".mcp.json"
+
+# discord@claude-plugins-official auto-updates; the sous, which bypasses
+# permissions, runs only the reviewed 0.0.4.
+DISCORD_PLUGIN = Path.home() / ".claude/plugins/marketplaces/claude-plugins-official/external_plugins/discord"
+DISCORD_SHA256 = {
+    "server.ts": "6edc17d9e9d04930967361ba51c8e03b8f8508647a1dfc11d79ee6a0eb1010b7",
+    "bun.lock": "c3d69584e51e46a758bd9c8a8bfef12b46fe9f2bb57a367f4deb073edd26c55e",
+    "package.json": "fa2ece9108aca2ae17e7b1909f468ee8f055e53a45882eb25108a3e394f17e46",
+}
 
 
 def state_root() -> Path:
@@ -46,19 +56,30 @@ def plow_chat_dir(kitchen: str) -> Path:
 
 def channel_servers(kitchen: str) -> dict:
     """The MCP servers a sous loads, each one a channel: the kitchen's own,
-    plus plow-chat once this kitchen holds a line's agent credential. Both run the
+    plus plow-chat or Discord once this kitchen holds its credential. All run the
     `kitchen` on PATH, the deployed install."""
     servers = {"kitchen": {"command": "kitchen", "args": ["channel-server", kitchen]}}
     if (plow_chat_dir(kitchen) / "plow-credentials").exists():
         servers["plow-chat"] = {"command": "kitchen", "args": ["plow-chat-server", kitchen]}
+    if (state_dir(kitchen) / "discord" / ".env").exists():
+        # Static access: only the allowlist on disk at boot is heard, never paired or edited live.
+        env = {"DISCORD_STATE_DIR": str(state_dir(kitchen) / "discord"), "DISCORD_ACCESS_MODE": "static"}
+        servers["discord"] = {"command": "kitchen", "args": ["discord-server"], "env": env}
     return servers
+
+
+def exec_discord_server():
+    for name, digest in DISCORD_SHA256.items():
+        if hashlib.sha256((DISCORD_PLUGIN / name).read_bytes()).hexdigest() != digest:
+            sys.exit(f"discord: {DISCORD_PLUGIN / name} is not the reviewed 0.0.4 copy; refusing to start")
+    os.execvp("bun", ["bun", "run", "--cwd", str(DISCORD_PLUGIN), "--shell=bun", "--silent", "start"])
 
 
 def channel_flags(kitchen: str) -> list[str]:
     return [f"server:{name}" for name in channel_servers(kitchen)]
 
 
-def atomic_write_json(path: Path, data: dict):
+def atomic_write_json(path: Path, data: dict, mode: int = 0o600):
     """Atomic JSON write via temp-then-os.replace. Concurrent writers
     never share a temp filename and never replace each other's in-flight
     file. Readers see either the previous or the new full file — never
@@ -71,7 +92,8 @@ def atomic_write_json(path: Path, data: dict):
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as f:
-            f.write(json.dumps(data) + "\n")
+            os.fchmod(f.fileno(), mode)
+            f.write(json.dumps(data, indent=2) + "\n")
         os.replace(tmp, path)
     except BaseException:
         try:
