@@ -244,7 +244,7 @@ def wait_for_prompt(kitchen: str, window: str, backend: str,
     # sign-in screen also says "Press enter to continue", and there `3` selects
     # "Provide your own API key", whose field then takes the next ticket as the
     # key. Signed out, the cook gets no keys and hire fails at the stall.
-    update_dismissed = False
+    codex_answered = set()
     # A claude agent launched with --dangerously-load-development-channels (the
     # sous) shows a one-time "Loading development channels" confirmation before
     # its welcome banner. Option 1 ("I am using this for local development") is
@@ -262,12 +262,14 @@ def wait_for_prompt(kitchen: str, window: str, backend: str,
             if content:
                 if marker in content:
                     return True
-                if (backend == "codex" and not update_dismissed
-                        and ("Update available!" in content
-                             or "Do you trust the contents" in content)):
+                screen = next((s for s in ("Update available!",
+                                           "Do you trust the contents")
+                               if s in content), None)
+                if (backend == "codex" and screen
+                        and screen not in codex_answered):
                     tmux("send-keys", "-t", target(window), "3", "Enter",
                          kitchen=kitchen, check=True)
-                    update_dismissed = True
+                    codex_answered.add(screen)
                 if (backend == "claude" and not channels_confirmed
                         and "Loading development channels" in content):
                     tmux("send-keys", "-t", target(window), "Enter",

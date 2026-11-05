@@ -343,16 +343,16 @@ class TestCodexScreens:
     @patch("claude_kitchen.tmux.time.sleep", return_value=None)
     @patch("claude_kitchen.tmux.tmux")
     @patch("claude_kitchen.tmux.capture_pane")
-    def test_trust_dialog_is_still_answered(self, mock_cap, mock_tmux, mock_sleep):
+    def test_trust_dialog_and_update_picker_answered(self, mock_cap, mock_tmux, mock_sleep):
+        """Trust dialog then update picker: each is answered once."""
         from claude_kitchen.tmux import wait_for_prompt
-        mock_cap.side_effect = [
-            "  Do you trust the contents of this directory?\n"
-            "› 1. Yes, continue\n  2. No, quit\n  Press enter to continue\n",
-            ">_ OpenAI Codex (v0.154.0)",
-        ]
+        trust = ("  Do you trust the contents of this directory?\n"
+                 "› 1. Yes, continue\n  2. No, quit\n  Press enter to continue\n")
+        mock_cap.side_effect = [trust, trust, "✨ Update available! 1 -> 2",
+                                ">_ OpenAI Codex (v0.154.0)"]
         assert wait_for_prompt("ck-x", "cx", "codex", timeout=5) is True
-        assert ("send-keys", "-t", "kitchen:cx", "3", "Enter") in [
-            c.args for c in mock_tmux.call_args_list]
+        assert [c.args for c in mock_tmux.call_args_list] == [
+            ("send-keys", "-t", "kitchen:cx", "3", "Enter")] * 2
 
     @pytest.mark.parametrize("pane", [CODEX_SIGNIN, "› 1. Yes, continue\n  2. No, quit\n"])
     @patch("claude_kitchen.tmux.tmux")
