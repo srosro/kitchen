@@ -1,9 +1,7 @@
 """Kitchen channel MCP server — bridges cook hooks to sous chef via Claude Code channels."""
 import asyncio
-import contextlib
 import fcntl
 import json
-import os
 import socket as sock_mod
 import sys
 from pathlib import Path
@@ -140,10 +138,11 @@ def _claim_socket(sock_path: Path):
     """Own sock_path for this server's life through a lock beside it, and
     return the lock's file, which must stay open.
 
-    The lock is released only when the process exits, after its cleanup has
-    unlinked the socket, so of two servers for one kitchen only the holder
-    ever unlinks or binds the path: the other stands down. A path that is not
-    a socket is left alone, loudly.
+    Only the holder ever unlinks or binds the path, so of two servers for one
+    kitchen the other stands down. A server leaves its socket behind when it
+    exits, stale, for the next holder to clear; `kitchen close` deletes the lock
+    too, which hands the path on even while an old server lives. A path that is
+    not a socket is left alone, loudly.
     """
     owner = open(sock_path.with_name(sock_path.name + ".lock"), "a")
     try:
@@ -215,11 +214,6 @@ async def run_server(kitchen: str):
     finally:
         sock_server.close()
         await sock_server.wait_closed()
-        # `kitchen close` deletes the lock to hand the path to the next server;
-        # once it has, the socket there is no longer ours to remove.
-        with contextlib.suppress(FileNotFoundError):
-            if os.path.samestat(os.fstat(owner.fileno()), os.stat(owner.name)):
-                sock_path.unlink(missing_ok=True)
         owner.close()  # only now may the next server claim the path
 
 
