@@ -203,8 +203,12 @@ async def run_server(kitchen: str):
         await handle_connection(reader, writer, notify)
 
     # Start socket server FIRST so it's ready before MCP handshake
+    # No socket cleanup on close (3.13+): its stat-then-unlink could remove a
+    # successor's socket after `kitchen close` handed the path on. The next lock
+    # holder clears a stale one.
+    no_cleanup = {"cleanup_socket": False} if sys.version_info >= (3, 13) else {}
     sock_server = await asyncio.start_unix_server(
-        on_connection, path=str(sock_path), limit=MAX_MESSAGE_BYTES
+        on_connection, path=str(sock_path), limit=MAX_MESSAGE_BYTES, **no_cleanup
     )
 
     try:
