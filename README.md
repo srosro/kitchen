@@ -306,20 +306,23 @@ A kitchen whose state dir holds `buzz/buzz-credentials` (mode 600, `BUZZ_RELAY_U
 
 ## Messaging the sous in a Swarm company
 
-A kitchen whose state dir holds `swarm/credential.json` also loads [swarm](https://github.com/plow-pbc/swarm)'s MCP server, as the account that file names. The file is a link to the account's credential, which the swarm CLI keeps under `~/.swarm/accounts/<server>/<name>/`:
+Swarm's MCP server is installed once per machine, for every Claude session (`swarm install claude`); each message reaches a session as a new turn, and a session hears only the rooms it joins. A kitchen whose state dir holds `swarm/credential.json` acts as the account that file names: it is a link to the credential the swarm CLI keeps under `~/.swarm/accounts/<server>/<name>/`.
 
 ```bash
+swarm install claude                     # once per machine
 swarm accounts add <agent> '<invite-link>'
 ln -s ~/.swarm/accounts/<server>/<agent>/credential.json ~/.claude-kitchen/<kitchen>/swarm/credential.json
 ```
 
-Kitchen runs nothing of its own for it: the registered server is `swarm mcp claude --account <its user id>`, run from the absolute path of the `swarm` on PATH, which delivers each message as a turn through Claude Code's inbox. A session hears only the rooms it joins, so each sous launch starts with a prompt to join every room `swarm accounts list` shows for the account. Messages arrive as `<swarm-message room sender display_name …>`, and the sous answers in thread with the server's `send` tool, following the instructions swarm serves. Restart the sous as above after adding the link.
+Each sous launch starts with a prompt to join, as that account, every room `swarm accounts list` shows for it. Messages arrive as `<swarm-message room sender display_name …>`, and the sous answers in thread with the server's `send` tool, following the instructions swarm serves. Restart the sous as above after adding the link.
 
-A kitchen still holding the credential file the pre-accounts swarm (0.1.9) wrote there refuses to open. Stop its sous, then move that account into swarm's place and link it back. The `.store` folder holds the account's device keys:
+A kitchen still holding the credential file the pre-accounts swarm (0.1.9) wrote there refuses to open. Stop its sous, then move that account into swarm's place and link it back. The store folder holds the account's device keys:
 
 ```bash
 dir=~/.swarm/accounts/<server>/<agent>; mkdir -p "$dir" && cd ~/.claude-kitchen/<kitchen>/swarm
-mv credential.json "$dir/" && mv credential.store "$dir/store" && rm credential.lock credential.since
+mv credential.json "$dir/" && mv credential.store "$dir/store"
+[ -e credential.outbound ] && mv credential.outbound "$dir/outbound.json"
+rm -f credential.lock credential.since credential.since.pending
 ln -s "$dir/credential.json" credential.json
 ```
 

@@ -19,7 +19,7 @@ from claude_kitchen.tmux import (
 )
 from claude_kitchen.state import (
     state_dir, write_status, read_status, update_status,
-    project_slug, namespaced, wiki_dir, notes_dir, mcp_servers,
+    project_slug, namespaced, wiki_dir, notes_dir, channel_servers,
     atomic_write_json, state_root,
     MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME,
 )
@@ -491,7 +491,7 @@ def cmd_open(args):
         _sweep_cooks(base, name)
     else:
         tmux("new-session", "-d", "-s", SESSION, "-n", "_placeholder", kitchen=name)
-    mcp_config = {"mcpServers": mcp_servers(name)}
+    mcp_config = {"mcpServers": channel_servers(name)}
     (base / MCP_CONFIG_NAME).write_text(json.dumps(mcp_config, indent=2) + "\n")
     # Self-heal kitchens opened before the rename: a legacy base/.mcp.json is
     # cook-discoverable and would still auto-spawn a channel-server.
