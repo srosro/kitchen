@@ -2,6 +2,7 @@
 import itertools
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -282,8 +283,6 @@ def wait_for_prompt(kitchen: str, window: str, backend: str,
         try:
             content = capture_pane(kitchen, window)
             if content:
-                if marker in content:
-                    return True
                 blocker = backend == "claude" and next(
                     (v for k, v in _CLAUDE_ONE_TIME.items() if k in content), None)
                 if blocker:
@@ -291,8 +290,10 @@ def wait_for_prompt(kitchen: str, window: str, backend: str,
                                "#{pane_current_path}", kitchen=kitchen).stdout.strip()
                     raise PromptBlocked(
                         f"Claude Code is waiting on its one-time {blocker} prompt in {cwd}. "
-                        f"Accept it once by hand — `cd {cwd} && claude --dangerously-skip-permissions`, "
-                        f"answer yes, then /exit — and retry")
+                        f"Accept it once by hand — `cd {shlex.quote(cwd)} && claude "
+                        f"--dangerously-skip-permissions`, answer yes, then /exit — and retry")
+                if marker in content:
+                    return True
                 screen = next((s for s in ("Update available!",
                                            "Do you trust the contents")
                                if s in content and s not in codex_answered),

@@ -187,7 +187,8 @@ class TestWaitForPrompt:
         assert ("send-keys", "-t", "kitchen:sous", "Enter") in sent
 
     @pytest.mark.parametrize("screen, name", [
-        ("Accessing workspace:\n /home/r\n ❯ No, exit\n   Yes, I trust this folder", "folder-trust"),
+        ("Claude Code v2.1.319\nAccessing workspace:\n /home/r\n ❯ No, exit\n   Yes, I trust this folder",
+         "folder-trust"),
         ("WARNING: Claude Code running in Bypass Permissions mode\n ❯ 1. No, exit\n   2. Yes, I accept",
          "Bypass Permissions"),
     ])
@@ -199,11 +200,11 @@ class TestWaitForPrompt:
         fail at once with the fix, not stall out — and never answer it."""
         from claude_kitchen.tmux import wait_for_prompt, PromptBlocked
         mock_cap.return_value = screen
-        mock_tmux.return_value = MagicMock(stdout="/home/r\n")
+        mock_tmux.return_value = MagicMock(stdout="/home/r x\n")
         with pytest.raises(PromptBlocked) as e:
             wait_for_prompt("ck-x", "sous", "claude", timeout=5)
-        assert f"one-time {name} prompt in /home/r" in str(e.value)
-        assert "cd /home/r && claude --dangerously-skip-permissions" in str(e.value)
+        assert f"one-time {name} prompt in /home/r x" in str(e.value)
+        assert "cd '/home/r x' && claude --dangerously-skip-permissions" in str(e.value)
         assert not any(c.args[0] == "send-keys" for c in mock_tmux.call_args_list)
 
     @patch("claude_kitchen.tmux.time.sleep", return_value=None)
