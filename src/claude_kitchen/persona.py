@@ -91,3 +91,4 @@ def run(kitchen: str):
             if is_public(url) is False:
                 session.terminate()
                 session.wait()
+        time.sleep(POLL)  # a session that dies at once is not relaunched in a tight loop
