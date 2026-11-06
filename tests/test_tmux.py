@@ -963,3 +963,21 @@ def test_kill_server_removes_the_socket(tmp_path, monkeypatch):
     assert sock.exists()
     kill_server("probe")
     assert not sock.exists()
+
+
+def test_server_never_inherits_a_claude_session(tmp_path, monkeypatch):
+    """Opened from inside a Claude Code session, a kitchen's agents must not
+    inherit that session's identity or inbox through the tmux server."""
+    from claude_kitchen.tmux import kill_server, tmux
+    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/tmp/parent.sock")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "parent-token")
+    monkeypatch.setenv("KITCHEN_PROBE_KEEP", "1")
+    tmux("new-session", "-d", "-s", SESSION, kitchen="probe", check=True)
+    try:
+        env = tmux("show-environment", "-g", kitchen="probe").stdout
+    finally:
+        kill_server("probe")
+    assert "KITCHEN_PROBE_KEEP=1" in env
+    assert "CLAUDECODE" not in env and "CLAUDE_CODE_" not in env

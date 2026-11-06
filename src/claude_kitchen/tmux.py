@@ -75,8 +75,18 @@ def tmux(*args: str, kitchen: str, timeout: int = TIMEOUT,
     back on the default socket."""
     return subprocess.run(
         ["tmux", "-L", socket(kitchen), *args], capture_output=True, text=True,
-        timeout=timeout, input=input, check=check,
+        timeout=timeout, input=input, check=check, env=_without_claude_session(),
     )
+
+
+def _without_claude_session() -> dict:
+    """This process's environment minus Claude Code's session markers. Whichever
+    tmux call starts a kitchen's server hands it this environment, and every sous,
+    cook and persona inherits it from there; run from inside a Claude Code session,
+    they would otherwise take on that session's identity and its inbox socket."""
+    return {k: v for k, v in os.environ.items()
+            if k not in ("CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT")
+            and not k.startswith("CLAUDE_CODE_")}
 
 
 def attach_cmd(kitchen: str) -> str:
