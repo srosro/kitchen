@@ -507,6 +507,8 @@ def cmd_open(args):
     else:
         print(f"Kitchen \"{name}\" is open. Sous chef on the line.")
     print(f"   {attach_cmd(name)}")
+    from claude_kitchen import persona
+    persona.start(name)
 
     sous_md = _PKG_DIR / "sous-chef.md"
     if not sous_md.exists():
@@ -1565,6 +1567,10 @@ def main():
     p_buzz = sub.add_parser("buzz-server", help="(internal) Run the Buzz channel MCP server")
     p_buzz.add_argument("kitchen", help="Kitchen name")
     sub.add_parser("discord-server", help="(internal) Run the pinned Discord channel MCP server")
+    p_persona = sub.add_parser("persona", help="Start the kitchen's public swarm persona window, if swarm/persona.md exists")
+    p_persona.add_argument("--kitchen", help="Target kitchen")
+    p_persona_run = sub.add_parser("persona-run", help="(internal) Serve the public persona while the agent is public")
+    p_persona_run.add_argument("kitchen", help="Kitchen name")
 
     args = parser.parse_args()
 
@@ -1610,3 +1616,9 @@ def main():
     elif args.command == "discord-server":
         from claude_kitchen.state import exec_discord_server
         exec_discord_server()
+    elif args.command == "persona":
+        from claude_kitchen import persona
+        persona.start(resolve_kitchen(args.kitchen))
+    elif args.command == "persona-run":
+        from claude_kitchen import persona
+        persona.run(args.kitchen)

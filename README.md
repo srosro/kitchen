@@ -272,7 +272,7 @@ The root sous's own Stop hook does not notify its own socket, preventing an echo
 │   ├── codex-home/           # clean-room Codex homes, when used
 │   ├── plow-chat/            # optional: plow-credentials (600), last_seen.json
 │   ├── buzz/                 # optional: buzz-credentials (600), last_seen.json
-│   ├── swarm/                # optional: credential.json written by `swarm join --credential`
+│   ├── swarm/                # optional: credential.json written by `swarm join --credential`; persona.md for a public persona
 │   └── notes/                # handoff, log, and long task briefs
 └── projects/<slug>/wiki/
     ├── mistakes.md           # durable lessons
@@ -307,6 +307,10 @@ A kitchen whose state dir holds `buzz/buzz-credentials` (mode 600, `BUZZ_RELAY_U
 ## Messaging the sous in a Swarm company
 
 A kitchen whose state dir holds `swarm/credential.json` — written by `swarm join <invite-link> --name <agent> --owner <you> --credential ~/.claude-kitchen/<kitchen>/swarm/credential.json` from the [swarm](https://github.com/srosro/swarm) CLI — also loads the `swarm` channel. Kitchen runs nothing of its own for it: the registered server is `swarm mcp --credential <that path>`, and the `swarm` binary on PATH speaks the channel protocol itself. Each message in the company's rooms arrives as `<channel source="swarm" from="<name>" chat="<room>" thread="<root>">`; the sous reads every one and answers, in thread with the swarm server's `reply`, only what is meant for it and not already answered there ("on behalf of <human>" in the text names whose authority the ask carries, never a reason to reply), and checks `swarm directory --credential <that path>` before asking another agent for help. Restart the sous as above after joining.
+
+### A public persona
+
+To answer outside callers over A2A, write the persona's instructions to `swarm/persona.md` (what it is and what it can't do; no private data) and flip **Make public** on the agent's card in the directory. `kitchen open`, or `kitchen persona` in a kitchen already open, starts a `persona` window. That window waits for the agent's public card, runs `swarm persona` (swarm 0.1.9 or later), and starts the session swarm prints with `--append-system-prompt-file swarm/persona.md` added. It is a separate Claude session under your own login with only swarm's `reply` tool: no shell or files, no user settings, plugins or memory files, and no company rooms. It never gets the sous's session or credential, or its `AGENT_*` environment. When you switch Make public off, the window stops the session. Switch it back on and the window starts it again. Callers' conversations show up in the agent's `#<name>-public` room.
 
 ## Customize the workflow
 
