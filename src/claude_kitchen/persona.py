@@ -15,10 +15,11 @@ import urllib.request
 
 from claude_kitchen.cli import _trust_dir
 from claude_kitchen.state import state_dir, swarm_account, swarm_binary, swarm_join_prompt
-from claude_kitchen.tmux import list_windows, has_session, tmux, target, SESSION
+from claude_kitchen.tmux import list_windows, has_session, tmux, target, pane_busy, send_keys, SESSION
 
 WINDOW = "persona"
 POLL = 60
+JOIN_TRIES, JOIN_WAIT = 12, 5
 
 
 def persona_file(kitchen: str):
@@ -45,10 +46,32 @@ def is_public(url: str) -> bool | None:
     return None
 
 
-def launch_argv(launch: dict, persona: str, first_turn: str) -> list[str]:
-    """swarm's `cd '<dir>' && claude …` as argv, plus the persona and its first turn."""
+def launch_argv(launch: dict, persona: str) -> list[str]:
+    """swarm's `cd '<dir>' && claude …` as argv, plus the persona."""
     claude = launch["command"].split(" && ", 1)[1]
-    return [*shlex.split(claude), "--append-system-prompt-file", persona, first_turn]
+    return [*shlex.split(claude), "--append-system-prompt-file", persona]
+
+
+def held(account: str) -> bool:
+    """Whether a session holds `account`, which it does once it has joined."""
+    listed = json.loads(subprocess.run([swarm_binary(), "accounts", "list"], capture_output=True, text=True,
+                                       check=True).stdout)["accounts"]
+    return any(a["account"] == account and a["holder"] for a in listed)
+
+
+def join(kitchen: str, session: subprocess.Popen, account: str, prompt: str):
+    """Ask the persona to join until its account is held. A prompt given at
+    launch is answered before swarm's server has connected, with no join tool
+    yet, so it is typed in once the session is up, and again if it didn't take."""
+    for _ in range(JOIN_TRIES):
+        time.sleep(JOIN_WAIT)
+        if held(account) or session.poll() is not None:
+            return
+        if not pane_busy(kitchen, WINDOW, "claude"):
+            send_keys(kitchen, WINDOW, prompt, backend="claude")
+    time.sleep(JOIN_WAIT)
+    if not held(account):
+        print(f"persona: {account} never joined; see the {WINDOW} window.", file=sys.stderr)
 
 
 def start(kitchen: str):
@@ -81,12 +104,13 @@ def run(kitchen: str):
             continue
         added = json.loads(added.stdout)
         cwd = added["launch"]["dir"]
-        argv = launch_argv(added["launch"], str(persona_file(kitchen)), swarm_join_prompt(added["account"], added["rooms"]))
+        argv = launch_argv(added["launch"], str(persona_file(kitchen)))
         _trust_dir(cwd, "claude")
         # The tmux server's environment can carry a sous's or cook's identity; the persona is neither.
         env = {k: v for k, v in os.environ.items()
                if not k.startswith(("AGENT_", "KITCHEN_")) and k != "STATUS_DIR"}
         session = subprocess.Popen(argv, cwd=cwd, env=env)
+        join(kitchen, session, added["account"], swarm_join_prompt(added["account"], added["rooms"]))
         while session.poll() is None:
             time.sleep(POLL)
             if is_public(url) is False:
