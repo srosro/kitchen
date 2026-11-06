@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -2792,18 +2793,27 @@ class TestCmdOpenSubSous:
     @patch("claude_kitchen.cli.remove_worktree")
     @patch("claude_kitchen.cli.namespaced", return_value="widget-child")
     @patch("claude_kitchen.cli.project_slug", return_value="widget")
-    @patch("claude_kitchen.cli.spawn_sous_window", return_value=False)
+    @patch("claude_kitchen.cli.wait_for_prompt")
+    @patch("claude_kitchen.cli.spawn_sous_window")
     @patch("claude_kitchen.cli.has_session", return_value=False)
     @patch("claude_kitchen.cli.tmux")
     @patch("claude_kitchen.cli.state_dir")
     @patch("claude_kitchen.cli.create_worktree")
     @patch("claude_kitchen.cli.resolve_project")
-    def test_spawn_failure_cleans_up_and_exits(
+    @pytest.mark.parametrize("spawn_ok, outcome, error", [
+        (False, None, "could not launch the sous window"),
+        (True, False, "never reached its prompt"),
+        # The worktree is about to be removed, so the fix names its parent.
+        (True, PromptBlocked("folder-trust", "/gone/wt"), "one-time folder-trust prompt.*cd {parent} "),
+    ])
+    def test_failed_launch_cleans_up_and_exits(
         self, mock_resolve, mock_wt, mock_state, mock_tmux, mock_has,
-        mock_spawn_win, mock_slug, mock_ns, mock_rmwt, tmp_path, monkeypatch,
+        mock_spawn_win, mock_wait, mock_slug, mock_ns, mock_rmwt,
+        spawn_ok, outcome, error, tmp_path, monkeypatch,
     ):
-        """spawn_sous_window False → never leave a sous-less kitchen: kill the
-        session, remove the worktree, wipe the state dir, and exit clearly."""
+        """A child sous that never comes up — no window, a stall, or a one-time
+        modal named with its fix — never leaves a sous-less kitchen: kill the
+        server, remove the worktree, wipe the state dir, and exit clearly."""
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.delenv("STATUS_DIR", raising=False)
         mock_resolve.return_value = Path("/tmp/myproject")
@@ -2813,6 +2823,11 @@ class TestCmdOpenSubSous:
         wt.mkdir()
         mock_wt.return_value = wt
         mock_tmux.return_value = MagicMock(returncode=0, stdout="")
+        mock_spawn_win.return_value = spawn_ok
+        if isinstance(outcome, Exception):
+            mock_wait.side_effect = outcome
+        else:
+            mock_wait.return_value = outcome
 
         args = MagicMock()
         args.name = "child"
@@ -2822,7 +2837,7 @@ class TestCmdOpenSubSous:
         args.sub_sous = True
 
         with patch("claude_kitchen.cli.kill_server") as mock_kill, \
-                pytest.raises(SystemExit, match="cleaned up"):
+                pytest.raises(SystemExit, match=error.format(parent=re.escape(str(tmp_path)))):
             cmd_open(args)
 
         assert not base.exists()                       # state dir wiped
@@ -2830,57 +2845,6 @@ class TestCmdOpenSubSous:
         assert mock_rmwt.call_args.args[0] == wt
         assert mock_rmwt.call_args.kwargs.get("force") is True
         mock_kill.assert_called_once_with("widget-child")
-
-    @patch("claude_kitchen.cli.remove_worktree")
-    @patch("claude_kitchen.cli.namespaced", return_value="widget-child")
-    @patch("claude_kitchen.cli.project_slug", return_value="widget")
-    @patch("claude_kitchen.cli.wait_for_prompt")
-    @patch("claude_kitchen.cli.spawn_sous_window", return_value=True)
-    @patch("claude_kitchen.cli.has_session", return_value=False)
-    @patch("claude_kitchen.cli.tmux")
-    @patch("claude_kitchen.cli.state_dir")
-    @patch("claude_kitchen.cli.create_worktree")
-    @patch("claude_kitchen.cli.resolve_project")
-    @pytest.mark.parametrize("outcome, error", [
-        (False, "never reached its prompt"),
-        (PromptBlocked("waiting on its one-time folder-trust prompt"), "one-time folder-trust"),
-    ])
-    def test_prompt_failure_cleans_up_and_exits(
-        self, mock_resolve, mock_wt, mock_state, mock_tmux, mock_has,
-        mock_spawn_win, mock_wait, mock_slug, mock_ns, mock_rmwt,
-        outcome, error, tmp_path, monkeypatch,
-    ):
-        """Sous spawned but never reached its prompt — a stall, or a one-time
-        modal named with its fix — → same teardown, no half-open kitchen."""
-        if isinstance(outcome, Exception):
-            mock_wait.side_effect = outcome
-        else:
-            mock_wait.return_value = outcome
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.delenv("STATUS_DIR", raising=False)
-        mock_resolve.return_value = Path("/tmp/myproject")
-        base = tmp_path / "state"
-        mock_state.return_value = base
-        wt = tmp_path / "wt"
-        wt.mkdir()
-        mock_wt.return_value = wt
-        mock_tmux.return_value = MagicMock(returncode=0, stdout="")
-
-        args = MagicMock()
-        args.name = "child"
-        args.project = "/tmp/myproject"
-        args.worktree_path = None
-        args.resume = False
-        args.sub_sous = True
-
-        with patch("claude_kitchen.cli.kill_server") as mock_kill, \
-                pytest.raises(SystemExit, match=error):
-            cmd_open(args)
-
-        assert not base.exists()
-        mock_rmwt.assert_called_once()
-        mock_kill.assert_called_once_with("widget-child")
-
 
 class TestAgySummary:
     """_agy_summary gates the gemini Stop notification, so it must NEVER raise.

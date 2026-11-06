@@ -203,7 +203,7 @@ class TestWaitForPrompt:
         mock_tmux.return_value = MagicMock(stdout="/home/r x\n")
         with pytest.raises(PromptBlocked) as e:
             wait_for_prompt("ck-x", "sous", "claude", timeout=5)
-        assert f"one-time {name} prompt in /home/r x" in str(e.value)
+        assert f"one-time {name} prompt" in str(e.value)
         assert "cd '/home/r x' && claude --dangerously-skip-permissions" in str(e.value)
         assert not any(c.args[0] == "send-keys" for c in mock_tmux.call_args_list)
 
@@ -953,11 +953,10 @@ def test_join_swarm_types_the_join_until_the_account_is_held(tmp_path, monkeypat
     assert typed == []
 
 
-def test_kill_server_removes_the_socket(tmp_path, monkeypatch):
+def test_kill_server_removes_the_socket(tmp_path):
     """tmux leaves its socket file behind when the server dies; a kitchen's
     teardown must not."""
     from claude_kitchen.tmux import kill_server, tmux
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
     tmux("new-session", "-d", "-s", SESSION, kitchen="probe", check=True)
     sock = tmp_path / f"tmux-{os.getuid()}" / "ck-probe"
     assert sock.exists()
@@ -969,7 +968,6 @@ def test_server_never_inherits_a_claude_session(tmp_path, monkeypatch):
     """Opened from inside a Claude Code session, a kitchen's agents must not
     inherit that session's identity or inbox through the tmux server."""
     from claude_kitchen.tmux import kill_server, tmux
-    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
     monkeypatch.setenv("CLAUDECODE", "1")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/tmp/parent.sock")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "parent-token")
