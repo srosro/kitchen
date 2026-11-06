@@ -283,7 +283,7 @@ The root sous's own Stop hook does not notify its own socket, preventing an echo
 
 ## Texting the sous (plow-chat)
 
-A kitchen whose state dir holds `plow-chat/plow-credentials` also loads the `plow-chat` channel when `kitchen open` starts its sous. Texts to that Plow line arrive as `<channel source="plow-chat" from="<name>" chat="<chat uid>">`, and the sous answers with its `reply` tool, or sends up to four local files as one message with `send_file`. There is no allowlist: Plow delivers only chats the line's account owns, meaning the owner's 1:1 and any iMessage group the owner was in when its first text arrived. Every member of those chats speaks with head-chef authority, and so does any other agent's Plow line in them: its texts arrive under that line's name. Anyone who has both numbers can start such a group, so the owner should treat every group with the line as trusted.
+A kitchen whose state dir holds `plow-chat/plow-credentials` also loads the `plow-chat` channel when `kitchen open` starts its sous. Texts to that Plow line arrive as `<channel source="plow-chat" from="<name>" chat="<chat uid>">`, and the sous answers with its `reply` tool, or sends up to four local files as one message with `send_file`. Only senders listed in `plow-chat/trusted-senders.json` reach the sous: a JSON list of Plow provider keys (phone numbers, and a peer agent's line's provider key), such as `["+15550000001"]`. Plow shows the line every chat its account owns, and a chat can include people the owner has not vetted, so a text from anyone not listed is logged as dropped and never delivered. With no file, or an empty list, no texts reach the sous. The file is private state under the kitchen, never in the repo.
 
 **Setup**, using [`plow-agents`](https://github.com/plow-pbc/plow-agents#quickstart) and the kitchen name `kitchen open` prints (a kitchen `boss` opened in a `widget` repo is `widget-boss`):
 
@@ -294,7 +294,7 @@ mkdir -p -m 700 ~/.claude-kitchen/widget-boss/plow-chat
 plow-agents mint ln_... --credential-file ~/.claude-kitchen/widget-boss/plow-chat/plow-credentials
 ```
 
-Then restart the sous: `/exit`, then `kitchen open --resume boss` from the project root. Text the line to check it. A new group needs no setup: add the line's number to it.
+Then restart the sous: `/exit`, then `kitchen open --resume boss` from the project root. Text the line to check it. A new group needs no setup on the line, but a person in it reaches the sous only once their number is in `trusted-senders.json`.
 
 ## Messaging the sous on Discord
 

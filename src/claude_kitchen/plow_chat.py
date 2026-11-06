@@ -1,10 +1,10 @@
 """plow-chat channel server — bridges a Plow chat line to the sous.
 
 Holds the Plow chat API socket for the line's agent credential, pushes each
-member's text into the sous as a `<channel source="plow-chat">` tag, and gives
-the sous `reply` and `send_file` tools. No allowlist: Plow shows the credential only the chats
-the line's account owns, so every participant it delivers — a person or a peer
-agent's line — is served.
+trusted participant's text into the sous as a `<channel source="plow-chat">`
+tag, and gives the sous `reply` and `send_file` tools. Only the senders listed
+in `plow-chat/trusted-senders.json` reach the sous: Plow shows the credential
+every chat the line's account owns, and a chat's members are not all trusted.
 """
 import asyncio
 import json
@@ -23,6 +23,7 @@ from claude_kitchen.channel import push, reply_server
 from claude_kitchen.state import atomic_write_json, plow_chat_dir, read_env
 
 CREDENTIALS = "plow-credentials"  # written mode 600 by `plow-agents mint LINE --credential-file`
+TRUSTED = "trusted-senders.json"  # a JSON list of the provider keys (phone numbers) the sous obeys
 RECONNECT_DELAY = 5
 PAGE = 50
 # One speaker's back-to-back texts are one tag. iMessage sends a link as its
@@ -82,6 +83,16 @@ def sender_name(sender: dict) -> str | None:
     return None
 
 
+def sender_key(sender: dict) -> str | None:
+    """The provider key trust is granted by: a person's number, or a peer
+    agent's line; None for this line's own sends and Plow's system notes."""
+    if sender["type"] == "member":
+        return sender.get("provider_key")
+    if sender["type"] == "agent" and sender["relationship"] == "peer":
+        return sender["line"].get("provider_key")
+    return None
+
+
 def content_type_of(file: Path) -> str:
     """The type to declare for `file`; Plow decides whether it accepts it."""
     content_type = CONTENT_TYPES.get(file.suffix.lower()) or STANDARD_TYPES.guess_type(file.name)[0]
@@ -123,6 +134,7 @@ class Bridge:
     # high-water mark: a text sent earlier can land later and sort below one
     # already taken.
     cursor: Path
+    trusted: set  # provider keys whose texts reach the sous
     taken: dict = field(init=False)
     burst: list = field(init=False, default_factory=list)  # one speaker's texts not yet handed over
     due: float = 0.0  # loop time the burst closes at
@@ -142,13 +154,16 @@ class Bridge:
         self.due = asyncio.get_running_loop().time() + BURST_SECONDS
 
     async def flush(self):
-        """Hand a participant's burst to the sous as one text; our own sends,
-        Plow's system notes and text-less messages (tapbacks, bare
-        attachments) are only recorded."""
+        """Hand a trusted participant's burst to the sous as one text; our own
+        sends, Plow's system notes, text-less messages (tapbacks, bare
+        attachments) and untrusted senders' texts are only recorded."""
         first = self.burst[0]
         body = "\n\n".join(m["body"] for m in self.burst if m["body"].strip())
         if body and (name := sender_name(first["sender"])):
-            await self.deliver(body, {"from": name, "chat": first["chat_uid"]})
+            if sender_key(first["sender"]) in self.trusted:
+                await self.deliver(body, {"from": name, "chat": first["chat_uid"]})
+            else:
+                log(f"dropped a text from {name}: not in {TRUSTED}")
         uids = self.taken[first["chat_uid"]]
         uids += [m["uid"] for m in self.burst]  # after delivery, so a crash mid-send can't suppress it
         del uids[:-2 * PAGE]
@@ -265,6 +280,9 @@ async def call(bridge: Bridge, name: str, arguments: dict) -> str:
 async def run_server(kitchen: str):
     directory = plow_chat_dir(kitchen)
     credentials = read_env(directory / CREDENTIALS)  # PLOW_API_BASE, PLOW_AGENT_TOKEN
+    trusted = set(json.loads((directory / TRUSTED).read_text())) if (directory / TRUSTED).exists() else set()
+    if not trusted:
+        log(f"no trusted senders in {directory / TRUSTED}; no texts will reach the sous")
     bridge = None  # bound once the HTTP client and stdio streams are open
     server, init_options = reply_server("plow-chat", "Plow chat (iMessage)",
                                         lambda name, arguments: call(bridge, name, arguments), SEND_FILE)
@@ -272,7 +290,8 @@ async def run_server(kitchen: str):
     headers = {"Authorization": f"Bearer {credentials['PLOW_AGENT_TOKEN']}"}
     async with httpx.AsyncClient(base_url=credentials["PLOW_API_BASE"], headers=headers, timeout=30) as client, \
             stdio_server() as (read_stream, write_stream):
-        bridge = Bridge(client, lambda content, meta: push(write_stream, content, meta), directory / "last_seen.json")
+        bridge = Bridge(client, lambda content, meta: push(write_stream, content, meta), directory / "last_seen.json",
+                        trusted)
         supervisor = asyncio.create_task(bridge.run())
         try:
             await server.run(read_stream, write_stream, init_options)
