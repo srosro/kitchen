@@ -1,22 +1,20 @@
-"""The persona session keeps swarm's confinement and adds only the persona."""
+"""The persona session keeps swarm's confinement and adds only the persona and its join."""
 from claude_kitchen.persona import card_url, launch_argv
 
-# What `swarm persona` 0.1.9 prints, for a directory with an apostrophe in it.
-PRINTED = (
-    "cd '/home/o'\\''k/.claude-kitchen/boss/swarm/cedar-public' && claude "
-    "--dangerously-load-development-channels server:swarm --strict-mcp-config --mcp-config .mcp.json "
-    "--setting-sources project --tools '' --allowedTools mcp__swarm__reply --permission-mode dontAsk\n"
-)
+# The `launch` that `swarm accounts add cedar-public` returns, for a directory with an apostrophe in it.
+LAUNCH = {
+    "dir": "/home/o'k/.swarm/accounts/plow.swarm.plow.co/cedar-public/session",
+    "command": "cd '/home/o'\\''k/.swarm/accounts/plow.swarm.plow.co/cedar-public/session' && claude "
+               "--strict-mcp-config --mcp-config .mcp.json --setting-sources project --tools '' "
+               "--allowedTools mcp__swarm__join,mcp__swarm__send --permission-mode dontAsk",
+}
 
 
-def test_persona_session_runs_swarms_command_in_its_directory_with_the_persona_appended():
-    cwd, argv = launch_argv(PRINTED, "/p/persona.md")
-    assert cwd == "/home/o'k/.claude-kitchen/boss/swarm/cedar-public"
-    assert argv == [
-        "claude", "--dangerously-load-development-channels", "server:swarm",
-        "--strict-mcp-config", "--mcp-config", ".mcp.json", "--setting-sources", "project",
-        "--tools", "", "--allowedTools", "mcp__swarm__reply", "--permission-mode", "dontAsk",
-        "--append-system-prompt-file", "/p/persona.md",
+def test_persona_session_runs_swarms_command_with_the_persona_and_its_first_turn_appended():
+    assert launch_argv(LAUNCH, "/p/persona.md", "join") == [
+        "claude", "--strict-mcp-config", "--mcp-config", ".mcp.json", "--setting-sources", "project",
+        "--tools", "", "--allowedTools", "mcp__swarm__join,mcp__swarm__send", "--permission-mode", "dontAsk",
+        "--append-system-prompt-file", "/p/persona.md", "join",
     ]
 
 

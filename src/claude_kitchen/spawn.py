@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from claude_kitchen.tmux import tmux, has_session, target, SESSION
-from claude_kitchen.state import MCP_CONFIG_NAME, channel_flags
+from claude_kitchen.state import MCP_CONFIG_NAME, channel_flags, sous_first_turn
 
 
 def check_sous_pid(state_dir: Path):
@@ -80,6 +80,7 @@ def spawn_sous(kitchen: str, state_dir: Path, sous_prompt: str,
     if resume_session_id:
         claude_args.extend(["--resume", resume_session_id])
     claude_args.extend(["--append-system-prompt", sous_prompt])
+    claude_args.extend(sous_first_turn(kitchen))
     if project:
         os.chdir(project)
     os.execvp("claude", claude_args)
@@ -276,6 +277,7 @@ def build_sous_cmd(name: str, base: Path, sous_md_path: Path,
         f"--mcp-config {q(str(base / MCP_CONFIG_NAME))} "
         f"{model_flag}"
         f"--append-system-prompt-file {q(str(sous_md_path))}"
+        + "".join(f" {q(turn)}" for turn in sous_first_turn(name))
     )
     return f'bash -lc {q(f"{env}; {claude}")}'
 
