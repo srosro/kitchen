@@ -76,7 +76,7 @@ def channel_servers(kitchen: str) -> dict:
         # without this PATH, and then reports only "not found in $PATH: stdio".
         swarm = shutil.which("swarm") or sys.exit(
             f"{credential} exists, but there is no `swarm` on PATH to serve it.")
-        servers["swarm"] = {"command": swarm, "args": ["mcp", "--credential", str(credential)]}
+        servers["swarm"] = {"command": os.path.abspath(swarm), "args": ["mcp", "--credential", str(credential)]}
     if (state_dir(kitchen) / "discord" / ".env").exists():
         # Static access: only the allowlist on disk at boot is heard, never paired or edited live.
         env = {"DISCORD_STATE_DIR": str(state_dir(kitchen) / "discord"), "DISCORD_ACCESS_MODE": "static"}
