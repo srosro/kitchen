@@ -1,10 +1,13 @@
 """tmux helpers for claude-kitchen."""
+import hashlib
 import itertools
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Optional
 
 from claude_kitchen.state import state_root, swarm_held
@@ -37,10 +40,19 @@ SESSION = "kitchen"
 _buffer_counter = itertools.count()
 
 
+# A socket path (<tmpdir>/tmux-<uid>/<socket>) must fit a unix socket address,
+# 104 bytes on macOS, which a kitchen named after a deep directory overruns.
+SOCKET_MAX = 64
+
+
 def socket(kitchen: str) -> str:
-    """The tmux socket name for a kitchen: `ck-<slug>`. Idempotent, so it is
-    safe to hand it a name that already carries the prefix."""
-    return kitchen if kitchen.startswith(CK_PREFIX) else CK_PREFIX + kitchen
+    """The tmux socket name for a kitchen: `ck-<slug>`, or past SOCKET_MAX its
+    head plus a hash of the whole. Idempotent, so it is safe to hand it a name
+    that already carries the prefix."""
+    name = kitchen if kitchen.startswith(CK_PREFIX) else CK_PREFIX + kitchen
+    if len(name) > SOCKET_MAX:
+        name = f"{name[:SOCKET_MAX - 9]}-{hashlib.sha1(name.encode()).hexdigest()[:8]}"
+    return name
 
 
 # Legacy alias. The old name reads as "make session name" and every call site
@@ -73,8 +85,18 @@ def tmux(*args: str, kitchen: str, timeout: int = TIMEOUT,
     back on the default socket."""
     return subprocess.run(
         ["tmux", "-L", socket(kitchen), *args], capture_output=True, text=True,
-        timeout=timeout, input=input, check=check,
+        timeout=timeout, input=input, check=check, env=_without_claude_session(),
     )
+
+
+def _without_claude_session() -> dict:
+    """This process's environment minus Claude Code's session markers. Whichever
+    tmux call starts a kitchen's server hands it this environment, and every sous,
+    cook and persona inherits it from there; run from inside a Claude Code session,
+    they would otherwise take on that session's identity and its inbox socket."""
+    return {k: v for k, v in os.environ.items()
+            if k not in ("CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT")
+            and not k.startswith("CLAUDE_CODE_")}
 
 
 def attach_cmd(kitchen: str) -> str:
@@ -110,6 +132,14 @@ def list_windows(kitchen: str, timeout: int = TIMEOUT) -> list[str]:
     ]
 
 
+def kill_server(kitchen: str):
+    """Kill a kitchen's tmux server and remove its socket, which tmux leaves
+    behind on exit."""
+    tmux("kill-server", kitchen=kitchen)
+    Path(os.environ.get("TMUX_TMPDIR", "/tmp"), f"tmux-{os.getuid()}",
+         socket(kitchen)).unlink(missing_ok=True)
+
+
 def has_session(kitchen: str, timeout: int = TIMEOUT) -> bool:
     """True if this kitchen's session is up on its own socket.
 
@@ -140,6 +170,28 @@ _PROMPT_MARKERS = {
     "codex": "OpenAI Codex (v",
     "gemini": "? for shortcuts",  # agy TUI footer, present when input is editable
 }
+
+# Claude Code's one-time modals, keyed by an option only the live dialog shows.
+# Both default to the refusing option, and accepting one is a trust decision
+# kitchen must not make for the head chef, so wait_for_prompt stops on them.
+_CLAUDE_ONE_TIME = {
+    "Yes, I trust this folder": "folder-trust",
+    "Yes, I accept": "Bypass Permissions",
+}
+
+
+class PromptBlocked(Exception):
+    """A Claude agent is parked on a one-time modal only a human may accept.
+    `cwd` is where to accept it; a caller that is about to delete the pane's
+    directory points it at a surviving parent (trust covers subdirectories)."""
+
+    def __init__(self, prompt: str, cwd: str):
+        self.prompt, self.cwd = prompt, cwd
+
+    def __str__(self):
+        return (f"Claude Code is waiting on its one-time {self.prompt} prompt. "
+                f"Accept it once by hand — `cd {shlex.quote(self.cwd)} && claude "
+                f"--dangerously-skip-permissions`, answer yes, then /exit — and retry")
 
 # Busy markers: a regex present in the pane tail while the agent is mid-turn,
 # gone when it's idle at the prompt. Backend-specific and confirmed empirically
@@ -261,6 +313,12 @@ def wait_for_prompt(kitchen: str, window: str, backend: str,
         try:
             content = capture_pane(kitchen, window)
             if content:
+                blocker = backend == "claude" and next(
+                    (v for k, v in _CLAUDE_ONE_TIME.items() if k in content), None)
+                if blocker:
+                    cwd = tmux("display-message", "-p", "-t", target(window),
+                               "#{pane_current_path}", kitchen=kitchen).stdout.strip()
+                    raise PromptBlocked(blocker, cwd)
                 if marker in content:
                     return True
                 screen = next((s for s in ("Update available!",
