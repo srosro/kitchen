@@ -271,7 +271,6 @@ The root sous's own Stop hook does not notify its own socket, preventing an echo
 │   ├── cooks/<name>.json     # backend, status, response, session, context
 │   ├── codex-home/           # clean-room Codex homes, when used
 │   ├── plow-chat/            # optional: plow-credentials (600), last_seen.json
-│   ├── buzz/                 # optional: buzz-credentials (600), last_seen.json
 │   ├── swarm/                # optional: credential.json, a link to the sous's swarm account; persona.md for a public persona
 │   └── notes/                # handoff, log, and long task briefs
 └── projects/<slug>/wiki/
@@ -299,10 +298,6 @@ Then restart the sous: `/exit`, then `kitchen open --resume boss` from the proje
 ## Messaging the sous on Discord
 
 A kitchen whose state dir holds `discord/.env` (mode 600, `DISCORD_BOT_TOKEN=<token>`) also loads the official [Discord channel plugin](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/discord)'s server, run with [Bun](https://bun.sh) from the marketplace copy. Kitchen refuses to start it unless that copy is the reviewed 0.0.4. Only the Discord user IDs in `discord/access.json` at boot are heard (`{"dmPolicy": "allowlist", "allowFrom": ["<your ID>"]}`); pairing is off. Add no `groups`: a guild channel whose own `allowFrom` is empty admits every member who mentions the bot. The plugin reads a DM of `yes`/`no` plus one five-letter word (`yes today`) as a permission answer, reacts ✅/❌ and does not deliver it. Restart the sous as above, then DM the bot.
-
-## Messaging the sous on Buzz
-
-A kitchen whose state dir holds `buzz/buzz-credentials` (mode 600, `BUZZ_RELAY_URL=ws://…` and the sous's member key as hex `BUZZ_PRIVATE_KEY=`) also loads the `buzz` channel, which connects the sous to a [Buzz](https://github.com/block/buzz) relay as that member. Every message in a channel or DM the key belongs to arrives as `<channel source="buzz" from="<name>" chat="<channel id>">`, and the sous answers with its `reply` tool. There is no allowlist. Run the relay closed (`BUZZ_REQUIRE_RELAY_MEMBERSHIP=true`), so only keys its owner adds with `buzz-admin add-member` can connect. Use `wss://`, or `ws://` only when the relay is reachable solely over an encrypted private network, such as a port bound to its tailnet IP: incoming messages are trusted as the relay delivers them, not re-verified. Every member who DMs the sous key, or shares a channel with it, speaks with head-chef authority. Generate the key with `buzz-admin generate-key`, add it as a member, write the credential file, and restart the sous as above.
 
 ## Messaging the sous in a Swarm company
 

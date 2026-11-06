@@ -126,14 +126,12 @@ def sous_first_turn(kitchen: str) -> list[str]:
 
 
 def channel_servers(kitchen: str) -> dict:
-    """The channel servers a sous loads: the kitchen's own, plus plow-chat,
-    Buzz or Discord once this kitchen holds its credential. All run the
-    `kitchen` on PATH, the deployed install."""
+    """The channel servers a sous loads: the kitchen's own, plus plow-chat or
+    Discord once this kitchen holds its credential. All run the `kitchen` on
+    PATH, the deployed install."""
     servers = {"kitchen": {"command": "kitchen", "args": ["channel-server", kitchen]}}
     if (plow_chat_dir(kitchen) / "plow-credentials").exists():
         servers["plow-chat"] = {"command": "kitchen", "args": ["plow-chat-server", kitchen]}
-    if (state_dir(kitchen) / "buzz" / "buzz-credentials").exists():
-        servers["buzz"] = {"command": "kitchen", "args": ["buzz-server", kitchen]}
     if (state_dir(kitchen) / "discord" / ".env").exists():
         # Static access: only the allowlist on disk at boot is heard, never paired or edited live.
         env = {"DISCORD_STATE_DIR": str(state_dir(kitchen) / "discord"), "DISCORD_ACCESS_MODE": "static"}
