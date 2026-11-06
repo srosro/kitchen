@@ -253,7 +253,7 @@ def _legacy_bare_kitchen(requested: str, project: Path):
     return requested, base, kitchen_file
 
 
-def _abort_sub_sous(name: str, base: Path, kj: dict):
+def _abort_sub_sous(name: str, base: Path):
     """Tear down a half-created --sub-sous kitchen after a failed launch, so a
     failed open never leaves a sous-less 'open' kitchen or an orphan tmux
     session. Best-effort: a slow/again-timing-out tmux must not block the rest
@@ -305,7 +305,9 @@ def cmd_open(args):
                 f"--sub-sous is fresh-open only: it can't combine with --resume "
                 f"or reattach an existing kitchen/session (\"{name}\")."
             )
-        if project == Path.cwd().resolve():
+        same = {subprocess.run(["git", "-C", str(d), "rev-parse", "--show-toplevel"],
+                               capture_output=True, text=True).stdout for d in (project, Path.cwd())}
+        if len(same) == 1:
             sys.exit("--sub-sous needs its own checkout, not this one: "
                      "`tc claim <repo> <branch>` and pass the directory it prints.")
 
@@ -397,7 +399,7 @@ def cmd_open(args):
         except subprocess.TimeoutExpired:
             failure = "tmux stayed unresponsive under launch load"
         if failure:
-            _abort_sub_sous(name, base, kj)
+            _abort_sub_sous(name, base)
             sys.exit(f"--sub-sous: {failure}; cleaned up kitchen \"{name}\".")
         print(f"Kitchen \"{name}\" is open. Sous chef on the line.")
         return

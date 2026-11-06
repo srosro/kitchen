@@ -21,9 +21,10 @@ call; the two talk both ways:
   env var the parent injects (the `cmd_hook` sous carveout, guarded so a sous
   never pushes to its own socket). `STATUS_DIR` stays the child's own base.
 
-Fresh opens only (rejects `--resume` / an existing kitchen/session). On a
-genuine launch failure the half-created kitchen is torn down (session +
-worktree + branch + state) — it never leaves a sous-less "open" kitchen.
+Fresh opens only (rejects `--resume` / an existing kitchen/session), and on a
+checkout other than the caller's. On a genuine launch failure the half-created
+kitchen is torn down (session + state) — it never leaves a sous-less "open"
+kitchen.
 
 ### Smoke procedure (THROWAWAY parent socket — never the live sous)
 
@@ -49,8 +50,9 @@ with open(log, "a") as f:
         c.close(); f.write("RECV " + data.decode("utf8","replace").strip() + "\n"); f.flush()
 PY
 
-# open the child with its sous inside its own session; report UP to $PARENT
-STATUS_DIR="$PARENT" kitchen open --sub-sous
+# open the child on the scratch checkout, from outside it (a sub-sous refuses
+# the caller's own checkout), with its sous in its own session; report UP to $PARENT
+(cd / && STATUS_DIR="$PARENT" kitchen open subsous-smoke /tmp/subsous-smoke --sub-sous)
 
 # down: ticket the child sous cross-kitchen, then watch the reply
 AGENT_KITCHEN=smoke-parent kitchen ticket sous --kitchen <name> 'Liveness check from the head chef. No cooks, no tools — reply with exactly the word PONG, then stop.'
@@ -60,7 +62,7 @@ kitchen peek sous --kitchen <name>
 cat "$PARENT/recv.log"
 
 # cleanup
-kitchen close <name> --force; kill %1; rm -rf /tmp/subsous-smoke /tmp/subsous-parent
+kitchen close <name>; kill %1; rm -rf /tmp/subsous-smoke /tmp/subsous-parent
 ```
 
 ### Captured run (real output)
@@ -139,11 +141,9 @@ not auth/crash). So it now waits as long as the pane keeps changing (progress)
 and gives up only after `stall_timeout` of no change (truly stuck) or a generous
 hard ceiling, instead of a fixed 60s.
 
-Two `--sub-sous` guards protect the abort path: `--sub-sous` refuses when a
-worktree/branch named `<name>` already exists (so `_abort_sub_sous` can never
-force-remove a worktree/branch it didn't create), and a `list-panes` timeout
-after a successful `new-window` no longer tears down a live sous (the pid write
-is best-effort). Verified:
+A `list-panes` timeout after a successful `new-window` no longer tears down a
+live sous (the pid write is best-effort). Verified, when named kitchens still
+made a worktree and branch:
 
 **Genuine-failure teardown** — drive `cmd_open --sub-sous` with
 `wait_for_prompt` forced to `False` so a real session + worktree + branch +

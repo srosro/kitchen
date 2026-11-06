@@ -2576,10 +2576,14 @@ class TestSubSousUpwardPush:
 
 class TestCmdOpenSubSous:
     def test_refuses_to_share_the_callers_checkout(self, tmp_path, monkeypatch):
-        # With no worktree of its own, a child on the parent's checkout would edit the parent's files.
+        # With no worktree of its own, a child on the parent's checkout would edit the
+        # parent's files, whichever directory of that checkout either side names.
         monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.chdir(tmp_path)
-        args = MagicMock(project=str(tmp_path), resume=False, sub_sous=True)
+        repo = tmp_path / "repo"
+        (repo / "src").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        monkeypatch.chdir(repo / "src")
+        args = MagicMock(project="..", resume=False, sub_sous=True)
         args.name = "child"
         with patch("claude_kitchen.cli.has_session", return_value=False), \
              patch("claude_kitchen.cli.namespaced", return_value="widget-child"), \
@@ -2698,68 +2702,28 @@ class TestCmdOpenSubSous:
         with pytest.raises(SystemExit, match="fresh-open only"):
             cmd_open(args)
 
-    @patch("claude_kitchen.cli.namespaced", return_value="widget-child")
-    @patch("claude_kitchen.cli.project_slug", return_value="widget")
-    @patch("claude_kitchen.cli.spawn_sous_window", return_value=False)
-    @patch("claude_kitchen.cli.has_session", return_value=False)
-    @patch("claude_kitchen.cli.tmux")
-    @patch("claude_kitchen.cli.state_dir")
-    @patch("claude_kitchen.cli.resolve_project")
-    def test_spawn_failure_cleans_up_and_exits(
-        self, mock_resolve, mock_state, mock_tmux, mock_has,
-        mock_spawn_win, mock_slug, mock_ns, tmp_path, monkeypatch,
-    ):
-        """spawn_sous_window False → never leave a sous-less kitchen: kill the
-        session, wipe the state dir, and exit clearly."""
+    @pytest.mark.parametrize("spawn_ok, prompt_ok, error", [
+        (False, True, "cleaned up"),
+        (True, False, "never reached its prompt"),
+    ])
+    def test_failed_launch_cleans_up_and_exits(self, spawn_ok, prompt_ok, error, tmp_path, monkeypatch):
+        """A child sous that couldn't launch, or never reached its prompt, never
+        leaves a sous-less kitchen: kill the session, wipe the state dir, exit clearly."""
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.delenv("STATUS_DIR", raising=False)
-        mock_resolve.return_value = Path("/tmp/myproject")
         base = tmp_path / "state"
-        mock_state.return_value = base
-        mock_tmux.return_value = MagicMock(returncode=0, stdout="")
-
-        args = MagicMock()
+        args = MagicMock(project="/tmp/myproject", resume=False, sub_sous=True)
         args.name = "child"
-        args.project = "/tmp/myproject"
-        args.resume = False
-        args.sub_sous = True
-
-        with pytest.raises(SystemExit, match="cleaned up"):
+        with patch("claude_kitchen.cli.namespaced", return_value="widget-child"), \
+             patch("claude_kitchen.cli.project_slug", return_value="widget"), \
+             patch("claude_kitchen.cli.wait_for_prompt", return_value=prompt_ok), \
+             patch("claude_kitchen.cli.spawn_sous_window", return_value=spawn_ok), \
+             patch("claude_kitchen.cli.has_session", return_value=False), \
+             patch("claude_kitchen.cli.tmux", return_value=MagicMock(returncode=0, stdout="")) as mock_tmux, \
+             patch("claude_kitchen.cli.state_dir", return_value=base), \
+             patch("claude_kitchen.cli.resolve_project", return_value=Path("/tmp/myproject")), \
+             pytest.raises(SystemExit, match=error):
             cmd_open(args)
-
-        assert not base.exists()                       # state dir wiped
-        assert any(c.args[0] == "kill-session" for c in mock_tmux.call_args_list)
-
-    @patch("claude_kitchen.cli.namespaced", return_value="widget-child")
-    @patch("claude_kitchen.cli.project_slug", return_value="widget")
-    @patch("claude_kitchen.cli.wait_for_prompt", return_value=False)
-    @patch("claude_kitchen.cli.spawn_sous_window", return_value=True)
-    @patch("claude_kitchen.cli.has_session", return_value=False)
-    @patch("claude_kitchen.cli.tmux")
-    @patch("claude_kitchen.cli.state_dir")
-    @patch("claude_kitchen.cli.resolve_project")
-    def test_prompt_timeout_cleans_up_and_exits(
-        self, mock_resolve, mock_state, mock_tmux, mock_has,
-        mock_spawn_win, mock_wait, mock_slug, mock_ns, tmp_path, monkeypatch,
-    ):
-        """Sous spawned but never reached its prompt (genuine failure after the
-        retry-tolerant wait) → same teardown, no half-open kitchen."""
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.delenv("STATUS_DIR", raising=False)
-        mock_resolve.return_value = Path("/tmp/myproject")
-        base = tmp_path / "state"
-        mock_state.return_value = base
-        mock_tmux.return_value = MagicMock(returncode=0, stdout="")
-
-        args = MagicMock()
-        args.name = "child"
-        args.project = "/tmp/myproject"
-        args.resume = False
-        args.sub_sous = True
-
-        with pytest.raises(SystemExit, match="never reached its prompt"):
-            cmd_open(args)
-
         assert not base.exists()
         assert any(c.args[0] == "kill-session" for c in mock_tmux.call_args_list)
 
