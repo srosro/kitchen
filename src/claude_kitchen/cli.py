@@ -663,7 +663,7 @@ def cmd_hire(args):
     # AGENTS.md, plugin registry, or user config). Claude/gemini: None.
     # --slot: the cook works in a free ~/Hacking/<repo><N> that `tc claim` locks
     # and branches as <kitchen>/<cook>, so kitchen and tc hand out slots under one
-    # lock; the branch keeps the slot taken until it is back on main.
+    # lock; the cook record's cwd keeps it taken until clock-out.
     if args.slot:
         if shutil.which("tc") is None:
             sys.exit("tc not on PATH — --slot needs code-config's tc.")
@@ -678,7 +678,9 @@ def cmd_hire(args):
 
     codex_home = str(_seed_codex_home(base, name, cwd)) if clean_room and backend == "codex" else None
 
-    write_status(base, name, {"status": "booting", "agent": name, "backend": backend})
+    # cwd stays in the record until clock-out; tc reads it to keep the slot
+    # from being claimed while the cook's window is down (a suspended kitchen).
+    write_status(base, name, {"status": "booting", "agent": name, "backend": backend, "cwd": cwd})
 
     effort = getattr(args, "effort", None)
     ok = spawn_window(

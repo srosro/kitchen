@@ -782,6 +782,8 @@ class TestStatusPreservationAcrossNonStopWriters:
         args = self._fake_tc(tmp_path, monkeypatch, "claude")
         cmd_hire(args)
         assert mock_spawn.call_args.kwargs["cwd"] == "/home/u/Hacking/plow3"
+        # The record names the slot until clock-out, which is what keeps tc off it.
+        assert json.loads((tmp_path / "cooks" / "eng.json").read_text())["cwd"] == "/home/u/Hacking/plow3"
         assert (tmp_path / "argv").read_text() == "claim plow risotto/eng\n"
         assert json.loads((tmp_path / ".claude.json").read_text()) == {
             "numStartups": 3,
