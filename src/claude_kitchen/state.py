@@ -107,7 +107,7 @@ def swarm_rooms(account: dict) -> list[str]:
         try:
             with urlopen(request, timeout=30) as response:
                 named.append(json.load(response)["aliases"][0])
-        except (OSError, ValueError, KeyError, IndexError) as e:  # no alias, or the lookup failed
+        except (OSError, ValueError, KeyError, IndexError, TypeError) as e:  # no alias, or the lookup failed
             print(f"kitchen: swarm room {room} has no alias the sous can join it by ({e!r})", file=sys.stderr)
     return named
 
