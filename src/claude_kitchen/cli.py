@@ -1421,7 +1421,13 @@ def cmd_restart(args):
                  f"(`kitchen open --resume`) once, then restart works.")
     if not kj.get("sous_session_id"):
         sys.exit(f"Kitchen \"{kitchen}\" has no sous session to resume yet.")
-    pid = (base / "sous.pid").read_text().strip()
+    pid = int((base / "sous.pid").read_text())
+    # A live sous means its pane is still the one on record; a dead one leaves
+    # that pane to whatever runs there now, which respawn-pane -k would kill.
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        sys.exit(f"The sous of \"{kitchen}\" isn't running; bring it back with `kitchen open --resume`.")
     # Wait out the old sous so open's live-sous check passes; a shell takes the
     # pane back when the new sous exits, as it had before.
     relaunch = (f"while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; "
