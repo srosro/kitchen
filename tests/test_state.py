@@ -278,7 +278,7 @@ ACCOUNT = "@cedar:plow.swarm.plow.co"
 def fake_swarm(tmp_path):
     """A `swarm` whose `accounts list` shows ACCOUNT in two aliased rooms and two listed by bare ID."""
     listed = json.dumps({"accounts": [{"account": "@other:x", "rooms": ["#general:x"]},
-                                      {"account": ACCOUNT, "rooms": ["!dmAliased", "!dmNoAlias", "#general:p", "#design:p"]}]})
+                                      {"account": ACCOUNT, "rooms": ["!dmAliased", "!dmNoAlias", "!dmGone", "#general:p", "#design:p"]}]})
     swarm = tmp_path / "bin" / "swarm"
     swarm.parent.mkdir(exist_ok=True)
     swarm.write_text(f"#!/bin/sh\necho '{listed}'\n")
@@ -302,10 +302,14 @@ def homeserver():
     """A homeserver that publishes an alias for !dmAliased and none for !dmNoAlias."""
     aliases = {"/_matrix/client/v3/rooms/%21dmAliased/aliases": ["#dm-so-cedar:p"],
                "/_matrix/client/v3/rooms/%21dmNoAlias/aliases": []}
+    # !dmGone (any other path) answers 404, as a lookup can fail
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             assert self.headers["Authorization"] == "Bearer tok"
+            if self.path not in aliases:
+                self.send_error(404)
+                return
             body = json.dumps({"aliases": aliases[self.path]}).encode()
             self.send_response(200)
             self.end_headers()
@@ -331,9 +335,11 @@ def test_swarm_runs_as_the_kitchens_account_and_joins_its_rooms_on_launch(tmp_pa
     assert "server:swarm" not in channel_flags("boss")  # it delivers through the inbox, not a channel
     [turn] = sous_first_turn("boss")
     # A room swarm lists by bare ID is joined by its published alias, never by the ID,
-    # which join would turn into a new room; one with no alias is skipped, loudly.
+    # which join would turn into a new room; one with no alias, or whose lookup fails,
+    # is skipped loudly without costing the sous its other rooms.
     assert ACCOUNT in turn and "#dm-so-cedar:p, #general:p, #design:p" in turn and "!dm" not in turn
-    assert "!dmNoAlias has no alias" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "!dmNoAlias has no alias" in err and "!dmGone has no alias" in err and "404" in err
     assert "swarm" not in mcp_servers("other-kitchen") and sous_first_turn("other-kitchen") == []
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     with pytest.raises(SystemExit, match="no `swarm` on PATH"):

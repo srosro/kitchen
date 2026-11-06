@@ -104,12 +104,11 @@ def swarm_rooms(account: dict) -> list[str]:
             continue
         url = f"{account['homeserver'].rstrip('/')}/_matrix/client/v3/rooms/{quote(room, safe='')}/aliases"
         request = Request(url, headers={"Authorization": f"Bearer {account['access_token']}"})
-        with urlopen(request, timeout=30) as response:
-            aliases = json.load(response)["aliases"]
-        if aliases:
-            named.append(aliases[0])
-        else:
-            print(f"kitchen: swarm room {room} has no alias, so the sous doesn't join it", file=sys.stderr)
+        try:
+            with urlopen(request, timeout=30) as response:
+                named.append(json.load(response)["aliases"][0])
+        except (OSError, ValueError, KeyError, IndexError) as e:  # no alias, or the lookup failed
+            print(f"kitchen: swarm room {room} has no alias the sous can join it by ({e!r})", file=sys.stderr)
     return named
 
 
