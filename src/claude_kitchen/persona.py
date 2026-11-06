@@ -1,8 +1,8 @@
 """A sous's public A2A persona: a session of its own, never the sous's.
 
-`swarm persona` sets up the public account's device and its session directory
-and prints the confined command that runs it (reply tool only, no shell, no
-user settings or memory files). Kitchen runs that command in the `persona`
+`swarm accounts add <name>-public` sets up the public account's device and its
+session directory and returns the confined command that runs it (swarm's tools
+only, no shell, no user settings or memory files). Kitchen runs that command in the `persona`
 window with the owner's persona file appended, while the agent is public."""
 import json
 import os
@@ -14,8 +14,8 @@ import urllib.error
 import urllib.request
 
 from claude_kitchen.cli import _trust_dir
-from claude_kitchen.state import state_dir
-from claude_kitchen.tmux import list_windows, has_session, tmux, target, wait_for_prompt, SESSION
+from claude_kitchen.state import state_dir, swarm_account, swarm_binary, swarm_join_prompt
+from claude_kitchen.tmux import list_windows, has_session, tmux, target, SESSION
 
 WINDOW = "persona"
 POLL = 60
@@ -45,10 +45,10 @@ def is_public(url: str) -> bool | None:
     return None
 
 
-def launch_argv(printed: str, persona: str) -> tuple[str, list[str]]:
-    """`swarm persona`'s `cd '<dir>' && claude …` as (dir, argv), plus the persona."""
-    cd, claude = printed.strip().split(" && ", 1)
-    return shlex.split(cd)[1], [*shlex.split(claude), "--append-system-prompt-file", persona]
+def launch_argv(launch: dict, persona: str, first_turn: str) -> list[str]:
+    """swarm's `cd '<dir>' && claude …` as argv, plus the persona and its first turn."""
+    claude = launch["command"].split(" && ", 1)[1]
+    return [*shlex.split(claude), "--append-system-prompt-file", persona, first_turn]
 
 
 def start(kitchen: str):
@@ -69,23 +69,24 @@ def start(kitchen: str):
 
 def run(kitchen: str):
     """The persona window's loop: wait for the switch, serve, stop when it is switched off."""
-    credential_path = state_dir(kitchen) / "swarm" / "credential.json"
-    url = card_url(json.loads(credential_path.read_text()))
+    account = swarm_account(kitchen)
+    url = card_url(account)
+    public = account["user_id"].removeprefix("@").split(":")[0] + "-public"
     while True:
         while is_public(url) is not True:
             time.sleep(POLL)
-        printed = subprocess.run(["swarm", "persona", "--credential", str(credential_path)],
-                                 stdout=subprocess.PIPE, text=True)
-        if printed.returncode:
+        added = subprocess.run([swarm_binary(), "accounts", "add", public], stdout=subprocess.PIPE, text=True)
+        if added.returncode:
             time.sleep(POLL)
             continue
-        cwd, argv = launch_argv(printed.stdout, str(persona_file(kitchen)))
+        added = json.loads(added.stdout)
+        cwd = added["launch"]["dir"]
+        argv = launch_argv(added["launch"], str(persona_file(kitchen)), swarm_join_prompt(added["account"], added["rooms"]))
         _trust_dir(cwd, "claude")
         # The tmux server's environment can carry a sous's or cook's identity; the persona is neither.
         env = {k: v for k, v in os.environ.items()
                if not k.startswith(("AGENT_", "KITCHEN_")) and k != "STATUS_DIR"}
         session = subprocess.Popen(argv, cwd=cwd, env=env)
-        wait_for_prompt(kitchen, WINDOW, "claude")  # confirms the development-channels prompt
         while session.poll() is None:
             time.sleep(POLL)
             if is_public(url) is False:

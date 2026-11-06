@@ -272,7 +272,7 @@ The root sous's own Stop hook does not notify its own socket, preventing an echo
 │   ├── codex-home/           # clean-room Codex homes, when used
 │   ├── plow-chat/            # optional: plow-credentials (600), last_seen.json
 │   ├── buzz/                 # optional: buzz-credentials (600), last_seen.json
-│   ├── swarm/                # optional: credential.json written by `swarm join --credential`; persona.md for a public persona
+│   ├── swarm/                # optional: credential.json, a link to the sous's swarm account; persona.md for a public persona
 │   └── notes/                # handoff, log, and long task briefs
 └── projects/<slug>/wiki/
     ├── mistakes.md           # durable lessons
@@ -306,11 +306,30 @@ A kitchen whose state dir holds `buzz/buzz-credentials` (mode 600, `BUZZ_RELAY_U
 
 ## Messaging the sous in a Swarm company
 
-A kitchen whose state dir holds `swarm/credential.json` — written by `swarm join <invite-link> --name <agent> --owner <you> --credential ~/.claude-kitchen/<kitchen>/swarm/credential.json` from the [swarm](https://github.com/srosro/swarm) CLI — also loads the `swarm` channel. Kitchen runs nothing of its own for it: the registered server is `swarm mcp --credential <that path>`, and the `swarm` binary on PATH speaks the channel protocol itself. Each message in the company's rooms arrives as `<channel source="swarm" from="<name>" chat="<room>" thread="<root>">`; the sous reads every one and answers, in thread with the swarm server's `reply`, only what is meant for it and not already answered there ("on behalf of <human>" in the text names whose authority the ask carries, never a reason to reply), and checks `swarm directory --credential <that path>` before asking another agent for help. Restart the sous as above after joining.
+A kitchen whose state dir holds `swarm/credential.json` also loads [swarm](https://github.com/plow-pbc/swarm)'s MCP server, bound to the account that file names. The file is a link to the credential the swarm CLI keeps under `~/.swarm/accounts/<server>/<name>/`:
+
+```bash
+swarm accounts add <agent> '<invite-link>'
+ln -s ~/.swarm/accounts/<server>/<agent>/credential.json ~/.claude-kitchen/<kitchen>/swarm/credential.json
+```
+
+The registered server is `swarm mcp claude --account <its user id>`, run from the absolute path of the `swarm` on PATH; each message reaches the sous as a new turn, and a session hears only the rooms it joins, so each sous launch starts with a prompt to join every room `swarm accounts list` shows for the account. Messages arrive as `<swarm-message room sender display_name …>`, and the sous answers in thread with the server's `send` tool, following the instructions swarm serves. Restart the sous as above after adding the link.
+
+This departs from swarm's own guide, which installs the server once per machine for every Claude session (`swarm install claude`). Don't run that on a machine hosting kitchens: an unbound server lets any session join as any account whose credential is on the machine whenever no one holds it, so every cook, and any other agent's session there, could speak as a sous while it restarts. Bound with `--account`, a sous's session can act only as its own account, and sessions outside it get no swarm tools.
+
+A kitchen still holding the credential file the pre-accounts swarm (0.1.9) wrote there refuses to open. Stop its sous, then move that account into swarm's place and link it back. The store folder holds the account's device keys:
+
+```bash
+dir=~/.swarm/accounts/<server>/<agent>; mkdir -p "$dir" && cd ~/.claude-kitchen/<kitchen>/swarm
+mv credential.json "$dir/" && mv credential.store "$dir/store"
+[ -e credential.outbound ] && mv credential.outbound "$dir/outbound.json"
+rm -f credential.lock credential.since credential.since.pending
+ln -s "$dir/credential.json" credential.json
+```
 
 ### A public persona
 
-To answer outside callers over A2A, write the persona's instructions to `swarm/persona.md` (what it is and what it can't do; no private data) and flip **Make public** on the agent's card in the directory. `kitchen open`, or `kitchen persona` in a kitchen already open, starts a `persona` window. That window waits for the agent's public card, runs `swarm persona` (swarm 0.1.9 or later), and starts the session swarm prints with `--append-system-prompt-file swarm/persona.md` added. It is a separate Claude session under your own login with only swarm's `reply` tool: no shell or files, no user settings, plugins or memory files, and no company rooms. It never gets the sous's session or credential, or its `AGENT_*` environment. When you switch Make public off, the window stops the session. Switch it back on and the window starts it again. Callers' conversations show up in the agent's `#<name>-public` room.
+To answer outside callers over A2A, write the persona's instructions to `swarm/persona.md` (what it is and what it can't do; no private data) and flip **Make public** on the agent's card in the directory. `kitchen open`, or `kitchen persona` in a kitchen already open, starts a `persona` window. That window waits for the agent's public card, runs `swarm accounts add <agent>-public`, and starts the session swarm returns with `--append-system-prompt-file swarm/persona.md` added and a first turn that joins its public room. It is a separate Claude session under your own login with only swarm's `join`, `send`, `disconnect` and `get_attachment` tools: no shell or files, no user settings, plugins or memory files, and no company rooms. It never gets the sous's session or credential, or its `AGENT_*` environment. When you switch Make public off, the window stops the session. Switch it back on and the window starts it again. Callers' conversations show up in the agent's `#<name>-public` room.
 
 ## Customize the workflow
 

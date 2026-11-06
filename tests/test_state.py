@@ -7,7 +7,7 @@ import pytest
 
 from claude_kitchen.state import (
     state_dir, write_status, read_status, update_status,
-    project_slug, namespaced, wiki_dir, notes_dir, channel_flags, channel_servers, exec_discord_server,
+    project_slug, namespaced, wiki_dir, notes_dir, channel_flags, mcp_servers, sous_first_turn, exec_discord_server,
 )
 
 
@@ -252,11 +252,9 @@ class TestWikiAndNotesDirs:
     (None, ["server:kitchen"]),
     ("plow-chat/plow-credentials", ["server:kitchen", "server:plow-chat"]),
     ("discord/.env", ["server:kitchen", "server:discord"]),
-    ("swarm/credential.json", ["server:kitchen", "server:swarm"]),
 ])
 def test_optional_channels_load_only_for_the_kitchen_holding_their_credential(tmp_path, monkeypatch, credential, flags):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("PATH", str(fake_swarm(tmp_path).parent))
     if credential:
         (state_dir("boss") / credential).parent.mkdir(parents=True)
         (state_dir("boss") / credential).touch()
@@ -272,24 +270,57 @@ def test_discord_server_refuses_a_plugin_copy_that_is_not_the_reviewed_one(tmp_p
         exec_discord_server()
 
 
+ACCOUNT = "@cedar:plow.swarm.plow.co"
+
+
 def fake_swarm(tmp_path):
+    """A `swarm` whose `accounts list` shows ACCOUNT in two rooms."""
+    listed = json.dumps({"accounts": [{"account": "@other:x", "rooms": ["#general:x"]},
+                                      {"account": ACCOUNT, "rooms": ["#general:p", "#design:p"]}]})
     swarm = tmp_path / "bin" / "swarm"
     swarm.parent.mkdir(exist_ok=True)
-    swarm.write_text("#!/bin/sh\n")
+    swarm.write_text(f"#!/bin/sh\necho '{listed}'\n")
     swarm.chmod(0o755)
     return swarm
 
 
-def test_swarm_channel_is_the_absolute_swarm_binary_on_this_kitchens_credential(tmp_path, monkeypatch):
+def link_account(tmp_path):
+    """The sous's account as `swarm accounts add` keeps it, linked into its kitchen."""
+    credential = tmp_path / ".swarm/accounts/plow.swarm.plow.co/cedar/credential.json"
+    credential.parent.mkdir(parents=True)
+    credential.write_text(json.dumps({"user_id": ACCOUNT, "homeserver": "https://plow.swarm.plow.co"}))
+    link = state_dir("boss") / "swarm" / "credential.json"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(credential)
+    return link
+
+
+def test_swarm_runs_as_the_kitchens_account_and_joins_its_rooms_on_launch(tmp_path, monkeypatch):
     # The sous's MCP launch may not see open's PATH; a bare `swarm` there fails
     # as Claude Code's misleading ENOENT "Executable not found in $PATH: stdio".
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PATH", str(fake_swarm(tmp_path).parent))
-    credential = state_dir("boss") / "swarm" / "credential.json"
-    credential.parent.mkdir(parents=True)
-    credential.touch()
-    assert channel_servers("boss")["swarm"] == {
-        "command": str(tmp_path / "bin" / "swarm"), "args": ["mcp", "--credential", str(credential)]}
+    link_account(tmp_path)
+    assert mcp_servers("boss")["swarm"] == {
+        "command": str(tmp_path / "bin" / "swarm"), "args": ["mcp", "claude", "--account", ACCOUNT]}
+    assert "server:swarm" not in channel_flags("boss")  # it delivers through the inbox, not a channel
+    [turn] = sous_first_turn("boss")
+    assert ACCOUNT in turn and "#general:p, #design:p" in turn
+    assert "swarm" not in mcp_servers("other-kitchen") and sous_first_turn("other-kitchen") == []
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     with pytest.raises(SystemExit, match="no `swarm` on PATH"):
-        channel_servers("boss")
+        mcp_servers("boss")
+
+
+def test_a_pre_accounts_or_dangling_swarm_credential_refuses_to_open(tmp_path, monkeypatch):
+    # swarm 0.1.9 wrote the credential itself into the kitchen; swarm's MCP server no longer reads it there.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    credential = state_dir("boss") / "swarm" / "credential.json"
+    credential.parent.mkdir(parents=True)
+    credential.write_text(json.dumps({"user_id": ACCOUNT}))
+    with pytest.raises(SystemExit, match="pre-accounts swarm credential"):
+        mcp_servers("boss")
+    credential.unlink()
+    credential.symlink_to(tmp_path / "deactivated.json")  # a link to an account no longer on this machine
+    with pytest.raises(FileNotFoundError):
+        mcp_servers("boss")
