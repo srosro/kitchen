@@ -312,11 +312,15 @@ def test_swarm_runs_as_the_kitchens_account_and_joins_its_rooms_on_launch(tmp_pa
         mcp_servers("boss")
 
 
-def test_a_pre_accounts_swarm_credential_refuses_to_open(tmp_path, monkeypatch):
+def test_a_pre_accounts_or_dangling_swarm_credential_refuses_to_open(tmp_path, monkeypatch):
     # swarm 0.1.9 wrote the credential itself into the kitchen; swarm's MCP server no longer reads it there.
     monkeypatch.setenv("HOME", str(tmp_path))
     credential = state_dir("boss") / "swarm" / "credential.json"
     credential.parent.mkdir(parents=True)
     credential.write_text(json.dumps({"user_id": ACCOUNT}))
     with pytest.raises(SystemExit, match="pre-accounts swarm credential"):
+        mcp_servers("boss")
+    credential.unlink()
+    credential.symlink_to(tmp_path / "deactivated.json")  # a link to an account no longer on this machine
+    with pytest.raises(FileNotFoundError):
         mcp_servers("boss")

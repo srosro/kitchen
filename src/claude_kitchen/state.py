@@ -71,12 +71,12 @@ def swarm_account(kitchen: str) -> dict | None:
     """The credential of the swarm account this kitchen acts as: a link at
     `<state>/swarm/credential.json` to swarm's own copy under ~/.swarm/accounts."""
     link = state_dir(kitchen) / "swarm" / "credential.json"
-    if not link.exists():
-        return None
     if not link.is_symlink():
-        sys.exit(f"{link} is a pre-accounts swarm credential: move its account into "
-                 "~/.swarm/accounts/<server>/<name>/ and link it back here (see the README).")
-    return json.loads(link.read_text())
+        if link.exists():
+            sys.exit(f"{link} is a pre-accounts swarm credential: move its account into "
+                     "~/.swarm/accounts/<server>/<name>/ and link it back here (see the README).")
+        return None
+    return json.loads(link.read_text())  # a dangling link fails here, loudly
 
 
 def mcp_servers(kitchen: str) -> dict:
