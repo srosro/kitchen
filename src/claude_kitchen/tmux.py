@@ -3,10 +3,11 @@ import itertools
 import os
 import re
 import subprocess
+import sys
 import time
 from typing import Optional
 
-from claude_kitchen.state import state_root
+from claude_kitchen.state import state_root, swarm_held
 
 # Per-call tmux timeout. Generous enough that fast queries (has-session,
 # new-session, list-windows) don't spuriously time out when the tmux server is
@@ -466,3 +467,22 @@ def send_keys(kitchen: str, window: str, text: str, backend: Optional[str] = Non
     raise RuntimeError(
         f"send_keys: ticket never left the composer on {tgt} after "
         f"{_SUBMIT_ATTEMPTS} Enter attempts; submission not confirmed")
+
+
+JOIN_TRIES, JOIN_WAIT = 12, 5
+
+
+def join_swarm(kitchen: str, window: str, account: str, prompt: str, alive) -> None:
+    """Have the Claude session in `window` join swarm until `account` is held.
+    A prompt given at launch is answered before swarm's server has connected,
+    with no join tool yet, so it is typed in once the session is up, and again
+    if it didn't take; never into a session `alive()` says has exited."""
+    for _ in range(JOIN_TRIES):
+        time.sleep(JOIN_WAIT)
+        if swarm_held(account) or not alive():
+            return
+        if not pane_busy(kitchen, window, "claude"):
+            send_keys(kitchen, window, prompt, backend="claude")
+    time.sleep(JOIN_WAIT)
+    if not swarm_held(account):
+        print(f"kitchen: {window} never joined swarm as {account}; see its window.", file=sys.stderr)

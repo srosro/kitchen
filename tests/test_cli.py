@@ -702,7 +702,7 @@ class TestStatusPreservationAcrossNonStopWriters:
         args.role = None
         args.effort = None
         args.clean_room = False
-        args.with_skill = []; args.slot = None
+        args.with_skill = []; args.slot = None; args.swarm_account = None
         args.model = None
         with pytest.raises(SystemExit):
             cmd_hire(args)
@@ -733,7 +733,7 @@ class TestStatusPreservationAcrossNonStopWriters:
             args.role = None
             args.effort = None
             args.clean_room = False
-            args.with_skill = []; args.slot = None
+            args.with_skill = []; args.slot = None; args.swarm_account = None
             args.model = model
             with pytest.raises(SystemExit, match=want):
                 cmd_hire(args)
@@ -761,7 +761,7 @@ class TestStatusPreservationAcrossNonStopWriters:
             args.role = None
             args.effort = effort
             args.clean_room = False
-            args.with_skill = []; args.slot = None
+            args.with_skill = []; args.slot = None; args.swarm_account = None
             args.model = model
             cmd_hire(args)
             assert mock_spawn.call_args.kwargs["model"] == model
@@ -796,6 +796,42 @@ class TestStatusPreservationAcrossNonStopWriters:
             cmd_hire(args)
         mock_spawn.assert_not_called()
 
+    @patch("claude_kitchen.cli.wait_for_prompt", return_value=True)
+    @patch("claude_kitchen.cli.state_dir")
+    @patch("claude_kitchen.cli.resolve_kitchen", return_value="kitchen-agents-cos")
+    def test_cmd_hire_swarm_account_gives_the_cook_its_own_bound_swarm_server(
+        self, mock_rk, mock_state, mock_wait, tmp_path, monkeypatch,
+    ):
+        """The cook launches with an --mcp-config holding only swarm, bound to the
+        account, then is asked to join that account's rooms; Codex is refused."""
+        mock_state.return_value = tmp_path
+        monkeypatch.setenv("HOME", str(tmp_path))
+        credential = tmp_path / ".swarm/accounts/chief.swarm.plow.co/cypress/credential.json"
+        credential.parent.mkdir(parents=True)
+        credential.write_text(json.dumps({"user_id": "@cypress:c", "homeserver": "https://c", "access_token": "t"}))
+        (tmp_path / "cooks").mkdir()
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "swarm").write_text("#!/bin/sh\n")
+        (bin_dir / "swarm").chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+        args = argparse.Namespace(kitchen=None, name="relay", backend="claude", project=str(tmp_path), slot=None,
+                                  role=None, effort=None, clean_room=False, with_skill=[], model=None,
+                                  swarm_account="@cypress:c")
+        with patch("claude_kitchen.cli.spawn_window", return_value=True) as spawn, \
+             patch("claude_kitchen.cli.swarm_rooms", return_value=["#general:c"]), \
+             patch("claude_kitchen.cli.join_swarm") as join:
+            cmd_hire(args)
+        config = json.loads(spawn.call_args.kwargs["mcp_config"].read_text())
+        assert config == {"mcpServers": {"swarm": {"command": str(bin_dir / "swarm"),
+                                                   "args": ["mcp", "claude", "--account", "@cypress:c"]}}}
+        kitchen, window, account, prompt = join.call_args.args
+        assert (window, account) == ("relay", "@cypress:c") and "#general:c" in prompt
+
+        args.backend = "codex"
+        with pytest.raises(SystemExit, match="--swarm-account is for Claude cooks"):
+            cmd_hire(args)
+
     @staticmethod
     def _fake_tc(tmp_path, monkeypatch, backend):
         """HOME at tmp_path and a `tc` that records its args and claims plow3
@@ -809,7 +845,7 @@ class TestStatusPreservationAcrossNonStopWriters:
         monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
         return argparse.Namespace(kitchen="risotto", name="eng", backend=backend, project=None,
                                   slot="plow", role=None, effort=None, clean_room=False,
-                                  with_skill=[], model=None)
+                                  with_skill=[], model=None, swarm_account=None)
 
     @patch("claude_kitchen.cli.send_keys")
     @patch("claude_kitchen.cli.wait_for_prompt", return_value=True)
@@ -1284,7 +1320,7 @@ class TestCmdHireFailures:
         args.role = None
         args.effort = None
         args.clean_room = False
-        args.with_skill = []; args.slot = None
+        args.with_skill = []; args.slot = None; args.swarm_account = None
         args.model = None
         with patch("claude_kitchen.cli.resolve_project", return_value=Path("/tmp")):
             with pytest.raises(SystemExit, match="didn't show prompt"):
@@ -1311,7 +1347,7 @@ class TestCmdHireRole:
         args.role = "ghost"
         args.effort = None
         args.clean_room = False
-        args.with_skill = []; args.slot = None
+        args.with_skill = []; args.slot = None; args.swarm_account = None
         args.model = None
         with pytest.raises(SystemExit, match="Unknown role.*ghost"):
             cmd_hire(args)
@@ -1334,7 +1370,7 @@ class TestCmdHireRole:
         args.role = "reviewer"
         args.effort = None
         args.clean_room = False
-        args.with_skill = []; args.slot = None
+        args.with_skill = []; args.slot = None; args.swarm_account = None
         args.model = None
         cmd_hire(args)
         # The cook loads its role followed by the contract every cook shares.
@@ -1360,7 +1396,7 @@ class TestCmdHireRole:
         args.role = "reviewer"
         args.effort = None
         args.clean_room = False
-        args.with_skill = []; args.slot = None
+        args.with_skill = []; args.slot = None; args.swarm_account = None
         args.model = None
         cmd_hire(args)
         # Codex doesn't get a --append-system-prompt-file flag
@@ -1395,7 +1431,7 @@ class TestCmdHireRole:
         args.role = None
         args.effort = None
         args.clean_room = False
-        args.with_skill = []; args.slot = None
+        args.with_skill = []; args.slot = None; args.swarm_account = None
         args.model = None
         cmd_hire(args)
         assert mock_send.call_count == 2
@@ -1420,7 +1456,7 @@ class TestCmdHireRole:
         args.role = "eng"
         args.effort = None
         args.clean_room = False
-        args.with_skill = []; args.slot = None
+        args.with_skill = []; args.slot = None; args.swarm_account = None
         args.model = None
         cmd_hire(args)
         mock_send.assert_not_called()
@@ -1446,7 +1482,7 @@ class TestCmdHireCleanRoom:
         args.role = None
         args.effort = None
         args.clean_room = True
-        args.with_skill = []; args.slot = None
+        args.with_skill = []; args.slot = None; args.swarm_account = None
         args.model = None
         cmd_hire(args)
         kwargs = mock_spawn.call_args.kwargs
@@ -1477,7 +1513,7 @@ class TestCmdHireCleanRoom:
         args.role = None
         args.effort = None
         args.clean_room = True
-        args.with_skill = []; args.slot = None
+        args.with_skill = []; args.slot = None; args.swarm_account = None
         args.model = None
         cmd_hire(args)
         home = tmp_path / "codex-home" / "eval1"
@@ -1519,7 +1555,7 @@ class TestCmdHireCleanRoom:
         mock_state.return_value = tmp_path
         args = MagicMock()
         args.kitchen = "risotto"; args.name = "eval1"; args.backend = "codex"
-        args.project = None; args.role = None; args.effort = None; args.clean_room = True; args.with_skill = []; args.slot = None
+        args.project = None; args.role = None; args.effort = None; args.clean_room = True; args.with_skill = []; args.slot = None; args.swarm_account = None
         args.model = None  # else the non-Claude --model guard exits before the codex-home path
         with pytest.raises(SystemExit):
             cmd_hire(args)
@@ -1542,7 +1578,7 @@ class TestCmdHireCleanRoom:
         mock_state.return_value = tmp_path
         args = MagicMock()
         args.kitchen = "risotto"; args.name = "eval1"; args.backend = "codex"
-        args.project = None; args.role = None; args.effort = None; args.clean_room = True; args.with_skill = []; args.slot = None
+        args.project = None; args.role = None; args.effort = None; args.clean_room = True; args.with_skill = []; args.slot = None; args.swarm_account = None
         args.model = None  # else the non-Claude --model guard exits before the prompt-wait path
         with pytest.raises(SystemExit):
             cmd_hire(args)
@@ -1568,7 +1604,7 @@ class TestCmdHireCleanRoom:
         args.role = None
         args.effort = None
         args.clean_room = True
-        args.with_skill = []; args.slot = None
+        args.with_skill = []; args.slot = None; args.swarm_account = None
         args.model = None
         with pytest.raises(SystemExit, match="only supported for Claude and Codex"):
             cmd_hire(args)
@@ -1597,7 +1633,7 @@ class TestCmdHireCleanRoom:
         args = MagicMock()
         args.kitchen = "risotto"; args.name = "eval1"; args.backend = "claude"
         args.project = None; args.role = None; args.effort = None; args.clean_room = True
-        args.with_skill = [str(skill)]; args.slot = None
+        args.with_skill = [str(skill)]; args.slot = None; args.swarm_account = None
         args.model = None  # a Claude hire passes the guard; assert model isn't accidentally forwarded
         cmd_hire(args)
         assert mock_spawn.call_args.kwargs["plugin_dirs"] == [str(skill.resolve())]
@@ -1615,7 +1651,7 @@ class TestCmdHireCleanRoom:
         args = MagicMock()
         args.kitchen = "risotto"; args.name = "x"; args.backend = "claude"
         args.project = None; args.role = None; args.effort = None; args.clean_room = False
-        args.with_skill = [str(skill)]; args.slot = None
+        args.with_skill = [str(skill)]; args.slot = None; args.swarm_account = None
         with pytest.raises(SystemExit, match="requires --clean-room"):
             cmd_hire(args)
         mock_spawn.assert_not_called()
@@ -1632,7 +1668,7 @@ class TestCmdHireCleanRoom:
         args = MagicMock()
         args.kitchen = "risotto"; args.name = "x"; args.backend = "codex"
         args.project = None; args.role = None; args.effort = None; args.clean_room = True
-        args.with_skill = [str(skill)]; args.slot = None
+        args.with_skill = [str(skill)]; args.slot = None; args.swarm_account = None
         with pytest.raises(SystemExit, match="not yet supported"):
             cmd_hire(args)
         mock_spawn.assert_not_called()
@@ -1648,7 +1684,7 @@ class TestCmdHireCleanRoom:
         args = MagicMock()
         args.kitchen = "risotto"; args.name = "x"; args.backend = "claude"
         args.project = None; args.role = None; args.effort = None; args.clean_room = True
-        args.with_skill = [str(tmp_path / "does-not-exist")]; args.slot = None
+        args.with_skill = [str(tmp_path / "does-not-exist")]; args.slot = None; args.swarm_account = None
         with pytest.raises(SystemExit, match="not a directory"):
             cmd_hire(args)
         mock_spawn.assert_not_called()
