@@ -40,8 +40,8 @@ def is_public(url: str) -> bool | None:
         if e.code == 404:
             return False
         print(f"{url}: {e}", file=sys.stderr)
-    except urllib.error.URLError as e:
-        print(f"{url}: {e.reason}", file=sys.stderr)
+    except OSError as e:  # unreachable or timed out
+        print(f"{url}: {e}", file=sys.stderr)
     return None
 
 
