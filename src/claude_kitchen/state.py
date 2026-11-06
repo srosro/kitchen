@@ -90,6 +90,9 @@ def mcp_servers(kitchen: str) -> dict:
     return servers
 
 
+SWARM_ALIAS = re.compile(r"#[A-Za-z0-9._=/+-]+:[A-Za-z0-9.-]+(:[0-9]+)?")
+
+
 def swarm_rooms(account: dict) -> list[str]:
     """The account's chat rooms, each by a name `join` takes. swarm lists a
     room with no canonical alias by its bare ID (`!…`), which join would turn
@@ -110,7 +113,11 @@ def swarm_rooms(account: dict) -> list[str]:
             room_id = room if room.startswith("!") else get(f"/directory/room/{quote(room, safe='')}")["room_id"]
             if get(f"/rooms/{quote(room_id, safe='')}/state/m.room.create").get("type") == "m.space":
                 continue
-            named.append(room if room.startswith("#") else get(f"/rooms/{quote(room_id, safe='')}/aliases")["aliases"][0])
+            name = room if room.startswith("#") else get(f"/rooms/{quote(room_id, safe='')}/aliases")["aliases"][0]
+            # Any member can publish an alias, and it goes into the sous's prompt: only plain ones do.
+            if not SWARM_ALIAS.fullmatch(name):
+                raise ValueError(f"{name!r} is not a plain room alias")
+            named.append(name)
         except (OSError, ValueError, KeyError, IndexError, TypeError) as e:  # no alias, or a lookup failed
             print(f"kitchen: swarm room {room} has no alias the sous can join it by ({e!r})", file=sys.stderr)
     return named
