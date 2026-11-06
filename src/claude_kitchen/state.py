@@ -90,24 +90,33 @@ def mcp_servers(kitchen: str) -> dict:
     return servers
 
 
+SWARM_ALIAS = re.compile(r"#[A-Za-z0-9._=/+-]+:[A-Za-z0-9.-]+(:[0-9]+)?")
+
+
 def swarm_rooms(account: dict) -> list[str]:
-    """The account's rooms, each by a name `join` takes. swarm lists a room
-    with no canonical alias by its bare ID (`!…`), which join would turn into
-    a new room named after it; such a room is joined by the first alias the
-    server publishes for it, and skipped, loudly, if it has none."""
+    """The account's chat rooms, each by a name `join` takes. swarm lists a
+    room with no canonical alias by its bare ID (`!…`), which join would turn
+    into a new room named after it; such a room is joined by the first alias
+    the server publishes for it. Spaces are left out: swarm refuses them as
+    unencrypted. A room that can't be named or looked up is skipped, loudly."""
     listed = subprocess.run([swarm_binary(), "accounts", "list"], capture_output=True, text=True, check=True)
     rooms = next(a["rooms"] for a in json.loads(listed.stdout)["accounts"] if a["account"] == account["user_id"])
+
+    def get(path: str) -> dict:
+        url = f"{account['homeserver'].rstrip('/')}/_matrix/client/v3{path}"
+        with urlopen(Request(url, headers={"Authorization": f"Bearer {account['access_token']}"}), timeout=30) as r:
+            return json.load(r)
+
     named = []
     for room in rooms:
-        if not room.startswith("!"):
-            named.append(room)
-            continue
-        url = f"{account['homeserver'].rstrip('/')}/_matrix/client/v3/rooms/{quote(room, safe='')}/aliases"
-        request = Request(url, headers={"Authorization": f"Bearer {account['access_token']}"})
         try:
-            with urlopen(request, timeout=30) as response:
-                named.append(json.load(response)["aliases"][0])
-        except (OSError, ValueError, KeyError, IndexError, TypeError) as e:  # no alias, or the lookup failed
+            room_id = room if room.startswith("!") else get(f"/directory/room/{quote(room, safe='')}")["room_id"]
+            if get(f"/rooms/{quote(room_id, safe='')}/state/m.room.create").get("type") == "m.space":
+                continue
+            names = [room] if room.startswith("#") else get(f"/rooms/{quote(room_id, safe='')}/aliases")["aliases"]
+            # Any member can publish an alias, and it goes into the sous's prompt: only plain ones do.
+            named.append(next(name for name in names if SWARM_ALIAS.fullmatch(name)))
+        except (OSError, ValueError, KeyError, StopIteration, TypeError) as e:  # no plain alias, or a lookup failed
             print(f"kitchen: swarm room {room} has no alias the sous can join it by ({e!r})", file=sys.stderr)
     return named
 
