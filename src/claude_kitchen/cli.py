@@ -648,6 +648,11 @@ def cmd_hire(args):
         if not role_path.exists():
             valid = sorted(p.stem for p in (_PKG_DIR / "roles").glob("*.md"))
             sys.exit(f"Unknown role '{role}'. Valid roles: {', '.join(valid)}")
+        # The role, then the contract every cook shares, as the one file each backend loads.
+        prompt = base / "cooks" / f"{name}.role.md"
+        prompt.parent.mkdir(parents=True, exist_ok=True)
+        prompt.write_text(role_path.read_text() + "\n" + (_PKG_DIR / "cook.md").read_text())
+        role_path = prompt
 
     # Gemini-only fail-fast: agy must be on PATH before we write a booting
     # status or spawn the tmux window. Gated to backend=="gemini" so claude,

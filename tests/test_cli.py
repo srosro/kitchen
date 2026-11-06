@@ -1304,8 +1304,9 @@ class TestCmdHireRole:
     @patch("claude_kitchen.cli.resolve_kitchen", return_value="risotto")
     @patch("claude_kitchen.cli.resolve_project", return_value=Path("/tmp"))
     def test_role_resolves_and_passes_path_to_spawn(
-        self, mock_rp, mock_rk, mock_state, mock_wait, mock_spawn, tmp_path,
+        self, mock_rp, mock_rk, mock_state, mock_wait, mock_spawn, tmp_path, monkeypatch,
     ):
+        monkeypatch.setenv("HOME", str(tmp_path))
         mock_state.return_value = tmp_path
         args = MagicMock()
         args.kitchen = "risotto"
@@ -1318,10 +1319,10 @@ class TestCmdHireRole:
         args.with_skill = []; args.slot = None
         args.model = None
         cmd_hire(args)
-        kwargs = mock_spawn.call_args.kwargs
-        assert kwargs["role_path"] is not None
-        assert kwargs["role_path"].name == "reviewer.md"
-        assert kwargs["role_path"].exists(), "Resolved role path should exist (Task 11 created it)"
+        # The cook loads its role followed by the contract every cook shares.
+        prompt = mock_spawn.call_args.kwargs["role_path"].read_text()
+        assert prompt.startswith("# reviewer")
+        assert "You are a cook, not a sous" in prompt and "End every report with `STATUS: DONE`" in prompt
 
     @patch("claude_kitchen.cli.send_keys")
     @patch("claude_kitchen.cli.spawn_window", return_value=True)
