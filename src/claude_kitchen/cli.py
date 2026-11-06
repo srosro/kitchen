@@ -4,6 +4,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -537,6 +538,11 @@ def cmd_open(args):
         print(f"Kitchen \"{name}\" is open. Sous chef on the line.")
         return
 
+    # What `kitchen restart sous` needs to relaunch this sous where it runs now.
+    kj["sous_launch"] = {"argv": [a for a in sys.argv if a != "--resume"], "cwd": os.getcwd(),
+                         "socket": os.environ.get("TMUX", "").split(",")[0],
+                         "pane": os.environ.get("TMUX_PANE")}
+    kitchen_file.write_text(json.dumps(kj) + "\n")
     spawn_sous(name, base, sous_md.read_text(), project, slug=slug,
                resume_session_id=sous_session_id, model=args.model)
 
@@ -1398,6 +1404,50 @@ def cmd_suspend(args):
     print(f"   {attach_cmd(kitchen)}    # once it is back up")
 
 
+RESTART_DELAY = 3
+
+
+def cmd_restart(args):
+    """Relaunch the sous in its own tmux pane: its `kitchen open` argv plus
+    --resume, RESTART_DELAY seconds from now so the caller — usually the sous
+    itself — gets this answer back first. Cooks run on the kitchen's own tmux
+    server, which this never touches."""
+    kitchen = resolve_kitchen(args.kitchen)
+    base = state_dir(kitchen)
+    kj = json.loads((base / "kitchen.json").read_text())
+    launch = kj.get("sous_launch")
+    if not launch or not launch["pane"]:
+        sys.exit(f"Kitchen \"{kitchen}\" has no sous pane on record: open it from tmux "
+                 f"(`kitchen open --resume`) once, then restart works.")
+    if not kj.get("sous_session_id"):
+        sys.exit(f"Kitchen \"{kitchen}\" has no sous session to resume yet.")
+    pid = int((base / "sous.pid").read_text())
+    # A live sous means its pane is still the one on record; a dead one leaves
+    # that pane to whatever runs there now, which respawn-pane -k would kill.
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        sys.exit(f"The sous of \"{kitchen}\" isn't running; bring it back with `kitchen open --resume`.")
+    # Wait out the old sous so open's live-sous check passes; a shell takes the
+    # pane back when the new sous exits, as it had before.
+    relaunch = (f"while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; "
+                f"{shlex.join(launch['argv'] + ['--resume'])}; exec \"$SHELL\" -l")
+    t = shlex.join(["tmux", "-S", launch["socket"]])
+    pane = shlex.quote(launch["pane"])
+    # Then confirm the dev-channels dialog the new sous opens on, as
+    # wait_for_prompt does for a windowed sous.
+    script = (f"sleep {RESTART_DELAY}; "
+              f"{t} respawn-pane -k -t {pane} -c {shlex.quote(launch['cwd'])} "
+              f"-e {shlex.quote('PATH=' + os.environ['PATH'])} {shlex.quote(relaunch)}; "
+              f"for i in $(seq 180); do "
+              f"{t} capture-pane -p -t {pane} | grep -q 'Loading development channels' "
+              f"&& exec {t} send-keys -t {pane} Enter; sleep 1; done")
+    subprocess.Popen(["sh", "-c", script],
+                     start_new_session=True, stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(f"Sous of \"{kitchen}\" restarts in {RESTART_DELAY}s in pane {launch['pane']}; cooks keep running.")
+
+
 def cmd_close(args):
     kitchen = resolve_kitchen(args.kitchen)
     base = state_dir(kitchen)
@@ -1483,6 +1533,10 @@ def main():
     p_suspend = sub.add_parser("suspend", help="Kill a kitchen's tmux server, keeping all its state on disk")
     p_suspend.add_argument("kitchen", nargs="?", help="Kitchen name")
 
+    p_restart = sub.add_parser("restart", help="Relaunch the sous with its launch flags plus --resume; cooks keep running")
+    p_restart.add_argument("target", choices=["sous"])
+    p_restart.add_argument("--kitchen", help="Target kitchen")
+
     p_close = sub.add_parser("close", help="Close a kitchen")
     p_close.add_argument("kitchen", nargs="?", help="Kitchen name")
     p_close.add_argument("--force", action="store_true", help="Remove worktree even with unpushed changes")
@@ -1530,6 +1584,8 @@ def main():
         cmd_sweep(args)
     elif args.command == "suspend":
         cmd_suspend(args)
+    elif args.command == "restart":
+        cmd_restart(args)
     elif args.command == "close":
         cmd_close(args)
     elif args.command == "setup":
