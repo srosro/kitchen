@@ -14,7 +14,7 @@ from pathlib import Path
 
 from claude_kitchen.tmux import (
     list_kitchens, list_windows, has_session, target,
-    capture_pane, send_keys, tmux, wait_for_prompt, pane_busy, attach_cmd, join_swarm,
+    capture_pane, send_keys, tmux, wait_for_prompt, PromptBlocked, kill_server, pane_busy, attach_cmd, join_swarm,
     PROBE_TIMEOUT, SESSION,
 )
 from claude_kitchen.state import (
@@ -361,7 +361,7 @@ def _abort_sub_sous(name: str, base: Path, kj: dict):
     a stray worktree, or a dangling branch. Best-effort: a slow/again-timing-out
     tmux must not block the rest of the cleanup."""
     try:
-        tmux("kill-session", "-t", target(), kitchen=name)
+        kill_server(name)
     except subprocess.TimeoutExpired:
         pass
     worktree = kj.get("worktree")
@@ -523,6 +523,8 @@ def cmd_open(args):
                 failure = "the child sous never reached its prompt"
         except subprocess.TimeoutExpired:
             failure = "tmux stayed unresponsive under launch load"
+        except PromptBlocked as e:
+            failure = str(e)
         if failure:
             _abort_sub_sous(name, base, kj)
             sys.exit(f"--sub-sous: {failure}; cleaned up kitchen \"{name}\".")
@@ -714,11 +716,15 @@ def cmd_hire(args):
     # Keep this barrier: the sous will call `kitchen ticket <cook>` immediately
     # after hire returns. Without it, the first ticket lands in a booting pane
     # and is lost. Also required for the codex send_keys role delivery below.
-    if not wait_for_prompt(kitchen, name, backend):
+    try:
+        failure = None if wait_for_prompt(kitchen, name, backend) else "didn't show prompt within timeout"
+    except PromptBlocked as e:
+        failure = str(e)
+    if failure:
         update_status(base, name, status="failed")
         if codex_home:
             shutil.rmtree(codex_home, ignore_errors=True)
-        sys.exit(f"{name} didn't show prompt within timeout.")
+        sys.exit(f"{name}: {failure}.")
 
     # Name the codex thread `[<kitchen>/<cook>]` so it is identifiable in the
     # ChatGPT app and `codex resume`. /rename before the first turn creates the
@@ -1387,7 +1393,7 @@ def cmd_suspend(args):
     kitchen = resolve_kitchen(args.kitchen)
     if not has_session(kitchen):
         sys.exit(f"Kitchen \"{kitchen}\" has no running tmux server — already suspended.")
-    tmux("kill-server", kitchen=kitchen)
+    kill_server(kitchen)
     print(f"Kitchen \"{kitchen}\" suspended. Cooks are gone; notes and cook records are untouched.")
     print(f"   kitchen open --resume {kitchen}    # bring the sous back")
     print(f"   {attach_cmd(kitchen)}    # once it is back up")
@@ -1458,7 +1464,7 @@ def cmd_close(args):
             print(f"Warning: bad kitchen.json: {e}", file=sys.stderr)
         kitchen_file.unlink(missing_ok=True)
 
-    tmux("kill-server", kitchen=kitchen)
+    kill_server(kitchen)
     for cook_file in sorted((base / "cooks").glob("*.json")):
         _archive_codex_thread(base, cook_file.stem)
 

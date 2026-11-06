@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Optional
 
 from claude_kitchen.state import state_root, swarm_held
@@ -110,6 +111,14 @@ def list_windows(kitchen: str, timeout: int = TIMEOUT) -> list[str]:
     ]
 
 
+def kill_server(kitchen: str):
+    """Kill a kitchen's tmux server and remove its socket, which tmux leaves
+    behind on exit."""
+    tmux("kill-server", kitchen=kitchen)
+    Path(os.environ.get("TMUX_TMPDIR", "/tmp"), f"tmux-{os.getuid()}",
+         socket(kitchen)).unlink(missing_ok=True)
+
+
 def has_session(kitchen: str, timeout: int = TIMEOUT) -> bool:
     """True if this kitchen's session is up on its own socket.
 
@@ -140,6 +149,18 @@ _PROMPT_MARKERS = {
     "codex": "OpenAI Codex (v",
     "gemini": "? for shortcuts",  # agy TUI footer, present when input is editable
 }
+
+# Claude Code's one-time modals, keyed by an option only the live dialog shows.
+# Both default to the refusing option, and accepting one is a trust decision
+# kitchen must not make for the head chef, so wait_for_prompt stops on them.
+_CLAUDE_ONE_TIME = {
+    "Yes, I trust this folder": "folder-trust",
+    "Yes, I accept": "Bypass Permissions",
+}
+
+
+class PromptBlocked(Exception):
+    """A Claude agent is parked on a one-time modal only a human may accept."""
 
 # Busy markers: a regex present in the pane tail while the agent is mid-turn,
 # gone when it's idle at the prompt. Backend-specific and confirmed empirically
@@ -263,6 +284,15 @@ def wait_for_prompt(kitchen: str, window: str, backend: str,
             if content:
                 if marker in content:
                     return True
+                blocker = backend == "claude" and next(
+                    (v for k, v in _CLAUDE_ONE_TIME.items() if k in content), None)
+                if blocker:
+                    cwd = tmux("display-message", "-p", "-t", target(window),
+                               "#{pane_current_path}", kitchen=kitchen).stdout.strip()
+                    raise PromptBlocked(
+                        f"Claude Code is waiting on its one-time {blocker} prompt in {cwd}. "
+                        f"Accept it once by hand — `cd {cwd} && claude --dangerously-skip-permissions`, "
+                        f"answer yes, then /exit — and retry")
                 screen = next((s for s in ("Update available!",
                                            "Do you trust the contents")
                                if s in content and s not in codex_answered),

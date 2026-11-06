@@ -1,4 +1,5 @@
 """Tests for tmux helpers. Uses mocked subprocess calls."""
+import os
 import subprocess
 from unittest.mock import patch, MagicMock
 import pytest
@@ -184,6 +185,26 @@ class TestWaitForPrompt:
         assert wait_for_prompt("ck-x", "sous", "claude", timeout=5) is True
         sent = [c.args for c in mock_tmux.call_args_list]
         assert ("send-keys", "-t", "kitchen:sous", "Enter") in sent
+
+    @pytest.mark.parametrize("screen, name", [
+        ("Accessing workspace:\n /home/r\n ❯ No, exit\n   Yes, I trust this folder", "folder-trust"),
+        ("WARNING: Claude Code running in Bypass Permissions mode\n ❯ 1. No, exit\n   2. Yes, I accept",
+         "Bypass Permissions"),
+    ])
+    @patch("claude_kitchen.tmux.time.sleep", return_value=None)
+    @patch("claude_kitchen.tmux.tmux")
+    @patch("claude_kitchen.tmux.capture_pane")
+    def test_one_time_modal_fails_with_its_fix(self, mock_cap, mock_tmux, mock_sleep, screen, name):
+        """A claude agent parked on a one-time modal whose default refuses must
+        fail at once with the fix, not stall out — and never answer it."""
+        from claude_kitchen.tmux import wait_for_prompt, PromptBlocked
+        mock_cap.return_value = screen
+        mock_tmux.return_value = MagicMock(stdout="/home/r\n")
+        with pytest.raises(PromptBlocked) as e:
+            wait_for_prompt("ck-x", "sous", "claude", timeout=5)
+        assert f"one-time {name} prompt in /home/r" in str(e.value)
+        assert "cd /home/r && claude --dangerously-skip-permissions" in str(e.value)
+        assert not any(c.args[0] == "send-keys" for c in mock_tmux.call_args_list)
 
     @patch("claude_kitchen.tmux.time.sleep", return_value=None)
     @patch("claude_kitchen.tmux.tmux")
@@ -929,3 +950,15 @@ def test_join_swarm_types_the_join_until_the_account_is_held(tmp_path, monkeypat
     typed.clear()
     t.join_swarm("k", "relay", "@cypress:c", "join #general", alive=lambda: False)
     assert typed == []
+
+
+def test_kill_server_removes_the_socket(tmp_path, monkeypatch):
+    """tmux leaves its socket file behind when the server dies; a kitchen's
+    teardown must not."""
+    from claude_kitchen.tmux import kill_server, tmux
+    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
+    tmux("new-session", "-d", "-s", SESSION, kitchen="probe", check=True)
+    sock = tmp_path / f"tmux-{os.getuid()}" / "ck-probe"
+    assert sock.exists()
+    kill_server("probe")
+    assert not sock.exists()
