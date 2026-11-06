@@ -825,6 +825,8 @@ class TestStatusPreservationAcrossNonStopWriters:
         config = json.loads(spawn.call_args.kwargs["mcp_config"].read_text())
         assert config == {"mcpServers": {"swarm": {"command": str(bin_dir / "swarm"),
                                                    "args": ["mcp", "claude", "--account", "@cypress:c"]}}}
+        # Outside the cooks/*.json namespace, which sweep and brigade read as cook records.
+        assert spawn.call_args.kwargs["mcp_config"].name == "relay.mcp"
         kitchen, window, account, prompt = join.call_args.args
         assert (window, account) == ("relay", "@cypress:c") and "#general:c" in prompt
 

@@ -684,7 +684,7 @@ def cmd_hire(args):
         if backend != "claude":
             sys.exit("--swarm-account is for Claude cooks.")
         credential = swarm_credential(swarm)
-        mcp_config = base / "cooks" / f"{name}.mcp.json"
+        mcp_config = base / "cooks" / f"{name}.mcp"  # not *.json: that glob is the cook records
         mcp_config.parent.mkdir(parents=True, exist_ok=True)
         mcp_config.write_text(json.dumps({"mcpServers": {"swarm": {
             "command": swarm_binary(), "args": ["mcp", "claude", "--account", swarm]}}}) + "\n")
