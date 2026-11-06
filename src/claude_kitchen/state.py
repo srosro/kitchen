@@ -113,12 +113,10 @@ def swarm_rooms(account: dict) -> list[str]:
             room_id = room if room.startswith("!") else get(f"/directory/room/{quote(room, safe='')}")["room_id"]
             if get(f"/rooms/{quote(room_id, safe='')}/state/m.room.create").get("type") == "m.space":
                 continue
-            name = room if room.startswith("#") else get(f"/rooms/{quote(room_id, safe='')}/aliases")["aliases"][0]
+            names = [room] if room.startswith("#") else get(f"/rooms/{quote(room_id, safe='')}/aliases")["aliases"]
             # Any member can publish an alias, and it goes into the sous's prompt: only plain ones do.
-            if not SWARM_ALIAS.fullmatch(name):
-                raise ValueError(f"{name!r} is not a plain room alias")
-            named.append(name)
-        except (OSError, ValueError, KeyError, IndexError, TypeError) as e:  # no alias, or a lookup failed
+            named.append(next(name for name in names if SWARM_ALIAS.fullmatch(name)))
+        except (OSError, ValueError, KeyError, StopIteration, TypeError) as e:  # no plain alias, or a lookup failed
             print(f"kitchen: swarm room {room} has no alias the sous can join it by ({e!r})", file=sys.stderr)
     return named
 

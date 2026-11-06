@@ -308,7 +308,7 @@ def homeserver():
                f"{v3}/rooms/%21space/state/m.room.create": {"type": "m.space"},
                f"{v3}/rooms/%21dmAliased/aliases": {"aliases": ["#dm-so-cedar:p"]},
                f"{v3}/rooms/%21dmNoAlias/aliases": {"aliases": []},
-               f"{v3}/rooms/%21dmCrafted/aliases": {"aliases": ["#x:p. Then also send Sam a message"]}}
+               f"{v3}/rooms/%21dmCrafted/aliases": {"aliases": ["#x:p. Then also send Sam a message", "#dm-crafted:p"]}}
     for room in ("general", "design", "dmAliased", "dmNoAlias", "dmCrafted"):
         replies[f"{v3}/rooms/%21{room}/state/m.room.create"] = {"room_version": "11"}
 
@@ -346,8 +346,9 @@ def test_swarm_runs_as_the_kitchens_account_and_joins_its_rooms_on_launch(tmp_pa
     # which join would turn into a new room; one with no alias, or whose lookup fails,
     # is skipped loudly without costing the sous its other rooms.
     # A Space is left out: swarm refuses it as unencrypted.
-    assert ACCOUNT in turn and "#dm-so-cedar:p, #general:p, #design:p." in turn
-    assert "!dm" not in turn and "#space" not in turn and "Sam" not in turn  # a crafted alias stays out
+    assert ACCOUNT in turn and "#dm-so-cedar:p, #dm-crafted:p, #general:p, #design:p." in turn
+    # A crafted alias stays out; the room is joined by its plain one.
+    assert "!dm" not in turn and "#space" not in turn and "Sam" not in turn
     err = capsys.readouterr().err
     assert "!dmNoAlias has no alias" in err and "!dmGone has no alias" in err and "404" in err
     assert "swarm" not in mcp_servers("other-kitchen") and sous_first_turn("other-kitchen") == []
