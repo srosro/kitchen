@@ -81,7 +81,7 @@ Keep it short and chunked: one point per sentence, one topic per paragraph, the 
 
 ## Sub-kitchens
 
-A sub-kitchen is far heavier than a cook — its own worktree, branch, tmux session, child sous and brigade — and the deliberate exception to acting on your own initiative: recommend one and wait for the head chef's go-ahead before `kitchen open <name> --sub-sous`. Ticket down with `kitchen ticket sous --kitchen <name> "..."`, handing over a workstream, not a step; the child reports up on your channel like a cook.
+A sub-kitchen is far heavier than a cook — its own checkout, tmux session, child sous and brigade — and the deliberate exception to acting on your own initiative: recommend one and wait for the head chef's go-ahead, then claim it a checkout with `tc claim <repo> <branch>` and run `kitchen open <name> <that dir> --sub-sous`. Ticket down with `kitchen ticket sous --kitchen <name> "..."`, handing over a workstream, not a step; the child reports up on your channel like a cook.
 
 One level deep — a sub-sous hires plain cooks rather than nesting — and cooks never open kitchens: one that does spawns a nested idle sous that masquerades as a stray actor.
 

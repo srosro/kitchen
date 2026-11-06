@@ -886,9 +886,8 @@ class TestCmdOpen:
     @patch("claude_kitchen.cli.has_session", return_value=False)
     @patch("claude_kitchen.cli.tmux")
     @patch("claude_kitchen.cli.state_dir")
-    @patch("claude_kitchen.cli.create_worktree", return_value=Path("/tmp/risotto"))
     @patch("claude_kitchen.cli.resolve_project")
-    def test_writes_mcp_config_and_execs(self, mock_resolve, mock_wt, mock_state, mock_tmux, mock_has, mock_spawn, mock_slug, mock_ns, tmp_path, monkeypatch):
+    def test_writes_mcp_config_and_execs(self, mock_resolve, mock_state, mock_tmux, mock_has, mock_spawn, mock_slug, mock_ns, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
         mock_resolve.return_value = Path("/tmp/myproject")
         mock_state.return_value = tmp_path
@@ -897,7 +896,6 @@ class TestCmdOpen:
         args = MagicMock()
         args.name = "risotto"
         args.project = "/tmp/myproject"
-        args.worktree_path = None
         args.resume = False
         args.sub_sous = False
 
@@ -912,12 +910,12 @@ class TestCmdOpen:
         assert "kitchen" in config["mcpServers"]
 
         # spawn_sous called with the namespaced kitchen name, state dir,
-        # prompt, and worktree path (worktree keeps the bare `requested` name)
+        # prompt, and the project itself: a named kitchen makes no worktree
         mock_spawn.assert_called_once()
         call_args = mock_spawn.call_args
         assert call_args[0][0] == "widget-risotto"
         assert call_args[0][1] == tmp_path
-        assert call_args[0][3] == Path("/tmp/risotto")
+        assert call_args[0][3] == Path("/tmp/myproject")
 
     @patch("claude_kitchen.cli.namespaced", return_value="widget-risotto")
     @patch("claude_kitchen.cli.project_slug", return_value="widget")
@@ -925,9 +923,8 @@ class TestCmdOpen:
     @patch("claude_kitchen.cli.has_session", return_value=False)
     @patch("claude_kitchen.cli.tmux")
     @patch("claude_kitchen.cli.state_dir")
-    @patch("claude_kitchen.cli.create_worktree", return_value=Path("/tmp/risotto"))
     @patch("claude_kitchen.cli.resolve_project")
-    def test_open_self_heals_legacy_mcp_config(self, mock_resolve, mock_wt, mock_state, mock_tmux, mock_has, mock_spawn, mock_slug, mock_ns, tmp_path, monkeypatch):
+    def test_open_self_heals_legacy_mcp_config(self, mock_resolve, mock_state, mock_tmux, mock_has, mock_spawn, mock_slug, mock_ns, tmp_path, monkeypatch):
         # A kitchen opened before the rename has a stale, cook-discoverable
         # base/.mcp.json. Opening (and resuming — the writer/unlink runs
         # unconditionally before the resume branch) must delete it.
@@ -945,7 +942,6 @@ class TestCmdOpen:
         args = MagicMock()
         args.name = "risotto"
         args.project = "/tmp/myproject"
-        args.worktree_path = None
         args.resume = False
         args.sub_sous = False
 
@@ -1024,7 +1020,6 @@ class TestCmdOpenNoOriginRepo:
         args = MagicMock()
         args.name = None
         args.project = str(repo)
-        args.worktree_path = None
         args.resume = False
         args.sub_sous = False
 
@@ -1057,9 +1052,8 @@ class TestCmdOpenFailures:
     @patch("claude_kitchen.cli.has_session", return_value=False)
     @patch("claude_kitchen.cli.tmux")
     @patch("claude_kitchen.cli.state_dir")
-    @patch("claude_kitchen.cli.create_worktree", return_value=Path("/tmp/risotto"))
     @patch("claude_kitchen.cli.resolve_project")
-    def test_exits_when_sous_chef_md_missing(self, mock_resolve, mock_wt, mock_state, mock_tmux, mock_has, mock_slug, mock_ns, tmp_path, monkeypatch):
+    def test_exits_when_sous_chef_md_missing(self, mock_resolve, mock_state, mock_tmux, mock_has, mock_slug, mock_ns, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
         mock_resolve.return_value = Path("/tmp/myproject")
         mock_state.return_value = tmp_path
@@ -1067,7 +1061,6 @@ class TestCmdOpenFailures:
         args = MagicMock()
         args.name = "risotto"
         args.project = "/tmp/myproject"
-        args.worktree_path = None
         args.resume = False
         args.sub_sous = False
         with patch("claude_kitchen.cli._PKG_DIR", tmp_path):
@@ -1081,11 +1074,10 @@ class TestCmdOpenWikiAndNotes:
     @patch("claude_kitchen.cli.has_session", return_value=False)
     @patch("claude_kitchen.cli.tmux")
     @patch("claude_kitchen.cli.state_dir")
-    @patch("claude_kitchen.cli.create_worktree", return_value=Path("/tmp/risotto"))
     @patch("claude_kitchen.cli.resolve_project")
     @patch("claude_kitchen.cli.project_slug", return_value="widget")
     def test_creates_wiki_and_notes(
-        self, mock_slug, mock_resolve, mock_wt, mock_state,
+        self, mock_slug, mock_resolve, mock_state,
         mock_tmux, mock_has, mock_spawn, mock_ns, tmp_path, monkeypatch,
     ):
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -1096,7 +1088,6 @@ class TestCmdOpenWikiAndNotes:
         args = MagicMock()
         args.name = "risotto"
         args.project = "/tmp/myproject"
-        args.worktree_path = None
         args.resume = False
         args.sub_sous = False
 
@@ -1137,7 +1128,6 @@ class TestCmdOpenWikiAndNotes:
         args = MagicMock()
         args.name = "risotto"
         args.project = "/tmp/myproject"
-        args.worktree_path = None
         args.resume = False
         args.sub_sous = False
 
@@ -1172,7 +1162,6 @@ class TestCmdOpenWikiAndNotes:
         args = MagicMock()
         args.name = "risotto"
         args.project = "/tmp/myproject"
-        args.worktree_path = None
         args.resume = False
         args.sub_sous = False
 
@@ -1216,7 +1205,6 @@ class TestCmdOpenSoftCutover:
         args = MagicMock()
         args.name = "foo"
         args.project = str(proj)
-        args.worktree_path = None
         args.resume = False
         args.sub_sous = False
 
@@ -1741,7 +1729,7 @@ class TestOpenDoesNotSweepCooksItCannotSee:
         (base / "kitchen.json").write_text(json.dumps(
             {"source": str(project), "slug": "widget", "sous_session_id": "sid-1"}) + "\n")
         args = MagicMock(name_=None, project=str(project), resume=True,
-                         sub_sous=False, worktree_path=None)
+                         sub_sous=False)
         args.name = "widget"
         with patch("claude_kitchen.cli.has_session", return_value=session_up), \
              patch("claude_kitchen.cli.list_windows", return_value=["_placeholder"]), \
@@ -1785,7 +1773,7 @@ class TestSecondOpenIsANoOp:
         before = (kitchen_json.read_text(), mcp_json.read_text(), cook_json.read_text())
 
         args = MagicMock(project=str(project), resume=False, sub_sous=False,
-                         worktree_path=None)
+                         )
         args.name = "widget"
         with patch("claude_kitchen.cli.has_session", return_value=has_session_value), \
              patch("claude_kitchen.cli.tmux") as mock_tmux, \
@@ -1937,7 +1925,7 @@ class TestArchiveCodexThread:
         self._cook(tmp_path, "eng", "claude", "bbbbbbbb-0000-0000-0000-000000000000")
         self._cook(tmp_path, "eval1", "codex", "cccccccc-0000-0000-0000-000000000000")
         (tmp_path / "codex-home" / "eval1").mkdir(parents=True)  # clean-room
-        cmd_close(argparse.Namespace(kitchen="risotto", keep_worktree=False, force=False))
+        cmd_close(argparse.Namespace(kitchen="risotto"))
         assert log.read_text().splitlines() == [
             "archive aaaaaaaa-0000-0000-0000-000000000001",
             "archive aaaaaaaa-0000-0000-0000-000000000002",
@@ -2595,10 +2583,9 @@ class TestCmdOpenSubSous:
     @patch("claude_kitchen.cli.has_session", return_value=False)
     @patch("claude_kitchen.cli.tmux")
     @patch("claude_kitchen.cli.state_dir")
-    @patch("claude_kitchen.cli.create_worktree", return_value=Path("/tmp/child"))
     @patch("claude_kitchen.cli.resolve_project")
     def test_launches_windowed_sous_and_waits(
-        self, mock_resolve, mock_wt, mock_state, mock_tmux, mock_has,
+        self, mock_resolve, mock_state, mock_tmux, mock_has,
         mock_spawn_sous, mock_spawn_win, mock_wait, mock_slug, mock_ns,
         tmp_path, monkeypatch,
     ):
@@ -2612,7 +2599,6 @@ class TestCmdOpenSubSous:
         args = MagicMock()
         args.name = "child"
         args.project = "/tmp/myproject"
-        args.worktree_path = None
         args.resume = False
         args.sub_sous = True
 
@@ -2636,10 +2622,9 @@ class TestCmdOpenSubSous:
     @patch("claude_kitchen.cli.has_session", return_value=False)
     @patch("claude_kitchen.cli.tmux")
     @patch("claude_kitchen.cli.state_dir")
-    @patch("claude_kitchen.cli.create_worktree", return_value=Path("/tmp/child"))
     @patch("claude_kitchen.cli.resolve_project")
     def test_no_parent_status_dir_passes_none(
-        self, mock_resolve, mock_wt, mock_state, mock_tmux, mock_has,
+        self, mock_resolve, mock_state, mock_tmux, mock_has,
         mock_spawn_win, mock_wait, mock_slug, mock_ns, tmp_path, monkeypatch,
     ):
         """Run by hand (no parent sous) → parent_base is None, child runs
@@ -2653,7 +2638,6 @@ class TestCmdOpenSubSous:
         args = MagicMock()
         args.name = "child"
         args.project = "/tmp/myproject"
-        args.worktree_path = None
         args.resume = False
         args.sub_sous = True
 
@@ -2673,7 +2657,6 @@ class TestCmdOpenSubSous:
         args = MagicMock()
         args.name = "child"
         args.project = "/tmp/myproject"
-        args.worktree_path = None
         args.resume = False
         args.sub_sous = True
         with pytest.raises(SystemExit, match="fresh-open only"):
@@ -2697,87 +2680,34 @@ class TestCmdOpenSubSous:
         args = MagicMock()
         args.name = "child"
         args.project = "/tmp/myproject"
-        args.worktree_path = None
         args.resume = True
         args.sub_sous = True
         with pytest.raises(SystemExit, match="fresh-open only"):
             cmd_open(args)
 
-    @patch("claude_kitchen.cli.spawn_sous_window", return_value=False)
-    @patch("claude_kitchen.cli.has_session", return_value=False)
-    @patch("claude_kitchen.cli.tmux")
-    @patch("claude_kitchen.cli.state_dir")
-    def test_rejects_preexisting_worktree_and_leaves_it_untouched(
-        self, mock_state, mock_tmux, mock_has, mock_spawn_win, tmp_path, monkeypatch,
-    ):
-        """fresh-open-only at the git layer: if a worktree/branch named <name>
-        already exists, --sub-sous must REJECT (not reuse it) — otherwise a
-        failed launch's _abort_sub_sous force-removes a worktree + branch this
-        open never created. Real git so the destructive path is exercised."""
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.delenv("STATUS_DIR", raising=False)
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        env = {**__import__("os").environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
-        subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
-        subprocess.run(["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", "init"],
-                       check=True, env=env)
-        # A pre-existing worktree + branch at the path this open would target
-        # (create_worktree defaults to <repo-parent>/<name>).
-        existing_wt = tmp_path / "child"
-        subprocess.run(["git", "-C", str(repo), "worktree", "add", str(existing_wt), "-b", "child"],
-                       check=True, env=env)
-        mock_state.return_value = tmp_path / "state"
-        mock_tmux.return_value = MagicMock(returncode=0, stdout="")
-
-        args = MagicMock()
-        args.name = "child"
-        args.project = str(repo)
-        args.worktree_path = None
-        args.resume = False
-        args.sub_sous = True
-
-        with patch("claude_kitchen.cli.resolve_project", return_value=repo):
-            with pytest.raises(SystemExit, match="already exists"):
-                cmd_open(args)
-
-        # The pre-existing worktree + branch are UNTOUCHED.
-        assert existing_wt.exists(), "pre-existing worktree must not be removed"
-        assert subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "--verify", "refs/heads/child"],
-            capture_output=True,
-        ).returncode == 0, "pre-existing branch must not be deleted"
-
-    @patch("claude_kitchen.cli.remove_worktree")
     @patch("claude_kitchen.cli.namespaced", return_value="widget-child")
     @patch("claude_kitchen.cli.project_slug", return_value="widget")
     @patch("claude_kitchen.cli.spawn_sous_window", return_value=False)
     @patch("claude_kitchen.cli.has_session", return_value=False)
     @patch("claude_kitchen.cli.tmux")
     @patch("claude_kitchen.cli.state_dir")
-    @patch("claude_kitchen.cli.create_worktree")
     @patch("claude_kitchen.cli.resolve_project")
     def test_spawn_failure_cleans_up_and_exits(
-        self, mock_resolve, mock_wt, mock_state, mock_tmux, mock_has,
-        mock_spawn_win, mock_slug, mock_ns, mock_rmwt, tmp_path, monkeypatch,
+        self, mock_resolve, mock_state, mock_tmux, mock_has,
+        mock_spawn_win, mock_slug, mock_ns, tmp_path, monkeypatch,
     ):
         """spawn_sous_window False → never leave a sous-less kitchen: kill the
-        session, remove the worktree, wipe the state dir, and exit clearly."""
+        session, wipe the state dir, and exit clearly."""
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.delenv("STATUS_DIR", raising=False)
         mock_resolve.return_value = Path("/tmp/myproject")
         base = tmp_path / "state"
         mock_state.return_value = base
-        wt = tmp_path / "wt"
-        wt.mkdir()
-        mock_wt.return_value = wt
         mock_tmux.return_value = MagicMock(returncode=0, stdout="")
 
         args = MagicMock()
         args.name = "child"
         args.project = "/tmp/myproject"
-        args.worktree_path = None
         args.resume = False
         args.sub_sous = True
 
@@ -2785,12 +2715,8 @@ class TestCmdOpenSubSous:
             cmd_open(args)
 
         assert not base.exists()                       # state dir wiped
-        mock_rmwt.assert_called_once()                 # worktree removed
-        assert mock_rmwt.call_args.args[0] == wt
-        assert mock_rmwt.call_args.kwargs.get("force") is True
         assert any(c.args[0] == "kill-session" for c in mock_tmux.call_args_list)
 
-    @patch("claude_kitchen.cli.remove_worktree")
     @patch("claude_kitchen.cli.namespaced", return_value="widget-child")
     @patch("claude_kitchen.cli.project_slug", return_value="widget")
     @patch("claude_kitchen.cli.wait_for_prompt", return_value=False)
@@ -2798,12 +2724,10 @@ class TestCmdOpenSubSous:
     @patch("claude_kitchen.cli.has_session", return_value=False)
     @patch("claude_kitchen.cli.tmux")
     @patch("claude_kitchen.cli.state_dir")
-    @patch("claude_kitchen.cli.create_worktree")
     @patch("claude_kitchen.cli.resolve_project")
     def test_prompt_timeout_cleans_up_and_exits(
-        self, mock_resolve, mock_wt, mock_state, mock_tmux, mock_has,
-        mock_spawn_win, mock_wait, mock_slug, mock_ns, mock_rmwt,
-        tmp_path, monkeypatch,
+        self, mock_resolve, mock_state, mock_tmux, mock_has,
+        mock_spawn_win, mock_wait, mock_slug, mock_ns, tmp_path, monkeypatch,
     ):
         """Sous spawned but never reached its prompt (genuine failure after the
         retry-tolerant wait) → same teardown, no half-open kitchen."""
@@ -2812,15 +2736,11 @@ class TestCmdOpenSubSous:
         mock_resolve.return_value = Path("/tmp/myproject")
         base = tmp_path / "state"
         mock_state.return_value = base
-        wt = tmp_path / "wt"
-        wt.mkdir()
-        mock_wt.return_value = wt
         mock_tmux.return_value = MagicMock(returncode=0, stdout="")
 
         args = MagicMock()
         args.name = "child"
         args.project = "/tmp/myproject"
-        args.worktree_path = None
         args.resume = False
         args.sub_sous = True
 
@@ -2828,7 +2748,6 @@ class TestCmdOpenSubSous:
             cmd_open(args)
 
         assert not base.exists()
-        mock_rmwt.assert_called_once()
         assert any(c.args[0] == "kill-session" for c in mock_tmux.call_args_list)
 
 

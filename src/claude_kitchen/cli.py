@@ -122,85 +122,6 @@ def resolve_project(project: str) -> Path:
     sys.exit(f"Project path does not resolve to a directory: {project}")
 
 
-def create_worktree(project: Path, name: str, worktree_path: Path = None) -> Path:
-    """Create a git worktree. Defaults to a sibling directory of the project."""
-
-
-    git_root = subprocess.run(
-        ["git", "-C", str(project), "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True,
-    )
-    if git_root.returncode != 0:
-        sys.exit(f"Not a git repo: {project}")
-    root = Path(git_root.stdout.strip())
-
-    if worktree_path is None:
-        worktree_path = root.parent / name
-
-    if worktree_path.exists():
-        print(f"Worktree already exists: {worktree_path}", file=sys.stderr)
-        return worktree_path
-
-    result = subprocess.run(
-        ["git", "worktree", "add", str(worktree_path), "-b", name],
-        cwd=str(root),
-    )
-    if result.returncode != 0:
-        sys.exit(f"Failed to create worktree: {name}")
-
-    return worktree_path
-
-
-def worktree_is_dirty(worktree_path: Path) -> bool:
-    """Check if a worktree has uncommitted changes or new commits."""
-    # Uncommitted changes
-    status = subprocess.run(
-        ["git", "-C", str(worktree_path), "status", "--porcelain"],
-        capture_output=True, text=True,
-    )
-    if status.stdout.strip():
-        return True
-    # Commits not on any remote-tracking branch
-    log = subprocess.run(
-        ["git", "-C", str(worktree_path), "log", "--oneline", "@{upstream}..HEAD"],
-        capture_output=True, text=True,
-    )
-    # If upstream doesn't exist (new branch, never pushed), any commits count as dirty
-    if log.returncode != 0:
-        rev_count = subprocess.run(
-            ["git", "-C", str(worktree_path), "rev-list", "--count", "HEAD", "--not", "--remotes"],
-            capture_output=True, text=True,
-        )
-        return rev_count.returncode == 0 and int(rev_count.stdout.strip() or "0") > 0
-    return bool(log.stdout.strip())
-
-
-def remove_worktree(worktree_path: Path, force: bool = False):
-    """Remove a git worktree. Prompts if there are uncommitted or unpushed changes."""
-    if not force and worktree_is_dirty(worktree_path):
-        print(f"Worktree has uncommitted or unpushed changes: {worktree_path}")
-        try:
-            answer = input("Remove anyway? [y/N] ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            answer = ""
-        if answer != "y":
-            print("Keeping worktree.")
-            return
-
-    git_dir = subprocess.run(
-        ["git", "-C", str(worktree_path), "rev-parse", "--git-common-dir"],
-        capture_output=True, text=True,
-    )
-    if git_dir.returncode == 0:
-        common = Path(git_dir.stdout.strip()).resolve()
-        subprocess.run(
-            ["git", "worktree", "remove", "--force", str(worktree_path)],
-            cwd=str(common),
-        )
-    else:
-        print(f"Warning: could not resolve git dir for worktree removal", file=sys.stderr)
-
-
 def run_hook(hook_dir: Path, hook_name: str, name: str, cwd: Path = None, source: Path = None):
     """Run a <hook_dir>/.kitchen/<hook_name>.sh script if it exists.
     hook_dir: where to find the .kitchen/ folder (typically the source project).
@@ -332,52 +253,15 @@ def _legacy_bare_kitchen(requested: str, project: Path):
     return requested, base, kitchen_file
 
 
-def _sub_sous_worktree_collision(project: Path, requested: str,
-                                 worktree_path: str | None) -> bool:
-    """True if the worktree dir this --sub-sous open would create already exists,
-    or a branch named `requested` already exists. Keeps --sub-sous fresh-open-
-    only at the git layer: otherwise create_worktree reuses the existing worktree
-    and a later failed launch's _abort_sub_sous would force-remove a worktree +
-    delete a branch this open never created."""
-    root = subprocess.run(
-        ["git", "-C", str(project), "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True,
-    )
-    if root.returncode != 0:
-        return False
-    wt = Path(worktree_path) if worktree_path else Path(root.stdout.strip()).parent / requested
-    if wt.exists():
-        return True
-    return subprocess.run(
-        ["git", "-C", str(project), "rev-parse", "--verify", "--quiet",
-         f"refs/heads/{requested}"],
-        capture_output=True,
-    ).returncode == 0
-
-
 def _abort_sub_sous(name: str, base: Path, kj: dict):
     """Tear down a half-created --sub-sous kitchen after a failed launch, so a
-    failed open never leaves a sous-less 'open' kitchen, an orphan tmux session,
-    a stray worktree, or a dangling branch. Best-effort: a slow/again-timing-out
-    tmux must not block the rest of the cleanup."""
+    failed open never leaves a sous-less 'open' kitchen or an orphan tmux
+    session. Best-effort: a slow/again-timing-out tmux must not block the rest
+    of the cleanup."""
     try:
         tmux("kill-session", "-t", target(), kitchen=name)
     except subprocess.TimeoutExpired:
         pass
-    worktree = kj.get("worktree")
-    if worktree and Path(worktree).exists():
-        wt = Path(worktree)
-        # Capture the branch before removing the worktree, then delete it. A
-        # fresh --sub-sous open's branch holds no work, and a leftover branch
-        # makes a same-name retry fail (`git worktree add -b <name>`).
-        branch = subprocess.run(
-            ["git", "-C", str(wt), "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True,
-        ).stdout.strip()
-        remove_worktree(wt, force=True)
-        if branch and branch != "HEAD":
-            subprocess.run(["git", "-C", kj["source"], "branch", "-D", branch],
-                           capture_output=True)
     shutil.rmtree(base, ignore_errors=True)
 
 
@@ -387,8 +271,7 @@ def cmd_open(args):
     # Namespace the kitchen by project slug so kitchens for different projects
     # never collide on tmux session / state dir / socket names — e.g.
     # `kitchen open main` in two repos yields my-project-main and other-repo-main,
-    # not a shared "main". The git branch/worktree keeps the bare `requested`
-    # name (it already lives inside the project's own repo).
+    # not a shared "main".
     name = namespaced(project, requested)
     base = state_dir(name)
     kitchen_file = base / "kitchen.json"
@@ -422,15 +305,6 @@ def cmd_open(args):
                 f"--sub-sous is fresh-open only: it can't combine with --resume "
                 f"or reattach an existing kitchen/session (\"{name}\")."
             )
-        # Also fresh-open-only at the git layer: refuse if the worktree or branch
-        # this open would create already exists. Otherwise create_worktree reuses
-        # the existing worktree and a later failed launch's _abort_sub_sous would
-        # force-remove a worktree + delete a branch this open never created.
-        if args.name and _sub_sous_worktree_collision(project, requested, args.worktree_path):
-            sys.exit(
-                f"--sub-sous is fresh-open only: a worktree or branch named "
-                f"\"{requested}\" already exists — remove it or choose another name."
-            )
 
     sous_session_id = None
     if args.resume:
@@ -445,6 +319,7 @@ def cmd_open(args):
 
     if resuming:
         kj = json.loads(kitchen_file.read_text())
+        # "worktree": kitchens opened before kitchen stopped making them.
         project = Path(kj.get("worktree", kj.get("source", str(project))))
         derived = project_slug(Path(kj["source"]))
         # A legacy bare kitchen stores its old long-form slug; the slug
@@ -465,11 +340,6 @@ def cmd_open(args):
         slug = project_slug(source)
 
         kj = {"source": str(source), "slug": slug}
-        if args.name:
-            wt_path = Path(args.worktree_path) if args.worktree_path else None
-            project = create_worktree(project, requested, wt_path)
-            kj["worktree"] = str(project)
-
         kitchen_file.write_text(json.dumps(kj) + "\n")
         run_hook(source, "on-open", name, cwd=project, source=source)
 
@@ -510,7 +380,7 @@ def cmd_open(args):
         parent = os.environ.get("STATUS_DIR")
         # Tolerate a brief tmux stall under launch load (TimeoutExpired); on any
         # genuine failure tear the half-created kitchen down so we never leave a
-        # sous-less "open" kitchen with an orphan session/worktree/state.
+        # sous-less "open" kitchen with an orphan session/state.
         failure = None
         try:
             if not spawn_sous_window(name, base, sous_md, project, slug=slug,
@@ -1445,7 +1315,7 @@ def cmd_close(args):
     kitchen = resolve_kitchen(args.kitchen)
     base = state_dir(kitchen)
 
-    # Run on-close hook and remove worktree BEFORE killing tmux
+    # Run on-close hook BEFORE killing tmux
     kitchen_file = base / "kitchen.json"
     if kitchen_file.exists():
         try:
@@ -1454,10 +1324,6 @@ def cmd_close(args):
             cwd = Path(kj.get("worktree", kj["source"]))
             if cwd.exists():
                 run_hook(source, "on-close", kitchen, cwd=cwd)
-            if "worktree" in kj and not args.keep_worktree:
-                worktree = Path(kj["worktree"])
-                if worktree.exists():
-                    remove_worktree(worktree, force=args.force)
         except (json.JSONDecodeError, KeyError) as e:
             print(f"Warning: bad kitchen.json: {e}", file=sys.stderr)
         kitchen_file.unlink(missing_ok=True)
@@ -1482,9 +1348,8 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_open = sub.add_parser("open", help="Open a kitchen")
-    p_open.add_argument("name", nargs="?", default=None, help="Kitchen/worktree name (omit to use cwd without worktree)")
+    p_open.add_argument("name", nargs="?", default=None, help="Kitchen name (default: the project's)")
     p_open.add_argument("project", nargs="?", default=".", help="Project path or name (default: cwd)")
-    p_open.add_argument("--worktree-path", help="Custom path for the worktree (default: sibling directory)")
     p_open.add_argument("--resume", action="store_true", help="Resume the previous sous conversation (uses sous_session_id from kitchen.json)")
     p_open.add_argument("--model", choices=CLAUDE_MODELS,
                         help="Claude model tier for the sous: fable, sonnet, or opus. Passed to `claude --model` verbatim, resolving the latest model in that tier. Omit to use the account default.")
@@ -1532,8 +1397,6 @@ def main():
 
     p_close = sub.add_parser("close", help="Close a kitchen")
     p_close.add_argument("kitchen", nargs="?", help="Kitchen name")
-    p_close.add_argument("--force", action="store_true", help="Remove worktree even with unpushed changes")
-    p_close.add_argument("--keep-worktree", action="store_true", help="Skip worktree removal entirely")
 
     sub.add_parser("hook", help="Claude Code hook handler (called by hooks, not directly)")
 

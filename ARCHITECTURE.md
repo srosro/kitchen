@@ -110,7 +110,7 @@ To add a new backend you supply exactly that row: a launch command, two pane mar
 ```
 ~/.claude-kitchen/
 ├── <kitchen-name>/            # per-kitchen, wiped on `kitchen close`
-│   ├── kitchen.json           #   project path, slug, worktree, sous session id
+│   ├── kitchen.json           #   project path, slug, sous session id
 │   ├── kitchen-mcp.json       #   MCP config the sous launches with
 │   ├── kitchen.sock           #   the unix socket (exists while channel server runs)
 │   ├── sous.pid               #   duplicate-sous guard

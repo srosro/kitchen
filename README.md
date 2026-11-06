@@ -81,7 +81,7 @@ You continue talking to the sous while both cook sessions remain visible in tmux
 - **tmux** — cooks run in tmux windows; this is the process and observation layer.
   - Verify: `tmux -V`
   - Install: `brew install tmux` on macOS, or use your Linux package manager.
-- **git** — kitchen derives the project namespace from the repository and uses git worktrees for named kitchens.
+- **git** — kitchen derives the project namespace from the repository.
   - Verify: `git --version`
 - **[uv](https://docs.astral.sh/uv/)** — installs the Python 3.12+ CLI and its dependencies.
   - Verify: `uv --version`
@@ -164,8 +164,8 @@ Run kitchen from inside any git repository:
 # Use the current checkout
 kitchen open
 
-# Or create a branch + sibling worktree for a named kitchen
-kitchen open my-feature
+# Or a second, named kitchen on another checkout (a `tc claim` slot, say)
+kitchen open my-feature ~/Hacking/widget3
 ```
 
 The current process becomes the Claude sous chef. Talk to it normally—describe goals, constraints, and what evidence you expect. The sous knows the kitchen commands and manages cooks for you.
@@ -178,7 +178,7 @@ tmux -L ck-<project-slug>-<kitchen-name> attach
 
 Each kitchen runs on its own tmux server (socket `ck-<kitchen>`), so the `-L` is required — a bare `tmux attach -t ck-…` will not find the session. No `-t` is needed: the server holds a single session, named `kitchen`, whose windows are `kitchen:<cook>`. `kitchen open` prints the exact command.
 
-Kitchen namespaces sessions and state by project slug. For example, `kitchen open my-feature` in a repository named `widget` becomes kitchen `widget-my-feature`, while the git branch and worktree keep the name `my-feature`. A no-name `kitchen open` usually uses the repository name without doubling it.
+Kitchen namespaces sessions and state by project slug. For example, `kitchen open my-feature` in a repository named `widget` becomes kitchen `widget-my-feature`. A no-name `kitchen open` usually uses the repository name without doubling it.
 
 ### Useful requests to give the sous
 
@@ -200,7 +200,7 @@ The sous runs these commands under the hood. You can also use them directly from
 
 | Command | What it does |
 |---|---|
-| `kitchen open [name] [project]` | Open a kitchen; an explicit name creates a worktree. |
+| `kitchen open [name] [project]` | Open a kitchen on a checkout (default: the current one). |
 | `kitchen open <name> --sub-sous` | Launch a fresh child kitchen whose sous runs in its own tmux session. |
 | `kitchen hire <cook> [options]` | Spawn a cook and wait until its interactive prompt is ready. |
 | `kitchen roles` | List the packaged cook roles. |
@@ -264,7 +264,7 @@ The root sous's own Stop hook does not notify its own socket, preventing an echo
 ```text
 ~/.claude-kitchen/
 ├── <kitchen>/
-│   ├── kitchen.json          # source/worktree + sous resume session
+│   ├── kitchen.json          # source checkout + sous resume session
 │   ├── kitchen-mcp.json      # generated per-kitchen MCP config
 │   ├── kitchen.sock          # live channel socket
 │   ├── sous.pid              # duplicate-sous guard
@@ -329,7 +329,7 @@ With an editable install, reopen the kitchen or re-hire a cook after changing a 
 - **Channel authentication fails:** run `claude /login` and select a claude.ai account. Console/API-key authentication does not expose channels.
 - **Claude Code is too old:** upgrade to version 2.1.80 or newer.
 - **`agy not on PATH`:** Gemini cooks require Antigravity CLI; Claude and Codex kitchens do not.
-- **Kitchen refuses to open outside a git repository:** move into a git repository first. Kitchen needs it for project namespacing and optional worktrees.
+- **Kitchen refuses to open outside a git repository:** move into a git repository first. Kitchen needs it for project namespacing.
 - **Legacy kitchen named `projects`:** that name is reserved for the persistent project wiki root; follow the rename instruction printed by setup.
 
 ## Acknowledgements
