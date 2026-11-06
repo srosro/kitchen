@@ -9,6 +9,8 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 
 # Per-kitchen MCP config filename. Deliberately NOT ".mcp.json": Claude Code
@@ -61,20 +63,75 @@ def read_env(path: Path) -> dict:
     return dict(line.split("=", 1) for line in lines if "=" in line and not line.startswith("#"))
 
 
+def swarm_binary() -> str:
+    """Absolute, as swarm writes its own entry: Claude Code may launch it
+    without this PATH, and then reports only "not found in $PATH: stdio"."""
+    return os.path.abspath(shutil.which("swarm") or sys.exit("there is no `swarm` on PATH."))
+
+
+def swarm_account(kitchen: str) -> dict | None:
+    """The credential of the swarm account this kitchen acts as: a link at
+    `<state>/swarm/credential.json` to swarm's own copy under ~/.swarm/accounts."""
+    link = state_dir(kitchen) / "swarm" / "credential.json"
+    if not link.is_symlink():
+        if link.exists():
+            sys.exit(f"{link} is a pre-accounts swarm credential: move its account into "
+                     "~/.swarm/accounts/<server>/<name>/ and link it back here (see the README).")
+        return None
+    return json.loads(link.read_text())  # a dangling link fails here, loudly
+
+
+def mcp_servers(kitchen: str) -> dict:
+    """What a sous loads: its channels, plus swarm once this kitchen has an
+    account, which `swarm mcp claude` serves itself through Claude Code's inbox."""
+    servers = channel_servers(kitchen)
+    if account := swarm_account(kitchen):
+        servers["swarm"] = {"command": swarm_binary(), "args": ["mcp", "claude", "--account", account["user_id"]]}
+    return servers
+
+
+def swarm_rooms(account: dict) -> list[str]:
+    """The account's rooms, each by a name `join` takes. swarm lists a room
+    with no canonical alias by its bare ID (`!…`), which join would turn into
+    a new room named after it; such a room is joined by the first alias the
+    server publishes for it, and skipped, loudly, if it has none."""
+    listed = subprocess.run([swarm_binary(), "accounts", "list"], capture_output=True, text=True, check=True)
+    rooms = next(a["rooms"] for a in json.loads(listed.stdout)["accounts"] if a["account"] == account["user_id"])
+    named = []
+    for room in rooms:
+        if not room.startswith("!"):
+            named.append(room)
+            continue
+        url = f"{account['homeserver'].rstrip('/')}/_matrix/client/v3/rooms/{quote(room, safe='')}/aliases"
+        request = Request(url, headers={"Authorization": f"Bearer {account['access_token']}"})
+        try:
+            with urlopen(request, timeout=30) as response:
+                named.append(json.load(response)["aliases"][0])
+        except (OSError, ValueError, KeyError, IndexError, TypeError) as e:  # no alias, or the lookup failed
+            print(f"kitchen: swarm room {room} has no alias the sous can join it by ({e!r})", file=sys.stderr)
+    return named
+
+
+def swarm_join_prompt(user_id: str, rooms: list[str]) -> str:
+    """The first turn of a swarm session: messages reach it only from the rooms
+    it joins, and every launch is a new session."""
+    return f"Call the swarm `join` tool as account {user_id} once for each of: {', '.join(rooms)}. Say nothing else."
+
+
+def sous_first_turn(kitchen: str) -> list[str]:
+    """The sous's launch prompt, if it has swarm rooms to join."""
+    if not (account := swarm_account(kitchen)):
+        return []
+    return [swarm_join_prompt(account["user_id"], swarm_rooms(account))]
+
+
 def channel_servers(kitchen: str) -> dict:
-    """The MCP servers a sous loads, each one a channel: the kitchen's own,
-    plus plow-chat, Discord or swarm once this kitchen holds its
-    credential. All but swarm run the `kitchen` on PATH, the deployed install."""
+    """The channel servers a sous loads: the kitchen's own, plus plow-chat or
+    Discord once this kitchen holds its credential. All run the `kitchen` on
+    PATH, the deployed install."""
     servers = {"kitchen": {"command": "kitchen", "args": ["channel-server", kitchen]}}
     if (plow_chat_dir(kitchen) / "plow-credentials").exists():
         servers["plow-chat"] = {"command": "kitchen", "args": ["plow-chat-server", kitchen]}
-    if (credential := state_dir(kitchen) / "swarm" / "credential.json").exists():
-        # `swarm mcp` is itself a channel server; nothing of kitchen's runs in between.
-        # Absolute, as swarm writes its own entry: Claude Code may launch it
-        # without this PATH, and then reports only "not found in $PATH: stdio".
-        swarm = shutil.which("swarm") or sys.exit(
-            f"{credential} exists, but there is no `swarm` on PATH to serve it.")
-        servers["swarm"] = {"command": os.path.abspath(swarm), "args": ["mcp", "--credential", str(credential)]}
     if (state_dir(kitchen) / "discord" / ".env").exists():
         # Static access: only the allowlist on disk at boot is heard, never paired or edited live.
         env = {"DISCORD_STATE_DIR": str(state_dir(kitchen) / "discord"), "DISCORD_ACCESS_MODE": "static"}
