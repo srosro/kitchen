@@ -89,8 +89,11 @@ def mcp_servers(kitchen: str) -> dict:
 
 
 def swarm_rooms(user_id: str) -> list[str]:
+    """The account's rooms that have an alias. A bare room ID (`!…`) is not a
+    name `join` takes: it would make a new room named after the ID."""
     listed = subprocess.run([swarm_binary(), "accounts", "list"], capture_output=True, text=True, check=True)
-    return next(a["rooms"] for a in json.loads(listed.stdout)["accounts"] if a["account"] == user_id)
+    rooms = next(a["rooms"] for a in json.loads(listed.stdout)["accounts"] if a["account"] == user_id)
+    return [room for room in rooms if room.startswith("#")]
 
 
 def swarm_join_prompt(user_id: str, rooms: list[str]) -> str:

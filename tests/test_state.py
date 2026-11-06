@@ -276,7 +276,7 @@ ACCOUNT = "@cedar:plow.swarm.plow.co"
 def fake_swarm(tmp_path):
     """A `swarm` whose `accounts list` shows ACCOUNT in two rooms."""
     listed = json.dumps({"accounts": [{"account": "@other:x", "rooms": ["#general:x"]},
-                                      {"account": ACCOUNT, "rooms": ["#general:p", "#design:p"]}]})
+                                      {"account": ACCOUNT, "rooms": ["!dmNoAlias", "#general:p", "#design:p"]}]})
     swarm = tmp_path / "bin" / "swarm"
     swarm.parent.mkdir(exist_ok=True)
     swarm.write_text(f"#!/bin/sh\necho '{listed}'\n")
@@ -306,6 +306,7 @@ def test_swarm_runs_as_the_kitchens_account_and_joins_its_rooms_on_launch(tmp_pa
     assert "server:swarm" not in channel_flags("boss")  # it delivers through the inbox, not a channel
     [turn] = sous_first_turn("boss")
     assert ACCOUNT in turn and "#general:p, #design:p" in turn
+    assert "!dmNoAlias" not in turn  # join would create a room named after a bare ID
     assert "swarm" not in mcp_servers("other-kitchen") and sous_first_turn("other-kitchen") == []
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     with pytest.raises(SystemExit, match="no `swarm` on PATH"):
