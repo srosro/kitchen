@@ -155,13 +155,17 @@ class TestClaimSocket:
         with pytest.raises(SystemExit) as exc:
             _claim_socket(sock_path)
         assert exc.value.code == 0
+        (tmp_path / "k.sock.lock").unlink()  # `kitchen close` hands the path on while it still runs
+        _claim_socket(sock_path).close()
         owner.close()
         _claim_socket(sock_path).close()  # released: the next server claims it
 
-    def test_a_live_listener_without_the_lock_is_left_alone(self, tmp_path):
+    def test_a_live_listener_without_the_lock_is_left_alone(self):
         # A server from before the lock still owns its socket during an upgrade.
-        sock_path = tmp_path / "k.sock"
-        with sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM) as live:
+        # /tmp, not tmp_path: macOS's pytest paths outrun AF_UNIX's length limit.
+        with tempfile.TemporaryDirectory(dir="/tmp") as td, \
+                sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM) as live:
+            sock_path = Path(td) / "k.sock"
             live.bind(str(sock_path))
             live.listen(1)
             with pytest.raises(SystemExit) as exc:
@@ -169,13 +173,14 @@ class TestClaimSocket:
             assert exc.value.code == 0
             assert sock_path.is_socket()
 
-    def test_a_stale_socket_is_cleared_for_binding(self, tmp_path):
-        sock_path = tmp_path / "k.sock"
-        dead = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
-        dead.bind(str(sock_path))
-        dead.close()
-        _claim_socket(sock_path).close()
-        assert not sock_path.exists()
+    def test_a_stale_socket_is_cleared_for_binding(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as td:
+            sock_path = Path(td) / "k.sock"
+            dead = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
+            dead.bind(str(sock_path))
+            dead.close()
+            _claim_socket(sock_path).close()
+            assert not sock_path.exists()
 
     def test_a_path_that_is_not_a_socket_is_left_alone_loudly(self, tmp_path, capsys):
         sock_path = tmp_path / "k.sock"

@@ -1476,7 +1476,7 @@ def cmd_close(args):
         _archive_codex_thread(base, cook_file.stem)
 
     # Clean up mcp config, socket, pid, and stale cook state
-    for f in (MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME, "kitchen.sock", "sous.pid"):
+    for f in (MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME, "kitchen.sock", "kitchen.sock.lock", "sous.pid"):
         (base / f).unlink(missing_ok=True)
     for sub in ("cooks", "notes", "codex-home"):
         d = base / sub

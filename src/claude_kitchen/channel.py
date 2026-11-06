@@ -1,7 +1,9 @@
 """Kitchen channel MCP server — bridges cook hooks to sous chef via Claude Code channels."""
 import asyncio
+import contextlib
 import fcntl
 import json
+import os
 import socket as sock_mod
 import sys
 from pathlib import Path
@@ -213,7 +215,11 @@ async def run_server(kitchen: str):
     finally:
         sock_server.close()
         await sock_server.wait_closed()
-        sock_path.unlink(missing_ok=True)
+        # `kitchen close` deletes the lock to hand the path to the next server;
+        # once it has, the socket there is no longer ours to remove.
+        with contextlib.suppress(FileNotFoundError):
+            if os.path.samestat(os.fstat(owner.fileno()), os.stat(owner.name)):
+                sock_path.unlink(missing_ok=True)
         owner.close()  # only now may the next server claim the path
 
 
