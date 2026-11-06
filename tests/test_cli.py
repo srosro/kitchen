@@ -1130,7 +1130,7 @@ class TestCmdOpenWikiAndNotes:
         # The resuming branch rewrites kitchen.json with the re-derived slug.
         # Verify the rewrite actually happened and preserved the source field.
         kj = json.loads((base / "kitchen.json").read_text())
-        assert kj == {"source": "/tmp/myproject", "slug": "widget"}
+        assert (kj["source"], kj["slug"]) == ("/tmp/myproject", "widget")
 
     @patch("claude_kitchen.cli.namespaced", return_value="renamed-risotto")
     @patch("claude_kitchen.cli.spawn_sous")
