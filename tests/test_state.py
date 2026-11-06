@@ -1,5 +1,7 @@
 """Tests for state read/write."""
+import http.server
 import json
+import threading
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -274,9 +276,9 @@ ACCOUNT = "@cedar:plow.swarm.plow.co"
 
 
 def fake_swarm(tmp_path):
-    """A `swarm` whose `accounts list` shows ACCOUNT in two rooms."""
+    """A `swarm` whose `accounts list` shows ACCOUNT in two aliased rooms and two listed by bare ID."""
     listed = json.dumps({"accounts": [{"account": "@other:x", "rooms": ["#general:x"]},
-                                      {"account": ACCOUNT, "rooms": ["#general:p", "#design:p"]}]})
+                                      {"account": ACCOUNT, "rooms": ["!dmAliased", "!dmNoAlias", "!dmGone", "#general:p", "#design:p"]}]})
     swarm = tmp_path / "bin" / "swarm"
     swarm.parent.mkdir(exist_ok=True)
     swarm.write_text(f"#!/bin/sh\necho '{listed}'\n")
@@ -284,28 +286,60 @@ def fake_swarm(tmp_path):
     return swarm
 
 
-def link_account(tmp_path):
+def link_account(tmp_path, homeserver="https://plow.swarm.plow.co"):
     """The sous's account as `swarm accounts add` keeps it, linked into its kitchen."""
     credential = tmp_path / ".swarm/accounts/plow.swarm.plow.co/cedar/credential.json"
     credential.parent.mkdir(parents=True)
-    credential.write_text(json.dumps({"user_id": ACCOUNT, "homeserver": "https://plow.swarm.plow.co"}))
+    credential.write_text(json.dumps({"user_id": ACCOUNT, "homeserver": homeserver, "access_token": "tok"}))
     link = state_dir("boss") / "swarm" / "credential.json"
     link.parent.mkdir(parents=True)
     link.symlink_to(credential)
     return link
 
 
-def test_swarm_runs_as_the_kitchens_account_and_joins_its_rooms_on_launch(tmp_path, monkeypatch):
+@pytest.fixture
+def homeserver():
+    """A homeserver that publishes an alias for !dmAliased and none for !dmNoAlias."""
+    aliases = {"/_matrix/client/v3/rooms/%21dmAliased/aliases": ["#dm-so-cedar:p"],
+               "/_matrix/client/v3/rooms/%21dmNoAlias/aliases": []}
+    # !dmGone (any other path) answers 404, as a lookup can fail
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            assert self.headers["Authorization"] == "Bearer tok"
+            if self.path not in aliases:
+                self.send_error(404)
+                return
+            body = json.dumps({"aliases": aliases[self.path]}).encode()
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}"
+    server.shutdown()
+
+
+def test_swarm_runs_as_the_kitchens_account_and_joins_its_rooms_on_launch(tmp_path, monkeypatch, homeserver, capsys):
     # The sous's MCP launch may not see open's PATH; a bare `swarm` there fails
     # as Claude Code's misleading ENOENT "Executable not found in $PATH: stdio".
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PATH", str(fake_swarm(tmp_path).parent))
-    link_account(tmp_path)
+    link_account(tmp_path, homeserver)
     assert mcp_servers("boss")["swarm"] == {
         "command": str(tmp_path / "bin" / "swarm"), "args": ["mcp", "claude", "--account", ACCOUNT]}
     assert "server:swarm" not in channel_flags("boss")  # it delivers through the inbox, not a channel
     [turn] = sous_first_turn("boss")
-    assert ACCOUNT in turn and "#general:p, #design:p" in turn
+    # A room swarm lists by bare ID is joined by its published alias, never by the ID,
+    # which join would turn into a new room; one with no alias, or whose lookup fails,
+    # is skipped loudly without costing the sous its other rooms.
+    assert ACCOUNT in turn and "#dm-so-cedar:p, #general:p, #design:p" in turn and "!dm" not in turn
+    err = capsys.readouterr().err
+    assert "!dmNoAlias has no alias" in err and "!dmGone has no alias" in err and "404" in err
     assert "swarm" not in mcp_servers("other-kitchen") and sous_first_turn("other-kitchen") == []
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     with pytest.raises(SystemExit, match="no `swarm` on PATH"):
