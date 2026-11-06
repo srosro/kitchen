@@ -884,13 +884,15 @@ def _parent_push_base(base: Path) -> Path | None:
 
 
 def cmd_hook(args):
-    """Handle hook events from Claude Code (stdin) or Codex (--message arg)."""
+    """Handle hook events from Claude Code or Antigravity (stdin), or Codex (--message arg).
+    A bare session the head chef runs has no AGENT_NAME, so _hook_gate no-ops it."""
     ctx = _hook_gate()
     if not ctx:
         return
     name, kitchen, base = ctx
 
-    codex = args.command == "hook-codex"
+    backend = {"hook-codex": "codex", "hook-agy": "gemini"}.get(args.command, "claude")
+    codex = backend == "codex"
     try:
         raw = args.json_payload if codex else sys.stdin.read()
         payload = json.loads(raw) if raw else {}
@@ -904,7 +906,7 @@ def cmd_hook(args):
         # own Stop events would feed back through the cook channel push below.
         # Carveout: capture session_id on Claude Stop so `kitchen open --resume`
         # can find this exact sous after a crash. (Sous is always Claude.)
-        if not codex and event == "Stop":
+        if backend == "claude" and event == "Stop":
             sid = payload.get("session_id")
             kj_file = base / "kitchen.json"
             if sid and kj_file.exists():
@@ -928,7 +930,7 @@ def cmd_hook(args):
                 })
         return
 
-    if not codex:
+    if backend == "claude":
         # Claude branch dispatches by event type. UserPromptSubmit is the one
         # "cook started working" write for Claude. Must NOT read
         # last_assistant_message (not present on this event) and must NOT
@@ -947,6 +949,8 @@ def cmd_hook(args):
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     if codex:
         summary = payload.get("last-assistant-message", "")
+    elif backend == "gemini":
+        summary = _agy_summary(payload)
     else:
         try:
             summary = payload["last_assistant_message"]
@@ -984,6 +988,9 @@ def cmd_hook(args):
         tokens = _read_codex_token_count(rollout) if rollout else None
         if tokens is not None:
             updates["tokens"] = tokens
+    elif backend == "gemini":
+        # agy has no token reader, so its push carries no ctx.
+        updates["session_id"] = payload.get("conversationId", "")
     else:
         # The Claude Stop hook payload carries session_id and transcript_path
         # but no usage data — empirically verified 2026-04-29 against Claude
@@ -1040,34 +1047,6 @@ def _agy_summary(payload: dict) -> str:
     except OSError:
         return ""
     return summary
-
-
-def cmd_hook_agy(args):
-    """Antigravity (gemini cook) Stop hook → channel notification. Reads the
-    Stop payload from stdin.
-
-    Standalone from cmd_hook — leaves cmd_hook and its sous carveout untouched.
-    Reuses _hook_gate for the AGENT_NAME/STATUS_DIR multi-tenancy guard: a bare
-    `agy` session the head chef runs has no AGENT_NAME, so the gate returns None
-    and this no-ops — kitchen never clobbers ad-hoc agy. gemini has no token
-    reader, so the push carries NO ctx (channel.py omits the attribute when the
-    key is absent)."""
-    gate = _hook_gate()
-    if not gate:
-        return
-    name, kitchen, base = gate
-    try:
-        payload = json.loads(sys.stdin.read() or "{}")
-    except (json.JSONDecodeError, ValueError):
-        return
-    summary = _agy_summary(payload)
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    # update_status (not write_status) preserves durable fields like `backend`
-    # (written "gemini" at hire) across this completion transition.
-    update_status(base, name, agent=name, kitchen=kitchen, status="idle",
-                  ts=ts, summary=summary, session_id=payload.get("conversationId", ""))
-    from claude_kitchen.channel import send_to_socket, SOCK_NAME
-    send_to_socket(base / SOCK_NAME, {"cook": name, "summary": summary, "ts": ts})
 
 
 def _claude_tokens_from_transcript(transcript_path):
@@ -1591,10 +1570,8 @@ def main():
         cmd_statusline_segment(args)
     elif args.command == "roles":
         cmd_roles(args)
-    elif args.command in ("hook", "hook-codex"):
+    elif args.command in ("hook", "hook-codex", "hook-agy"):
         cmd_hook(args)
-    elif args.command == "hook-agy":
-        cmd_hook_agy(args)
     elif args.command == "channel-server":
         from claude_kitchen.channel import main as channel_main
         channel_main(args.kitchen)

@@ -2871,6 +2871,24 @@ class TestAgySummary:
         assert _agy_summary(payload) == "the answer"
 
 
+    def test_the_stop_hook_marks_the_cook_idle_and_notifies_without_ctx(self, tmp_path, monkeypatch):
+        write_status(tmp_path, "gem", {"status": "working", "agent": "gem", "backend": "gemini"})
+        payload = self._payload(tmp_path, [{"type": "PLANNER_RESPONSE", "content": "done\n"}])
+        payload["conversationId"] = "conv-1"
+        monkeypatch.setenv("AGENT_NAME", "gem")
+        monkeypatch.setenv("AGENT_KITCHEN", "risotto")
+        monkeypatch.setenv("STATUS_DIR", str(tmp_path))
+        monkeypatch.setattr("sys.stdin", MagicMock(read=MagicMock(return_value=json.dumps(payload))))
+        with patch("claude_kitchen.channel.send_to_socket") as push:
+            main_argv = ["kitchen", "hook-agy"]
+            monkeypatch.setattr("sys.argv", main_argv)
+            main()
+        status = json.loads((tmp_path / "cooks" / "gem.json").read_text())
+        assert (status["status"], status["summary"], status["session_id"], status["backend"]) == \
+            ("idle", "done", "conv-1", "gemini")
+        assert push.call_args.args[1] == {"cook": "gem", "summary": "done", "ts": status["ts"]}
+
+
 class TestTicketSous:
     """`kitchen ticket sous` through the real CLI parser and a real unix socket."""
 
