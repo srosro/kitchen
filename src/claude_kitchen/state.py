@@ -63,13 +63,11 @@ def read_env(path: Path) -> dict:
 
 def channel_servers(kitchen: str) -> dict:
     """The MCP servers a sous loads, each one a channel: the kitchen's own,
-    plus plow-chat, Buzz, Discord or swarm once this kitchen holds its
+    plus plow-chat, Discord or swarm once this kitchen holds its
     credential. All but swarm run the `kitchen` on PATH, the deployed install."""
     servers = {"kitchen": {"command": "kitchen", "args": ["channel-server", kitchen]}}
     if (plow_chat_dir(kitchen) / "plow-credentials").exists():
         servers["plow-chat"] = {"command": "kitchen", "args": ["plow-chat-server", kitchen]}
-    if (state_dir(kitchen) / "buzz" / "buzz-credentials").exists():
-        servers["buzz"] = {"command": "kitchen", "args": ["buzz-server", kitchen]}
     if (credential := state_dir(kitchen) / "swarm" / "credential.json").exists():
         # `swarm mcp` is itself a channel server; nothing of kitchen's runs in between.
         # Absolute, as swarm writes its own entry: Claude Code may launch it
