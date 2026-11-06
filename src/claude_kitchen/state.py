@@ -121,6 +121,21 @@ def swarm_rooms(account: dict) -> list[str]:
     return named
 
 
+def swarm_held(account: str) -> bool:
+    """Whether a session holds `account`, which it does once it has joined."""
+    listed = subprocess.run([swarm_binary(), "accounts", "list"], capture_output=True, text=True, check=True)
+    return any(a["account"] == account and a["holder"] for a in json.loads(listed.stdout)["accounts"])
+
+
+def swarm_credential(account: str) -> dict:
+    """The credential swarm keeps on this machine for `account`."""
+    for path in (Path.home() / ".swarm" / "accounts").glob("*/*/credential.json"):
+        credential = json.loads(path.read_text())
+        if credential["user_id"] == account:
+            return credential
+    sys.exit(f"no swarm account {account} on this machine (swarm accounts add it first).")
+
+
 def swarm_join_prompt(user_id: str, rooms: list[str]) -> str:
     """The first turn of a swarm session: messages reach it only from the rooms
     it joins, and every launch is a new session."""

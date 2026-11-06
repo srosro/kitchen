@@ -14,13 +14,13 @@ from pathlib import Path
 
 from claude_kitchen.tmux import (
     list_kitchens, list_windows, has_session, target,
-    capture_pane, send_keys, tmux, wait_for_prompt, pane_busy, attach_cmd,
+    capture_pane, send_keys, tmux, wait_for_prompt, pane_busy, attach_cmd, join_swarm,
     PROBE_TIMEOUT, SESSION,
 )
 from claude_kitchen.state import (
     state_dir, write_status, read_status, update_status,
     project_slug, namespaced, wiki_dir, notes_dir, mcp_servers,
-    atomic_write_json, state_root,
+    atomic_write_json, state_root, swarm_binary, swarm_credential, swarm_join_prompt, swarm_rooms,
     MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME,
 )
 from claude_kitchen.models import max_context_for
@@ -678,6 +678,17 @@ def cmd_hire(args):
 
     codex_home = str(_seed_codex_home(base, name, cwd)) if clean_room and backend == "codex" else None
 
+    swarm = getattr(args, "swarm_account", None)
+    mcp_config = None
+    if swarm:
+        if backend != "claude":
+            sys.exit("--swarm-account is for Claude cooks.")
+        credential = swarm_credential(swarm)
+        mcp_config = base / "cooks" / f"{name}.mcp"  # not *.json: that glob is the cook records
+        mcp_config.parent.mkdir(parents=True, exist_ok=True)
+        mcp_config.write_text(json.dumps({"mcpServers": {"swarm": {
+            "command": swarm_binary(), "args": ["mcp", "claude", "--account", swarm]}}}) + "\n")
+
     # cwd stays in the record until clock-out; tc reads it to keep the slot
     # from being claimed while the cook's window is down (a suspended kitchen).
     write_status(base, name, {"status": "booting", "agent": name, "backend": backend, "cwd": cwd})
@@ -687,7 +698,7 @@ def cmd_hire(args):
         kitchen=kitchen, name=name, cwd=cwd,
         backend=backend, status_dir=str(base),
         effort=effort, role_path=role_to_pass, clean_room=clean_room,
-        codex_home=codex_home, plugin_dirs=plugin_dirs, model=model,
+        codex_home=codex_home, plugin_dirs=plugin_dirs, model=model, mcp_config=mcp_config,
     )
     if not ok:
         # update_status preserves durable fields (the booting write above
@@ -721,6 +732,10 @@ def cmd_hire(args):
     if backend == "codex" and role_path:
         send_keys(kitchen, name, role_path.read_text() + _ROLE_ACK_FOOTER,
                   backend=backend)
+
+    if swarm:
+        join_swarm(kitchen, name, swarm, swarm_join_prompt(swarm, swarm_rooms(credential)),
+                   alive=lambda: name in list_windows(kitchen))
 
     print(f"{name} is on the station. Yes, chef!")
 
@@ -1482,6 +1497,7 @@ def main():
     p_hire.add_argument("--effort", help="Reasoning effort (low, medium, high, xhigh, max, ultra; support is backend/model-dependent, Claude maps ultra to max)")
     p_hire.add_argument("--model", choices=[*CLAUDE_MODELS, *CODEX_MODELS], help="Model for the cook: fable, sonnet, or opus (Claude cooks; passed to `claude --model` verbatim, resolving the latest model in that tier), or astra (Codex cooks; passed to `codex -m` as gpt-6-astra). Omit to use the account default.")
     p_hire.add_argument("--clean-room", action="store_true", help="Isolated eval hire (Claude or Codex): no memory, no plugin/skill startup injection, no role prompt. Sous supplies the one eval prompt via a ticket. (gemini not yet supported)")
+    p_hire.add_argument("--swarm-account", metavar="ID", help="Give the cook its own swarm server, bound to this account on this machine (e.g. @cypress:chief.swarm.plow.co), and have it join that account's rooms (Claude only)")
     p_hire.add_argument("--with-skill", action="append", default=[], metavar="PATH", help="Load a custom skill/plugin dir into a --clean-room cook (repeatable; Claude only). Path needs a SKILL.md or .claude-plugin/plugin.json. Additive opt-in to the blank slate.")
 
     p_ticket = sub.add_parser("ticket", help="Send a ticket to a cook")

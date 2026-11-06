@@ -905,3 +905,27 @@ class TestSendKeysVerifiedSubmit:
         with pytest.raises(RuntimeError, match="did not land in the composer"):
             send_keys("ck-x", "cx", _SETTLE_HEAD, backend="codex")
         assert fake.state["enter"] == 0
+
+
+def test_join_swarm_types_the_join_until_the_account_is_held(tmp_path, monkeypatch):
+    # A join given at launch is answered before swarm's server connects; the
+    # account only counts as joined once `swarm accounts list` shows a holder.
+    import json
+    from claude_kitchen import tmux as t
+    joined = tmp_path / "joined"
+    listed = lambda holder: json.dumps({"accounts": [{"account": "@cypress:c", "holder": holder}]})
+    swarm = tmp_path / "swarm"
+    swarm.write_text(f"#!/bin/sh\n[ -e {joined} ] && echo '{listed({'pid': 1})}' || echo '{listed(None)}'\n")
+    swarm.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:/usr/bin:/bin")
+    monkeypatch.setattr(t, "JOIN_WAIT", 0)
+    monkeypatch.setattr(t, "pane_busy", lambda *a: False)
+    typed = []
+    monkeypatch.setattr(t, "send_keys", lambda kitchen, window, text, backend: (typed.append(text), joined.touch()))
+    t.join_swarm("k", "relay", "@cypress:c", "join #general", alive=lambda: True)
+    assert typed == ["join #general"]
+    # A session that has exited is never typed into: the pane would be a bare shell.
+    joined.unlink()
+    typed.clear()
+    t.join_swarm("k", "relay", "@cypress:c", "join #general", alive=lambda: False)
+    assert typed == []

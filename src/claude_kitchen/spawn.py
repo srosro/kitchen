@@ -123,7 +123,7 @@ _CLEAN_ROOM_SETTINGS = json.dumps(
 def build_shell_cmd(backend: str, name: str, kitchen: str, status_dir: str,
                     effort: str = None, role_path: Path = None,
                     clean_room: bool = False, codex_home: str = None,
-                    plugin_dirs: list = None, model: str = None) -> str:
+                    plugin_dirs: list = None, model: str = None, mcp_config: Path = None) -> str:
     q = shlex.quote
     parts = [
         f"AGENT_NAME={q(name)}",
@@ -166,6 +166,8 @@ def build_shell_cmd(backend: str, name: str, kitchen: str, status_dir: str,
         # disabled superpowers plugin, the role, or the sous-managed cwd. cli.py
         # gates this to clean-room claude cooks with validated paths.
         plugin_flags = "".join(f" --plugin-dir {q(p)}" for p in (plugin_dirs or []))
+        # --swarm-account: the cook's own swarm server, bound to that account.
+        plugin_flags += f" --mcp-config {q(str(mcp_config))}" if mcp_config else ""
         # Block AskUserQuestion: it renders an interactive picker in the cook's
         # TUI that fires no hook and blocks forever — the sous never learns of
         # it. Cooks surface questions via NEEDS_CONTEXT instead (see role prompts).
@@ -210,12 +212,12 @@ def build_shell_cmd(backend: str, name: str, kitchen: str, status_dir: str,
 def spawn_window(kitchen: str, name: str, cwd: str, backend: str, status_dir: str,
                  effort: str = None, role_path: Path = None,
                  clean_room: bool = False, codex_home: str = None,
-                 plugin_dirs: list = None, model: str = None) -> bool:
+                 plugin_dirs: list = None, model: str = None, mcp_config: Path = None) -> bool:
     """Spawn a new tmux window with an agent. Returns True on success."""
     cmd = build_shell_cmd(backend, name, kitchen, status_dir,
                           effort=effort, role_path=role_path,
                           clean_room=clean_room, codex_home=codex_home,
-                          plugin_dirs=plugin_dirs, model=model)
+                          plugin_dirs=plugin_dirs, model=model, mcp_config=mcp_config)
 
     if has_session(kitchen):
         return _new_window(kitchen, name, cwd, cmd)
