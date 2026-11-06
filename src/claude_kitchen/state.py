@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -71,7 +72,11 @@ def channel_servers(kitchen: str) -> dict:
         servers["buzz"] = {"command": "kitchen", "args": ["buzz-server", kitchen]}
     if (credential := state_dir(kitchen) / "swarm" / "credential.json").exists():
         # `swarm mcp` is itself a channel server; nothing of kitchen's runs in between.
-        servers["swarm"] = {"command": "swarm", "args": ["mcp", "--credential", str(credential)]}
+        # Absolute, as swarm writes its own entry: Claude Code may launch it
+        # without this PATH, and then reports only "not found in $PATH: stdio".
+        swarm = shutil.which("swarm") or sys.exit(
+            f"{credential} exists, but there is no `swarm` on PATH to serve it.")
+        servers["swarm"] = {"command": swarm, "args": ["mcp", "--credential", str(credential)]}
     if (state_dir(kitchen) / "discord" / ".env").exists():
         # Static access: only the allowlist on disk at boot is heard, never paired or edited live.
         env = {"DISCORD_STATE_DIR": str(state_dir(kitchen) / "discord"), "DISCORD_ACCESS_MODE": "static"}
