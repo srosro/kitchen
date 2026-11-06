@@ -1083,7 +1083,7 @@ class TestCmdOpenNoOriginRepo:
 
         kj = json.loads((state / "kitchen.json").read_text())
         assert kj["slug"], "slug should be derived via full-path fallback, not empty"
-        assert "-" in kj["slug"] and kj["slug"].endswith("myrepo")
+        assert "-" in kj["slug"] and "myrepo" in kj["slug"]
         # has_session is False here, so this open CREATED the session — and an
         # open that had to create the session must not sweep. Every cook record
         # looks orphaned by construction there, including records for cooks that

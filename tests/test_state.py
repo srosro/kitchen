@@ -1,7 +1,6 @@
 """Tests for state read/write."""
 import http.server
 import json
-import re
 import threading
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -189,11 +188,23 @@ class TestProjectSlug:
         assert a != b, "Unrelated repos sharing a basename must not collide"
         assert a == "work-alpha-repo" and b == "work-beta-repo"
 
+    @patch("claude_kitchen.state.subprocess.run")
+    def test_deep_path_slug_is_capped_keeps_tail_and_stays_unique(self, mock_run, tmp_path):
+        no_remote = MagicMock(returncode=1, stdout="", stderr="")
+        deep = "/tmp/claude-1000/-home-odio-Hacking-kitchen/d2783078-d104/scratchpad/{}/ssrepro\n"
+        mock_run.side_effect = [no_remote, MagicMock(returncode=0, stdout=deep.format("a"))]
+        a = project_slug(tmp_path)
+        mock_run.side_effect = [no_remote, MagicMock(returncode=0, stdout=deep.format("b"))]
+        b = project_slug(tmp_path)
+        assert len(a) <= 40 and len(b) <= 40
+        assert "scratchpad-a-ssrepro-" in a and a != b
+
     def test_plain_directory_slugs_its_own_path(self, tmp_path):
-        home = tmp_path / "Home"
+        home, other = tmp_path / "Home", tmp_path / "Other"
         home.mkdir()
-        expected = re.sub(r"[^a-z0-9-]+", "-", str(home.resolve()).lower()).strip("-")
-        assert project_slug(home) == expected
+        other.mkdir()
+        assert "-home" in project_slug(home)
+        assert project_slug(home) != project_slug(other)
 
 
 class TestNamespaced:
