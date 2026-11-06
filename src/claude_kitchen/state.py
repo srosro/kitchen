@@ -9,6 +9,8 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 
 # Per-kitchen MCP config filename. Deliberately NOT ".mcp.json": Claude Code
@@ -88,12 +90,27 @@ def mcp_servers(kitchen: str) -> dict:
     return servers
 
 
-def swarm_rooms(user_id: str) -> list[str]:
-    """The account's rooms that have an alias. A bare room ID (`!…`) is not a
-    name `join` takes: it would make a new room named after the ID."""
+def swarm_rooms(account: dict) -> list[str]:
+    """The account's rooms, each by a name `join` takes. swarm lists a room
+    with no canonical alias by its bare ID (`!…`), which join would turn into
+    a new room named after it; such a room is joined by the first alias the
+    server publishes for it, and skipped, loudly, if it has none."""
     listed = subprocess.run([swarm_binary(), "accounts", "list"], capture_output=True, text=True, check=True)
-    rooms = next(a["rooms"] for a in json.loads(listed.stdout)["accounts"] if a["account"] == user_id)
-    return [room for room in rooms if room.startswith("#")]
+    rooms = next(a["rooms"] for a in json.loads(listed.stdout)["accounts"] if a["account"] == account["user_id"])
+    named = []
+    for room in rooms:
+        if not room.startswith("!"):
+            named.append(room)
+            continue
+        url = f"{account['homeserver'].rstrip('/')}/_matrix/client/v3/rooms/{quote(room, safe='')}/aliases"
+        request = Request(url, headers={"Authorization": f"Bearer {account['access_token']}"})
+        with urlopen(request, timeout=30) as response:
+            aliases = json.load(response)["aliases"]
+        if aliases:
+            named.append(aliases[0])
+        else:
+            print(f"kitchen: swarm room {room} has no alias, so the sous doesn't join it", file=sys.stderr)
+    return named
 
 
 def swarm_join_prompt(user_id: str, rooms: list[str]) -> str:
@@ -106,7 +123,7 @@ def sous_first_turn(kitchen: str) -> list[str]:
     """The sous's launch prompt, if it has swarm rooms to join."""
     if not (account := swarm_account(kitchen)):
         return []
-    return [swarm_join_prompt(account["user_id"], swarm_rooms(account["user_id"]))]
+    return [swarm_join_prompt(account["user_id"], swarm_rooms(account))]
 
 
 def channel_servers(kitchen: str) -> dict:
