@@ -524,6 +524,8 @@ def cmd_open(args):
         except subprocess.TimeoutExpired:
             failure = "tmux stayed unresponsive under launch load"
         except PromptBlocked as e:
+            if "worktree" in kj:  # removed by the cleanup below
+                e.cwd = str(Path(kj["worktree"]).parent)
             failure = str(e)
         if failure:
             _abort_sub_sous(name, base, kj)

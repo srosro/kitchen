@@ -171,7 +171,17 @@ _CLAUDE_ONE_TIME = {
 
 
 class PromptBlocked(Exception):
-    """A Claude agent is parked on a one-time modal only a human may accept."""
+    """A Claude agent is parked on a one-time modal only a human may accept.
+    `cwd` is where to accept it; a caller that is about to delete the pane's
+    directory points it at a surviving parent (trust covers subdirectories)."""
+
+    def __init__(self, prompt: str, cwd: str):
+        self.prompt, self.cwd = prompt, cwd
+
+    def __str__(self):
+        return (f"Claude Code is waiting on its one-time {self.prompt} prompt. "
+                f"Accept it once by hand — `cd {shlex.quote(self.cwd)} && claude "
+                f"--dangerously-skip-permissions`, answer yes, then /exit — and retry")
 
 # Busy markers: a regex present in the pane tail while the agent is mid-turn,
 # gone when it's idle at the prompt. Backend-specific and confirmed empirically
@@ -298,10 +308,7 @@ def wait_for_prompt(kitchen: str, window: str, backend: str,
                 if blocker:
                     cwd = tmux("display-message", "-p", "-t", target(window),
                                "#{pane_current_path}", kitchen=kitchen).stdout.strip()
-                    raise PromptBlocked(
-                        f"Claude Code is waiting on its one-time {blocker} prompt in {cwd}. "
-                        f"Accept it once by hand — `cd {shlex.quote(cwd)} && claude "
-                        f"--dangerously-skip-permissions`, answer yes, then /exit — and retry")
+                    raise PromptBlocked(blocker, cwd)
                 if marker in content:
                     return True
                 screen = next((s for s in ("Update available!",
