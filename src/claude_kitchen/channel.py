@@ -1,5 +1,6 @@
 """Kitchen channel MCP server — bridges cook hooks to sous chef via Claude Code channels."""
 import asyncio
+import fcntl
 import json
 import socket as sock_mod
 import sys
@@ -133,73 +134,33 @@ async def handle_connection(reader: asyncio.StreamReader, writer, notify):
             writer.close()
 
 
-def _claim_socket(sock_path: Path, _max_probes: int = 8):
-    """Prepare sock_path for binding, refusing to stomp a live owner.
+def _claim_socket(sock_path: Path):
+    """Own sock_path for this server's life through a lock beside it, and
+    return the lock's file, which must stay open.
 
-    Connect-probes an existing socket and branches on the EXACT outcome —
-    "any connect failure == stale" is the bug we are fixing:
-    - connect succeeds      → a live listener owns it → stand down (exit 0),
-                              do NOT unlink/bind (idempotent /mcp reconnects).
-    - ECONNREFUSED / ENOENT → genuinely stale/dead → unlink and let caller bind.
-    - any other OSError     → unknown state (EACCES, ENOTSOCK, not-a-socket) →
-                              do NOT unlink, fail loud (exit 1).
-
-    TOCTOU guard: two servers probing the same STALE socket both see
-    ECONNREFUSED; if both blindly unlink+bind, the second unlinks the first's
-    now-LIVE socket and orphans it (last-writer-wins reopens). So we capture the
-    file's identity BEFORE probing and only unlink if the path STILL refers
-    to that exact file. Identity includes ctime: ext4 hands a just-freed inode
-    number straight to the next file, so (ino, dev) alone can't see a rebind.
-    If it changed under us (someone rebound), we re-probe;
-    the loop converges (the winner answers and we stand down).
+    Only the holder ever unlinks or binds the path, so of two servers for one
+    kitchen the other stands down. A server leaves its socket behind when it
+    exits, stale, for the next holder to clear; `kitchen close` deletes the lock
+    too, which hands the path on even while an old server lives. A path that is
+    not a socket is left alone, loudly.
     """
-    for _ in range(_max_probes):
-        try:
-            before = sock_path.stat()
-        except FileNotFoundError:
-            return  # nothing there → cold start, let caller bind
-        probe = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
-        try:
-            probe.connect(str(sock_path))
-        except (ConnectionRefusedError, FileNotFoundError):
-            # Stale candidate — but only unlink if it's STILL the same inode we
-            # just probed. If it changed, a peer rebound a live socket here; do
-            # NOT unlink (that would orphan it) → re-probe.
-            try:
-                now = sock_path.stat()
-            except FileNotFoundError:
-                return  # peer cleared it for us → bind
-            if (now.st_ino, now.st_dev, now.st_ctime_ns) != (before.st_ino, before.st_dev, before.st_ctime_ns):
-                continue
-            sock_path.unlink(missing_ok=True)
-            return
-        except OSError as e:
-            print(
-                f"kitchen channel-server: refusing to bind {sock_path}: unexpected "
-                f"error probing existing socket ({e!r}); leaving it untouched.",
-                file=sys.stderr,
-            )
-            raise SystemExit(1)
-        else:
-            # We don't name the owner pid: peer-pid lookup over AF_UNIX is not
-            # portable (Linux SO_PEERCRED vs macOS LOCAL_PEERPID), and §Design.2
-            # explicitly says not to rely on it — the path identifies the socket.
-            print(
-                f"kitchen channel-server: {sock_path} already has a live owner; "
-                f"standing down.",
-                file=sys.stderr,
-            )
+    owner = open(sock_path.with_name(sock_path.name + ".lock"), "a")
+    try:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(f"kitchen channel-server: {sock_path} already has a live owner; standing down.", file=sys.stderr)
+        raise SystemExit(0)
+    if sock_path.exists() and not sock_path.is_socket():
+        print(f"kitchen channel-server: refusing to bind {sock_path}: not a socket; leaving it untouched.",
+              file=sys.stderr)
+        raise SystemExit(1)
+    # A server that predates the lock holds none; a listener answering here is one.
+    with sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM) as probe:
+        if sock_path.exists() and probe.connect_ex(str(sock_path)) == 0:
+            print(f"kitchen channel-server: {sock_path} already has a live owner; standing down.", file=sys.stderr)
             raise SystemExit(0)
-        finally:
-            probe.close()
-    # The path kept getting rebound under us across every probe — rather than
-    # risk orphaning whoever currently owns it, stand down cleanly.
-    print(
-        f"kitchen channel-server: {sock_path} kept changing under probe; "
-        f"standing down.",
-        file=sys.stderr,
-    )
-    raise SystemExit(0)
+    sock_path.unlink(missing_ok=True)
+    return owner
 
 
 async def run_server(kitchen: str):
@@ -218,7 +179,7 @@ async def run_server(kitchen: str):
     # Before the socket is claimed: a server that cannot deliver must not own
     # the path the next one needs.
     _refuse_if_deaf(init_options.capabilities)
-    _claim_socket(sock_path)
+    owner = _claim_socket(sock_path)
 
     # Mutable container so notify closure can access write_stream
     # after stdio_server connects.
@@ -242,8 +203,12 @@ async def run_server(kitchen: str):
         await handle_connection(reader, writer, notify)
 
     # Start socket server FIRST so it's ready before MCP handshake
+    # No socket cleanup on close (3.13+): its stat-then-unlink could remove a
+    # successor's socket after `kitchen close` handed the path on. The next lock
+    # holder clears a stale one.
+    no_cleanup = {"cleanup_socket": False} if sys.version_info >= (3, 13) else {}
     sock_server = await asyncio.start_unix_server(
-        on_connection, path=str(sock_path), limit=MAX_MESSAGE_BYTES
+        on_connection, path=str(sock_path), limit=MAX_MESSAGE_BYTES, **no_cleanup
     )
 
     try:
@@ -253,7 +218,7 @@ async def run_server(kitchen: str):
     finally:
         sock_server.close()
         await sock_server.wait_closed()
-        sock_path.unlink(missing_ok=True)
+        owner.close()  # only now may the next server claim the path
 
 
 def main(kitchen: str):

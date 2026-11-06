@@ -9,7 +9,6 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -146,155 +145,51 @@ class TestSendToSocket:
 
 
 class TestClaimSocket:
-    """Test the connect-probe guard that refuses to stomp a live owner."""
+    """One server per kitchen owns its socket path, through a lock held for life."""
 
-    def test_no_existing_socket_is_noop(self, tmp_path):
-        # Nothing there → just proceed to bind (no exit, nothing created).
-        sock_path = Path("/tmp") / "ck-claim-absent.sock"
-        sock_path.unlink(missing_ok=True)
-        _claim_socket(sock_path)  # returns cleanly
-        assert not sock_path.exists()
+    def test_a_second_server_stands_down_while_the_first_holds_the_path(self, tmp_path):
+        # Both used to pass before either bound, and asyncio's bind removes an
+        # existing socket file, so the later one orphaned the earlier's listener.
+        sock_path = tmp_path / "k.sock"
+        owner = _claim_socket(sock_path)
+        with pytest.raises(SystemExit) as exc:
+            _claim_socket(sock_path)
+        assert exc.value.code == 0
+        (tmp_path / "k.sock.lock").unlink()  # `kitchen close` hands the path on while it still runs
+        _claim_socket(sock_path).close()
+        owner.close()
+        _claim_socket(sock_path).close()  # released: the next server claims it
 
-    def test_live_owner_refused_no_unlink(self):
-        # A live listener owns the socket → stand down (exit 0), socket
-        # untouched (same inode/owner), and it still answers afterward.
-        with tempfile.TemporaryDirectory(dir="/tmp") as td:
+    def test_a_live_listener_without_the_lock_is_left_alone(self):
+        # A server from before the lock still owns its socket during an upgrade.
+        # /tmp, not tmp_path: macOS's pytest paths outrun AF_UNIX's length limit.
+        with tempfile.TemporaryDirectory(dir="/tmp") as td, \
+                sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM) as live:
             sock_path = Path(td) / "k.sock"
-            srv = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
-            srv.bind(str(sock_path))
-            srv.listen(5)
-            try:
-                before = sock_path.stat().st_ino
+            live.bind(str(sock_path))
+            live.listen(1)
+            with pytest.raises(SystemExit) as exc:
+                _claim_socket(sock_path)
+            assert exc.value.code == 0
+            assert sock_path.is_socket()
 
-                with pytest.raises(SystemExit) as exc:
-                    _claim_socket(sock_path)
-                assert exc.value.code == 0
-
-                # Socket file unchanged (not unlinked/rebound): same inode.
-                assert sock_path.exists()
-                assert sock_path.stat().st_ino == before
-
-                # Routing round-trip: the ORIGINAL owner still accepts. Drain
-                # the probe's now-closed leftover connection if it lingers.
-                client = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
-                client.connect(str(sock_path))
-                client.sendall(b"ping\n")
-                srv.settimeout(2)
-                got = None
-                while got is None:
-                    conn, _ = srv.accept()
-                    data = conn.recv(16)
-                    conn.close()
-                    if data == b"ping\n":
-                        got = data
-                assert got == b"ping\n"
-                client.close()
-            finally:
-                srv.close()
-
-    def test_stale_socket_unlinked_and_recovered(self):
-        # A dead/stale socket file (bound then closed, no listener) → connect
-        # gives ECONNREFUSED → unlink and let the caller bind. No regression
-        # to cold start.
+    def test_a_stale_socket_is_cleared_for_binding(self):
         with tempfile.TemporaryDirectory(dir="/tmp") as td:
             sock_path = Path(td) / "k.sock"
             dead = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
             dead.bind(str(sock_path))
-            dead.close()  # leaves the file on disk, nothing listening
-            assert sock_path.exists()
+            dead.close()
+            _claim_socket(sock_path).close()
+            assert not sock_path.exists()
 
-            _claim_socket(sock_path)  # returns cleanly, no exit
-            assert not sock_path.exists(), "stale socket must be unlinked"
-
-            # And a real server can now bind+listen at the path (no regression
-            # to cold start after recovery).
-            fresh = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
-            fresh.bind(str(sock_path))
-            fresh.listen(1)
-            assert sock_path.exists()
-            fresh.close()
-
-    def test_concurrent_stale_no_orphaning_toctou(self):
-        # TOCTOU: server B probes a STALE socket (ECONNREFUSED) but, before B
-        # unlinks, server A wins the race — unlinks the stale file and binds a
-        # fresh LIVE socket at the same path (new inode). B must NOT unlink A's
-        # live socket (that orphans it); it must notice the inode changed,
-        # re-probe, find A live, and stand down cleanly.
-        with tempfile.TemporaryDirectory(dir="/tmp") as td:
-            sock_path = Path(td) / "k.sock"
-            # Start with a stale socket file (bound then closed → ECONNREFUSED).
-            stale = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
-            stale.bind(str(sock_path))
-            stale.close()
-            stale_id = (sock_path.stat().st_ino, sock_path.stat().st_ctime_ns)
-            live_holder = []
-            real_socket = sock_mod.socket  # unpatched constructor for A
-
-            class RacingSock:
-                """Probe that simulates server A winning the race on first connect."""
-                def __init__(self):
-                    self.calls = 0
-
-                def connect(self, _):
-                    self.calls += 1
-                    if self.calls == 1:
-                        # A wins: replace the stale file with a fresh LIVE socket
-                        # at the same path between B's probe and B's unlink.
-                        sock_path.unlink(missing_ok=True)
-                        a = real_socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
-                        a.bind(str(sock_path))
-                        a.listen(1)
-                        live_holder.append(a)
-                        raise ConnectionRefusedError("probed the stale one")
-                    # Second probe: A's live socket now owns the path → succeeds.
-                    return
-
-                def close(self):
-                    pass
-
-            racing = RacingSock()
-            with patch("claude_kitchen.channel.sock_mod.socket", return_value=racing):
-                with pytest.raises(SystemExit) as exc:
-                    _claim_socket(sock_path)
-            assert exc.value.code == 0, "B must stand down, not stomp A"
-            assert racing.calls == 2, "B must re-probe after inode changed"
-
-            # A's live socket is intact (NOT orphaned): the path is A's file,
-            # not the stale one (ext4 may reuse the inode number, so identity
-            # includes ctime), and A still accepts a round-trip.
-            assert sock_path.exists()
-            assert (sock_path.stat().st_ino, sock_path.stat().st_ctime_ns) != stale_id
-            a = live_holder[0]
-            client = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
-            client.connect(str(sock_path))
-            conn, _ = a.accept()
-            client.sendall(b"ping\n")
-            assert conn.recv(16) == b"ping\n"
-            conn.close()
-            client.close()
-            a.close()
-
-    def test_other_oserror_fails_loud_no_unlink(self, tmp_path, capsys):
-        # An unexpected OSError on probe (e.g. EACCES / ENOTSOCK) must NOT
-        # unlink (could destroy something we don't understand) and must fail
-        # loud with a non-zero exit.
-        sock_path = tmp_path / "mystery.sock"
-        sock_path.write_text("not a socket")  # exists, but not ours to delete
-
-        class FakeSock:
-            def connect(self, _):
-                raise PermissionError("EACCES")
-
-            def close(self):
-                pass
-
-        with patch("claude_kitchen.channel.sock_mod.socket", return_value=FakeSock()):
-            with pytest.raises(SystemExit) as exc:
-                _claim_socket(sock_path)
+    def test_a_path_that_is_not_a_socket_is_left_alone_loudly(self, tmp_path, capsys):
+        sock_path = tmp_path / "k.sock"
+        sock_path.write_text("not a socket")
+        with pytest.raises(SystemExit) as exc:
+            _claim_socket(sock_path)
         assert exc.value.code == 1
-        assert sock_path.exists(), "must NOT unlink on unexpected OSError"
-        err = capsys.readouterr().err
-        assert "refusing to bind" in err
+        assert sock_path.read_text() == "not a socket"
+        assert "refusing to bind" in capsys.readouterr().err
 
 
 class TestChannelCapabilityAdvertisement:
@@ -350,7 +245,7 @@ class TestChannelCapabilityAdvertisement:
         working replacement from binding during the outage."""
         import claude_kitchen.channel as ch
         claimed = []
-        monkeypatch.setattr(ch, "_claim_socket", lambda p, **kw: claimed.append(p))
+        monkeypatch.setattr(ch, "_claim_socket", lambda p: claimed.append(p))
         monkeypatch.setattr(ch, "state_dir", lambda k: tmp_path, raising=False)
         monkeypatch.setattr("claude_kitchen.state.state_dir", lambda k: tmp_path)
         monkeypatch.setattr(ch, "_refuse_if_deaf", _boom)
