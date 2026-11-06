@@ -153,6 +153,11 @@ def _claim_socket(sock_path: Path):
         print(f"kitchen channel-server: refusing to bind {sock_path}: not a socket; leaving it untouched.",
               file=sys.stderr)
         raise SystemExit(1)
+    # A server that predates the lock holds none; a listener answering here is one.
+    with sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM) as probe:
+        if sock_path.exists() and probe.connect_ex(str(sock_path)) == 0:
+            print(f"kitchen channel-server: {sock_path} already has a live owner; standing down.", file=sys.stderr)
+            raise SystemExit(0)
     sock_path.unlink(missing_ok=True)
     return owner
 

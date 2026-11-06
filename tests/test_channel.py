@@ -158,6 +158,17 @@ class TestClaimSocket:
         owner.close()
         _claim_socket(sock_path).close()  # released: the next server claims it
 
+    def test_a_live_listener_without_the_lock_is_left_alone(self, tmp_path):
+        # A server from before the lock still owns its socket during an upgrade.
+        sock_path = tmp_path / "k.sock"
+        with sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM) as live:
+            live.bind(str(sock_path))
+            live.listen(1)
+            with pytest.raises(SystemExit) as exc:
+                _claim_socket(sock_path)
+            assert exc.value.code == 0
+            assert sock_path.is_socket()
+
     def test_a_stale_socket_is_cleared_for_binding(self, tmp_path):
         sock_path = tmp_path / "k.sock"
         dead = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
