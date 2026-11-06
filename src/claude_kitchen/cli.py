@@ -678,11 +678,6 @@ def cmd_hire(args):
 
     codex_home = str(_seed_codex_home(base, name, cwd)) if clean_room and backend == "codex" else None
 
-    # cwd stays in the record until clock-out; tc reads it to keep the slot
-    # from being claimed while the cook's window is down (a suspended kitchen).
-    write_status(base, name, {"status": "booting", "agent": name, "backend": backend, "cwd": cwd})
-
-    effort = getattr(args, "effort", None)
     swarm = getattr(args, "swarm_account", None)
     mcp_config = None
     if swarm:
@@ -690,9 +685,15 @@ def cmd_hire(args):
             sys.exit("--swarm-account is for Claude cooks.")
         credential = swarm_credential(swarm)
         mcp_config = base / "cooks" / f"{name}.mcp.json"
+        mcp_config.parent.mkdir(parents=True, exist_ok=True)
         mcp_config.write_text(json.dumps({"mcpServers": {"swarm": {
             "command": swarm_binary(), "args": ["mcp", "claude", "--account", swarm]}}}) + "\n")
 
+    # cwd stays in the record until clock-out; tc reads it to keep the slot
+    # from being claimed while the cook's window is down (a suspended kitchen).
+    write_status(base, name, {"status": "booting", "agent": name, "backend": backend, "cwd": cwd})
+
+    effort = getattr(args, "effort", None)
     ok = spawn_window(
         kitchen=kitchen, name=name, cwd=cwd,
         backend=backend, status_dir=str(base),

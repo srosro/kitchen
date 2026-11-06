@@ -828,9 +828,10 @@ class TestStatusPreservationAcrossNonStopWriters:
         kitchen, window, account, prompt = join.call_args.args
         assert (window, account) == ("relay", "@cypress:c") and "#general:c" in prompt
 
-        args.backend = "codex"
+        args.name, args.backend = "relay2", "codex"
         with pytest.raises(SystemExit, match="--swarm-account is for Claude cooks"):
             cmd_hire(args)
+        assert not (tmp_path / "cooks" / "relay2.json").exists()  # refused before any cook record
 
     @staticmethod
     def _fake_tc(tmp_path, monkeypatch, backend):
