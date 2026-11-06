@@ -281,9 +281,6 @@ def namespaced(project: Path, requested: str) -> str:
     return f"{slug}-{requested}"
 
 
-SLUG_MAX = 40
-
-
 def _slug_from_path(project_path: Path) -> str:
     result = subprocess.run(
         ["git", "-C", str(project_path), "rev-parse", "--show-toplevel"],
@@ -293,10 +290,4 @@ def _slug_from_path(project_path: Path) -> str:
     slug = re.sub(r"[^a-z0-9-]+", "-", path.lower()).strip("-")
     if not slug:
         sys.exit(f"Could not derive a slug from {path!r}.")
-    # The slug lands in the tmux socket path (<tmpdir>/tmux-<uid>/ck-<kitchen>),
-    # which must fit a unix socket address (104 bytes on macOS): a deep path keeps
-    # its tail and a hash of the whole, so it stays recognizable and unique.
-    if len(slug) > SLUG_MAX:
-        digest = hashlib.sha1(slug.encode()).hexdigest()[:8]
-        slug = f"{slug[-(SLUG_MAX - 9):].lstrip('-')}-{digest}"
     return slug
