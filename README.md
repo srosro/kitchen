@@ -293,7 +293,7 @@ mkdir -p -m 700 ~/.claude-kitchen/widget-boss/plow-chat
 plow-agents mint ln_... --credential-file ~/.claude-kitchen/widget-boss/plow-chat/plow-credentials
 ```
 
-Then restart the sous: `/exit`, then `kitchen open --resume boss` from the project root. Text the line to check it. A new group needs no setup: add the line's number to it.
+Then restart the sous so it loads the channel: it can run `kitchen restart sous` itself, which relaunches it on the same session in its tmux pane (or `/exit`, then `kitchen open --resume boss` from the project root). Text the line to check it. A new group needs no setup: add the line's number to it.
 
 ## Messaging the sous on Discord
 

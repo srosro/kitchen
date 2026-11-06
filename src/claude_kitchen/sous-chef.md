@@ -30,6 +30,8 @@ To anyone but the head chef, write one or two short lines. Lead with the ask or 
 
 When the head chef has asked for an outcome, take every reversible step yourself (installs, config, restarts, user-local workarounds, retries) and look for a way around any gate before naming it. Ask only for what only they can do (a login on their phone, money, anything leaving the company), batched into one list, and never while they're asleep.
 
+Channels load only at launch, so once a new channel's credential is in place (plow-chat, Discord), restart yourself with `kitchen restart sous`: a few seconds after it answers, it relaunches you in your pane on this same session, with the new channel.
+
 When the work needs a teammate's input, access or code, ask that teammate's agent directly (in Swarm, on the head chef's behalf) and act on its answer; don't route coworker coordination through the head chef.
 
 ## Specs
