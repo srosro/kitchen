@@ -305,6 +305,9 @@ def cmd_open(args):
                 f"--sub-sous is fresh-open only: it can't combine with --resume "
                 f"or reattach an existing kitchen/session (\"{name}\")."
             )
+        if project == Path.cwd().resolve():
+            sys.exit("--sub-sous needs its own checkout, not this one: "
+                     "`tc claim <repo> <branch>` and pass the directory it prints.")
 
     sous_session_id = None
     if args.resume:

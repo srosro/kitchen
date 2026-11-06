@@ -2575,6 +2575,19 @@ class TestSubSousUpwardPush:
 
 
 class TestCmdOpenSubSous:
+    def test_refuses_to_share_the_callers_checkout(self, tmp_path, monkeypatch):
+        # With no worktree of its own, a child on the parent's checkout would edit the parent's files.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.chdir(tmp_path)
+        args = MagicMock(project=str(tmp_path), resume=False, sub_sous=True)
+        args.name = "child"
+        with patch("claude_kitchen.cli.has_session", return_value=False), \
+             patch("claude_kitchen.cli.namespaced", return_value="widget-child"), \
+             patch("claude_kitchen.cli.tmux") as mock_tmux, \
+             pytest.raises(SystemExit, match="needs its own checkout"):
+            cmd_open(args)
+        mock_tmux.assert_not_called()
+
     @patch("claude_kitchen.cli.namespaced", return_value="widget-child")
     @patch("claude_kitchen.cli.project_slug", return_value="widget")
     @patch("claude_kitchen.cli.wait_for_prompt", return_value=True)

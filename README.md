@@ -201,7 +201,7 @@ The sous runs these commands under the hood. You can also use them directly from
 | Command | What it does |
 |---|---|
 | `kitchen open [name] [project]` | Open a kitchen on a checkout (default: the current one). |
-| `kitchen open <name> --sub-sous` | Launch a fresh child kitchen whose sous runs in its own tmux session. |
+| `kitchen open <name> <checkout> --sub-sous` | Launch a fresh child kitchen on its own checkout, its sous in its own tmux session. |
 | `kitchen hire <cook> [options]` | Spawn a cook and wait until its interactive prompt is ready. |
 | `kitchen roles` | List the packaged cook roles. |
 | `kitchen ticket <cook> "message"` | Deliver a verified message to a cook. |
