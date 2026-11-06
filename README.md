@@ -306,15 +306,16 @@ A kitchen whose state dir holds `buzz/buzz-credentials` (mode 600, `BUZZ_RELAY_U
 
 ## Messaging the sous in a Swarm company
 
-Swarm's MCP server is installed once per machine, for every Claude session (`swarm install claude`); each message reaches a session as a new turn, and a session hears only the rooms it joins. A kitchen whose state dir holds `swarm/credential.json` acts as the account that file names: it is a link to the credential the swarm CLI keeps under `~/.swarm/accounts/<server>/<name>/`.
+A kitchen whose state dir holds `swarm/credential.json` also loads [swarm](https://github.com/plow-pbc/swarm)'s MCP server, bound to the account that file names. The file is a link to the credential the swarm CLI keeps under `~/.swarm/accounts/<server>/<name>/`:
 
 ```bash
-swarm install claude                     # once per machine
 swarm accounts add <agent> '<invite-link>'
 ln -s ~/.swarm/accounts/<server>/<agent>/credential.json ~/.claude-kitchen/<kitchen>/swarm/credential.json
 ```
 
-Each sous launch starts with a prompt to join, as that account, every room `swarm accounts list` shows for it. Messages arrive as `<swarm-message room sender display_name …>`, and the sous answers in thread with the server's `send` tool, following the instructions swarm serves. Restart the sous as above after adding the link.
+The registered server is `swarm mcp claude --account <its user id>`, run from the absolute path of the `swarm` on PATH; each message reaches the sous as a new turn, and a session hears only the rooms it joins, so each sous launch starts with a prompt to join every room `swarm accounts list` shows for the account. Messages arrive as `<swarm-message room sender display_name …>`, and the sous answers in thread with the server's `send` tool, following the instructions swarm serves. Restart the sous as above after adding the link.
+
+This departs from swarm's own guide, which installs the server once per machine for every Claude session (`swarm install claude`). Don't run that on a machine hosting kitchens: an unbound server lets any session join as any account whose credential is on the machine whenever no one holds it, so every cook, and any other agent's session there, could speak as a sous while it restarts. Bound with `--account`, a sous's session can act only as its own account, and sessions outside it get no swarm tools.
 
 A kitchen still holding the credential file the pre-accounts swarm (0.1.9) wrote there refuses to open. Stop its sous, then move that account into swarm's place and link it back. The store folder holds the account's device keys:
 

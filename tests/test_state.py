@@ -7,7 +7,7 @@ import pytest
 
 from claude_kitchen.state import (
     state_dir, write_status, read_status, update_status,
-    project_slug, namespaced, wiki_dir, notes_dir, channel_flags, channel_servers, sous_first_turn, exec_discord_server,
+    project_slug, namespaced, wiki_dir, notes_dir, channel_flags, mcp_servers, sous_first_turn, exec_discord_server,
 )
 
 
@@ -295,18 +295,21 @@ def link_account(tmp_path):
     return link
 
 
-def test_a_kitchen_with_a_swarm_account_joins_its_rooms_on_launch(tmp_path, monkeypatch):
-    # Swarm's server is the machine's (`swarm install claude`); the kitchen only names the account.
+def test_swarm_runs_as_the_kitchens_account_and_joins_its_rooms_on_launch(tmp_path, monkeypatch):
+    # The sous's MCP launch may not see open's PATH; a bare `swarm` there fails
+    # as Claude Code's misleading ENOENT "Executable not found in $PATH: stdio".
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PATH", str(fake_swarm(tmp_path).parent))
     link_account(tmp_path)
-    assert "swarm" not in channel_servers("boss") and "server:swarm" not in channel_flags("boss")
+    assert mcp_servers("boss")["swarm"] == {
+        "command": str(tmp_path / "bin" / "swarm"), "args": ["mcp", "claude", "--account", ACCOUNT]}
+    assert "server:swarm" not in channel_flags("boss")  # it delivers through the inbox, not a channel
     [turn] = sous_first_turn("boss")
     assert ACCOUNT in turn and "#general:p, #design:p" in turn
-    assert sous_first_turn("other-kitchen") == []
+    assert "swarm" not in mcp_servers("other-kitchen") and sous_first_turn("other-kitchen") == []
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     with pytest.raises(SystemExit, match="no `swarm` on PATH"):
-        sous_first_turn("boss")
+        mcp_servers("boss")
 
 
 def test_a_pre_accounts_or_dangling_swarm_credential_refuses_to_open(tmp_path, monkeypatch):
@@ -316,8 +319,8 @@ def test_a_pre_accounts_or_dangling_swarm_credential_refuses_to_open(tmp_path, m
     credential.parent.mkdir(parents=True)
     credential.write_text(json.dumps({"user_id": ACCOUNT}))
     with pytest.raises(SystemExit, match="pre-accounts swarm credential"):
-        sous_first_turn("boss")
+        mcp_servers("boss")
     credential.unlink()
     credential.symlink_to(tmp_path / "deactivated.json")  # a link to an account no longer on this machine
     with pytest.raises(FileNotFoundError):
-        sous_first_turn("boss")
+        mcp_servers("boss")

@@ -62,7 +62,9 @@ def read_env(path: Path) -> dict:
 
 
 def swarm_binary() -> str:
-    return shutil.which("swarm") or sys.exit("there is no `swarm` on PATH.")
+    """Absolute, as swarm writes its own entry: Claude Code may launch it
+    without this PATH, and then reports only "not found in $PATH: stdio"."""
+    return os.path.abspath(shutil.which("swarm") or sys.exit("there is no `swarm` on PATH."))
 
 
 def swarm_account(kitchen: str) -> dict | None:
@@ -77,6 +79,15 @@ def swarm_account(kitchen: str) -> dict | None:
     return json.loads(link.read_text())  # a dangling link fails here, loudly
 
 
+def mcp_servers(kitchen: str) -> dict:
+    """What a sous loads: its channels, plus swarm once this kitchen has an
+    account, which `swarm mcp claude` serves itself through Claude Code's inbox."""
+    servers = channel_servers(kitchen)
+    if account := swarm_account(kitchen):
+        servers["swarm"] = {"command": swarm_binary(), "args": ["mcp", "claude", "--account", account["user_id"]]}
+    return servers
+
+
 def swarm_rooms(user_id: str) -> list[str]:
     listed = subprocess.run([swarm_binary(), "accounts", "list"], capture_output=True, text=True, check=True)
     return next(a["rooms"] for a in json.loads(listed.stdout)["accounts"] if a["account"] == user_id)
@@ -89,8 +100,7 @@ def swarm_join_prompt(user_id: str, rooms: list[str]) -> str:
 
 
 def sous_first_turn(kitchen: str) -> list[str]:
-    """The sous's launch prompt, if it has swarm rooms to join. Swarm's MCP
-    server is the machine's own (`swarm install claude`), in every session."""
+    """The sous's launch prompt, if it has swarm rooms to join."""
     if not (account := swarm_account(kitchen)):
         return []
     return [swarm_join_prompt(account["user_id"], swarm_rooms(account["user_id"]))]
