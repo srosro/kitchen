@@ -39,5 +39,11 @@ def test_the_persona_is_asked_to_join_until_its_account_is_held(tmp_path, monkey
     monkeypatch.setattr(persona, "pane_busy", lambda *a: False)
     typed = []
     monkeypatch.setattr(persona, "send_keys", lambda kitchen, window, text, backend: (typed.append(text), joined.touch()))
-    persona.join("cos", "@cos-public:p", "join #cos-public")
+    alive = type("Session", (), {"poll": lambda self: None})()
+    persona.join("cos", alive, "@cos-public:p", "join #cos-public")
     assert typed == ["join #cos-public"]
+    # A session that has exited is never typed into: the pane would be a bare shell.
+    joined.unlink()
+    typed.clear()
+    persona.join("cos", type("Session", (), {"poll": lambda self: 1})(), "@cos-public:p", "join #cos-public")
+    assert typed == []

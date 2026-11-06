@@ -59,17 +59,19 @@ def held(account: str) -> bool:
     return any(a["account"] == account and a["holder"] for a in listed)
 
 
-def join(kitchen: str, account: str, prompt: str):
+def join(kitchen: str, session: subprocess.Popen, account: str, prompt: str):
     """Ask the persona to join until its account is held. A prompt given at
     launch is answered before swarm's server has connected, with no join tool
     yet, so it is typed in once the session is up, and again if it didn't take."""
     for _ in range(JOIN_TRIES):
         time.sleep(JOIN_WAIT)
-        if held(account):
+        if held(account) or session.poll() is not None:
             return
         if not pane_busy(kitchen, WINDOW, "claude"):
             send_keys(kitchen, WINDOW, prompt, backend="claude")
-    print(f"persona: {account} never joined; see the {WINDOW} window.", file=sys.stderr)
+    time.sleep(JOIN_WAIT)
+    if not held(account):
+        print(f"persona: {account} never joined; see the {WINDOW} window.", file=sys.stderr)
 
 
 def start(kitchen: str):
@@ -108,7 +110,7 @@ def run(kitchen: str):
         env = {k: v for k, v in os.environ.items()
                if not k.startswith(("AGENT_", "KITCHEN_")) and k != "STATUS_DIR"}
         session = subprocess.Popen(argv, cwd=cwd, env=env)
-        join(kitchen, added["account"], swarm_join_prompt(added["account"], added["rooms"]))
+        join(kitchen, session, added["account"], swarm_join_prompt(added["account"], added["rooms"]))
         while session.poll() is None:
             time.sleep(POLL)
             if is_public(url) is False:
