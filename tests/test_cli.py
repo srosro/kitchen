@@ -673,16 +673,15 @@ class TestStatusPreservationAcrossNonStopWriters:
 
         from claude_kitchen.cli import cmd_ticket
         # The cook's turn finishes while the ticket is still being sent.
-        with patch("claude_kitchen.cli.send_keys", side_effect=report), patch("claude_kitchen.cli.pane_busy", return_value=False):
+        with patch("claude_kitchen.cli.send_keys", side_effect=report):
             cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message="swarm !r:s $ev"))
         report()
         assert [p.get("chat_message") for p in pushes] == ["swarm !r:s $ev", None]
 
-    @patch("claude_kitchen.cli.pane_busy", return_value=True)
     @patch("claude_kitchen.cli.send_keys")
     @patch("claude_kitchen.cli.state_dir")
     @patch("claude_kitchen.cli.resolve_kitchen", return_value="risotto")
-    def test_chat_message_refused_while_the_cook_is_mid_turn(self, mock_rk, mock_state, mock_keys, mock_busy, tmp_path):
+    def test_chat_message_refused_while_the_cook_is_mid_turn(self, mock_rk, mock_state, mock_keys, tmp_path):
         # Its current turn's report would otherwise carry the new ticket's message.
         mock_state.return_value = tmp_path
         write_status(tmp_path, "eng", {"status": "working", "agent": "eng", "backend": "claude"})
