@@ -386,3 +386,14 @@ def test_digest_lists_what_the_sous_owes_oldest_first(tmp_path):
                            {"message": "swarm !r $a", "opened_at": ago(days=2), "on": "sam", "note": "the OK"}])
     assert with_digest(tmp_path, "report").split("\n\n")[0].endswith(
         "🍗 Waiting on others:\n- sam · swarm !r $a · the OK · 2d\n- daniel · swarm !r $b · 1m")
+
+
+def test_concurrent_waits_all_survive(tmp_path, monkeypatch):
+    import subprocess, sys
+    from claude_kitchen.state import read_waits
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".claude-kitchen" / "k").mkdir(parents=True)
+    procs = [subprocess.Popen([sys.executable, "-c", "from claude_kitchen.cli import main; main()", "wait", "swarm", "!r", f"$e{i}", "--on", "sam", "--kitchen", "k"])
+             for i in range(8)]
+    assert all(p.wait() == 0 for p in procs)
+    assert len(read_waits(tmp_path / ".claude-kitchen" / "k")) == 8

@@ -206,10 +206,10 @@ def write_status(base: Path, name: str, data: dict):
 
 
 def read_status(base: Path, name: str) -> Optional[dict]:
-    path = base / "cooks" / f"{name}.json"
-    if not path.exists():
+    try:  # a cook clocking out can remove its file at any moment
+        return json.loads((base / "cooks" / f"{name}.json").read_text())
+    except FileNotFoundError:
         return None
-    return json.loads(path.read_text())
 
 
 def update_status(base: Path, name: str, **fields):
@@ -248,8 +248,8 @@ def _age(opened_at: str) -> str:
 
 def with_digest(base: Path, content: str) -> str:
     """Prefix a notification to the sous with what it still owes, oldest first."""
-    cooks = sorted(((s["chat_message"], f.stem) for f in (base / "cooks").glob("*.json")
-                    if "chat_message" in (s := json.loads(f.read_text()))), key=lambda c: c[0]["opened_at"])
+    cooks = sorted(((s["chat_message"], name) for name in (f.stem for f in (base / "cooks").glob("*.json"))
+                    if "chat_message" in (s := read_status(base, name) or {})), key=lambda c: c[0]["opened_at"])
     waits = sorted(read_waits(base), key=lambda w: w["opened_at"])
     lines = []
     if cooks:

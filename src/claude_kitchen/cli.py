@@ -798,17 +798,20 @@ def cmd_ticket(args):
 
 
 def cmd_wait(args):
-    base = state_dir(resolve_kitchen(args.kitchen))
-    waits = read_waits(base)
-    if args.source == "done":
-        kept = [w for w in waits if w["message"].split()[-1] != args.chat]
-        if len(kept) == len(waits):
-            sys.exit(f"Nothing is waiting on message {args.chat}.")
-        write_waits(base, kept)
-        return
-    if not (args.id and args.on):
+    if args.source != "done" and not (args.id and args.on):
         sys.exit("kitchen wait needs <source> <chat> <id> and --on <who>.")
-    write_waits(base, waits + [chat_record(f"{args.source} {args.chat} {args.id}", on=args.on, note=args.note)])
+    base = state_dir(resolve_kitchen(args.kitchen))
+    # The sous can run two of these at once; neither may drop the other's write.
+    with open(base / "waits.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        waits = read_waits(base)
+        if args.source == "done":
+            kept = [w for w in waits if w["message"].split()[-1] != args.chat]
+            if len(kept) == len(waits):
+                sys.exit(f"Nothing is waiting on message {args.chat}.")
+            write_waits(base, kept)
+        else:
+            write_waits(base, waits + [chat_record(f"{args.source} {args.chat} {args.id}", on=args.on, note=args.note)])
 
 
 def cmd_peek(args):
