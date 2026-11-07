@@ -782,6 +782,8 @@ def cmd_ticket(args):
 
     backend = (read_status(base, name) or {}).get("backend")
     send_keys(kitchen, name, message, backend=backend)
+    if args.chat_message:
+        update_status(base, name, chat_message=args.chat_message)
 
     # Claude's UserPromptSubmit hook owns its start state; a write here could
     # land after a fast turn's Stop and leave it "working". Codex and Gemini
@@ -1035,6 +1037,9 @@ def cmd_hook(args):
     # tokens survived via update_status.
     push = {"cook": name, "summary": summary, "ts": ts}
     final = read_status(base, name) or {}
+    if "chat_message" in final:
+        push["chat_message"] = final.pop("chat_message")
+        write_status(base, name, final)
     ctx = _ctx_for_channel(final.get("tokens"))
     if ctx:
         push["ctx"] = ctx
@@ -1511,6 +1516,7 @@ def main():
     p_ticket = sub.add_parser("ticket", help="Send a ticket to a cook")
     p_ticket.add_argument("cook", help="Cook name")
     p_ticket.add_argument("message", help="Message to send")
+    p_ticket.add_argument("--chat-message", help="The chat message this ticket answers, e.g. 'swarm <room> <event_id>'; it rides back on the cook's next report")
     p_ticket.add_argument("--kitchen", help="Target kitchen")
 
     p_peek = sub.add_parser("peek", help="Peek at a cook's screen")
