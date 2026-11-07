@@ -20,7 +20,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool
 
 from claude_kitchen.channel import push, reply_server
-from claude_kitchen.state import atomic_write_json, plow_chat_dir, read_env
+from claude_kitchen.state import atomic_write_json, plow_chat_dir, read_env, state_dir, with_digest
 
 CREDENTIALS = "plow-credentials"  # written mode 600 by `plow-agents mint LINE --credential-file`
 RECONNECT_DELAY = 5
@@ -291,7 +291,7 @@ async def run_server(kitchen: str):
     headers = {"Authorization": f"Bearer {credentials['PLOW_AGENT_TOKEN']}"}
     async with httpx.AsyncClient(base_url=credentials["PLOW_API_BASE"], headers=headers, timeout=30) as client, \
             stdio_server() as (read_stream, write_stream):
-        bridge = Bridge(client, lambda content, meta: push(write_stream, content, meta), directory / "last_seen.json")
+        bridge = Bridge(client, lambda content, meta: push(write_stream, with_digest(state_dir(kitchen), content), meta), directory / "last_seen.json")
         supervisor = asyncio.create_task(bridge.run())
         try:
             await server.run(read_stream, write_stream, init_options)

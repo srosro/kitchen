@@ -165,7 +165,7 @@ def _claim_socket(sock_path: Path):
 
 async def run_server(kitchen: str):
     """Run the MCP channel server with a unix socket listener."""
-    from claude_kitchen.state import state_dir
+    from claude_kitchen.state import state_dir, with_digest
 
     base = state_dir(kitchen)
     base.mkdir(parents=True, exist_ok=True)
@@ -199,7 +199,7 @@ async def run_server(kitchen: str):
             meta["ctx"] = data["ctx"]
         if data.get("chat_message"):
             meta["chat_message"] = data["chat_message"]
-        await push(ws, summary, meta)
+        await push(ws, with_digest(base, summary), meta)
 
     async def on_connection(reader, writer):
         await handle_connection(reader, writer, notify)
