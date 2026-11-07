@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
@@ -222,6 +223,41 @@ def update_status(base: Path, name: str, **fields):
     current = read_status(base, name) or {}
     current.update(fields)
     write_status(base, name, current)
+
+
+def chat_record(message: str, **fields) -> dict:
+    """A chat message the sous still owes an answer: `message` is
+    '<source> <chat> <id>'. A cook carries one as `chat_message`; waits.json
+    holds the ones waiting on people outside the kitchen (`on`, `note`)."""
+    return {"message": message, "opened_at": datetime.now(timezone.utc).isoformat(), **fields}
+
+
+def read_waits(base: Path) -> list:
+    path = base / "waits.json"
+    return json.loads(path.read_text()) if path.exists() else []
+
+
+def write_waits(base: Path, waits: list):
+    atomic_write_json(base / "waits.json", waits)
+
+
+def _age(opened_at: str) -> str:
+    s = int((datetime.now(timezone.utc) - datetime.fromisoformat(opened_at)).total_seconds())
+    return f"{s // 86400}d" if s >= 86400 else f"{s // 3600}h" if s >= 3600 else f"{s // 60}m"
+
+
+def with_digest(base: Path, content: str) -> str:
+    """Prefix a notification to the sous with what it still owes, oldest first."""
+    cooks = sorted(((s["chat_message"], f.stem) for f in (base / "cooks").glob("*.json")
+                    if "chat_message" in (s := json.loads(f.read_text()))), key=lambda c: c[0]["opened_at"])
+    waits = sorted(read_waits(base), key=lambda w: w["opened_at"])
+    lines = []
+    if cooks:
+        lines += ["♨️ Waiting on cooks:"] + [f"- {cook} · {r['message']} · {_age(r['opened_at'])}" for r, cook in cooks]
+    if waits:
+        lines += ["🍗 Waiting on others:"] + [
+            f"- {w['on']} · {w['message']}{' · ' + w['note'] if w['note'] else ''} · {_age(w['opened_at'])}" for w in waits]
+    return "\n".join(lines + ["", content]) if lines else content
 
 
 def project_slug(project_path: Path) -> str:

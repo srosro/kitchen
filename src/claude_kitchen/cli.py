@@ -18,7 +18,7 @@ from claude_kitchen.tmux import (
     PROBE_TIMEOUT, SESSION,
 )
 from claude_kitchen.state import (
-    state_dir, write_status, read_status, update_status,
+    state_dir, write_status, read_status, update_status, chat_record, read_waits, write_waits,
     project_slug, namespaced, wiki_dir, notes_dir, mcp_servers,
     atomic_write_json, state_root, swarm_binary, swarm_credential, swarm_join_prompt, swarm_rooms,
     MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME,
@@ -786,7 +786,7 @@ def cmd_ticket(args):
     if args.chat_message:
         if status.get("status") == "working":
             sys.exit(f"{name} is mid-turn, so its current report would carry this chat message. Ticket it once it reports, or hire another cook.")
-        update_status(base, name, chat_message=args.chat_message)
+        update_status(base, name, chat_message=chat_record(args.chat_message))
     send_keys(kitchen, name, message, backend=backend)
 
     # Claude's UserPromptSubmit hook owns its start state; a write here could
@@ -795,6 +795,20 @@ def cmd_ticket(args):
     if backend != "claude":
         update_status(base, name, status="working")
     print(f"Ticket fired to {name}. Heard!")
+
+
+def cmd_wait(args):
+    base = state_dir(resolve_kitchen(args.kitchen))
+    waits = read_waits(base)
+    if args.source == "done":
+        kept = [w for w in waits if w["message"].split()[-1] != args.chat]
+        if len(kept) == len(waits):
+            sys.exit(f"Nothing is waiting on message {args.chat}.")
+        write_waits(base, kept)
+        return
+    if not (args.id and args.on):
+        sys.exit("kitchen wait needs <source> <chat> <id> and --on <who>.")
+    write_waits(base, waits + [chat_record(f"{args.source} {args.chat} {args.id}", on=args.on, note=args.note)])
 
 
 def cmd_peek(args):
@@ -1042,7 +1056,7 @@ def cmd_hook(args):
     push = {"cook": name, "summary": summary, "ts": ts}
     final = read_status(base, name) or {}
     if "chat_message" in final:
-        push["chat_message"] = final.pop("chat_message")
+        push["chat_message"] = final.pop("chat_message")["message"]
         write_status(base, name, final)
     ctx = _ctx_for_channel(final.get("tokens"))
     if ctx:
@@ -1523,6 +1537,14 @@ def main():
     p_ticket.add_argument("--chat-message", help="The chat message this ticket answers, e.g. 'swarm <room> <event_id>'; it rides back on the cook's next report")
     p_ticket.add_argument("--kitchen", help="Target kitchen")
 
+    p_wait = sub.add_parser("wait", help="Record a chat message waiting on someone outside the kitchen; 'wait done <id>' clears it")
+    p_wait.add_argument("source", help="Chat source, e.g. swarm, or 'done' to clear")
+    p_wait.add_argument("chat", help="Chat or room (with 'done': the message id)")
+    p_wait.add_argument("id", nargs="?", help="Message or event id")
+    p_wait.add_argument("note", nargs="?", help="What it waits for")
+    p_wait.add_argument("--on", help="Who it waits on")
+    p_wait.add_argument("--kitchen", help="Target kitchen")
+
     p_peek = sub.add_parser("peek", help="Peek at a cook's screen")
     p_peek.add_argument("cook", help="Cook name")
     p_peek.add_argument("--full", action="store_true", help="Full scrollback")
@@ -1584,6 +1606,8 @@ def main():
         cmd_hire(args)
     elif args.command == "ticket":
         cmd_ticket(args)
+    elif args.command == "wait":
+        cmd_wait(args)
     elif args.command == "peek":
         cmd_peek(args)
     elif args.command == "brigade":

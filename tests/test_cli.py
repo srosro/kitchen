@@ -691,6 +691,20 @@ class TestStatusPreservationAcrossNonStopWriters:
         assert not mock_keys.called
         assert "chat_message" not in read_status(tmp_path, "eng")
 
+    @patch("claude_kitchen.cli.state_dir")
+    @patch("claude_kitchen.cli.resolve_kitchen", return_value="risotto")
+    def test_wait_records_and_clears_by_message_id(self, mock_rk, mock_state, monkeypatch, tmp_path):
+        from claude_kitchen.state import read_waits
+        mock_state.return_value = tmp_path
+        monkeypatch.setattr(sys, "argv", ["kitchen", "wait", "swarm", "!r:s", "$ev", "the OK", "--on", "sam"])
+        main()
+        assert [(w["message"], w["on"], w["note"]) for w in read_waits(tmp_path)] == [("swarm !r:s $ev", "sam", "the OK")]
+        monkeypatch.setattr(sys, "argv", ["kitchen", "wait", "done", "$ev"])
+        main()
+        assert read_waits(tmp_path) == []
+        with pytest.raises(SystemExit, match="Nothing is waiting"):
+            main()
+
     def test_stop_with_failed_transcript_read_preserves_prior_tokens(self, monkeypatch, tmp_path):
         """Realistic 'turn N succeeded, turn N+1's transcript read fails'
         case. Prior `tokens` must survive — that's the whole reason the

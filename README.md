@@ -205,6 +205,7 @@ The sous runs these commands under the hood. You can also use them directly from
 | `kitchen hire <cook> [options]` | Spawn a cook and wait until its interactive prompt is ready. |
 | `kitchen roles` | List the packaged cook roles. |
 | `kitchen ticket <cook> "message" [--chat-message "<source> <chat> <id>"]` | Deliver a verified message to a cook. `--chat-message` names the chat message the ticket answers; it rides back on the cook's next report as `chat_message`. |
+| `kitchen wait <source> <chat> <id> [note] --on <who>` / `kitchen wait done <id>` | Record, or clear, a chat message waiting on someone outside the kitchen. While anything is open (these, or a cook's `--chat-message`), every notification kitchen delivers to the sous starts with a ♨️/🍗 digest, oldest first. |
 | `kitchen ticket sous --kitchen <kitchen> "message"` | From a sous, deliver a ticket to another kitchen's sous over its channel socket; exits non-zero if that sous is not listening. |
 | `kitchen peek <cook> [--full]` | Capture the cook's current pane or full scrollback. |
 | `kitchen brigade [kitchen]` | Show live cook status and known context usage. |
