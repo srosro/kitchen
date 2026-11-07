@@ -517,6 +517,12 @@ class TestBuildSousCmd:
         j = argv.index("--mcp-config")
         assert argv[j + 1] == str(tmp_path / "kitchen-mcp.json")
 
+    def test_a_sous_fed_untrusted_input_runs_in_the_named_permission_mode(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("KITCHEN_SOUS_PERMISSION_MODE", "dontAsk")
+        argv = _sous_argv_from_cmd(build_sous_cmd("widget-child", tmp_path, tmp_path / "sous-chef.md"))
+        assert argv[argv.index("--permission-mode") + 1] == "dontAsk"
+        assert "--dangerously-skip-permissions" not in argv
+
     def test_prompt_via_file_not_inlined(self, tmp_path):
         """Sous prompt arrives as a file path (cook role-file pattern), never
         inlined — same shell-quoting-safety rationale as cook roles."""

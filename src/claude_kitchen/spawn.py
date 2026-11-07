@@ -10,6 +10,14 @@ from claude_kitchen.tmux import tmux, has_session, target, SESSION
 from claude_kitchen.state import MCP_CONFIG_NAME, channel_flags, sous_first_turn
 
 
+def sous_permission_flags() -> list[str]:
+    """How the sous's tools are permitted: KITCHEN_SOUS_PERMISSION_MODE names a
+    Claude Code mode (e.g. `dontAsk`, which denies whatever the settings'
+    allowlist doesn't name), for a sous fed untrusted input; else all tools."""
+    mode = os.environ.get("KITCHEN_SOUS_PERMISSION_MODE")
+    return ["--permission-mode", mode] if mode else ["--dangerously-skip-permissions"]
+
+
 def check_sous_pid(state_dir: Path):
     """Exit if another sous is already running for this kitchen.
 
@@ -70,7 +78,7 @@ def spawn_sous(kitchen: str, state_dir: Path, sous_prompt: str,
     # shell quoting is involved; the space never splits it.
     claude_args = [
         "claude",
-        "--dangerously-skip-permissions",
+        *sous_permission_flags(),
         "--dangerously-load-development-channels", *channel_flags(kitchen),
         "--mcp-config", str(state_dir / MCP_CONFIG_NAME),
         f"--remote-control=[sous] {kitchen}",
@@ -274,7 +282,7 @@ def build_sous_cmd(name: str, base: Path, sous_md_path: Path,
     env = "export " + " ".join(parts)
     model_flag = f"--model {q(model)} " if model else ""
     claude = (
-        "exec claude --dangerously-skip-permissions "
+        f"exec claude {' '.join(map(q, sous_permission_flags()))} "
         f"--dangerously-load-development-channels {' '.join(channel_flags(name))} "
         f"--mcp-config {q(str(base / MCP_CONFIG_NAME))} "
         f"{model_flag}"
