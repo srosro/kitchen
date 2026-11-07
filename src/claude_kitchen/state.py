@@ -70,24 +70,34 @@ def swarm_binary() -> str:
     return os.path.abspath(shutil.which("swarm") or sys.exit("there is no `swarm` on PATH."))
 
 
-def swarm_account(kitchen: str) -> dict | None:
-    """The credential of the swarm account this kitchen acts as: a link at
-    `<state>/swarm/credential.json` to swarm's own copy under ~/.swarm/accounts."""
-    link = state_dir(kitchen) / "swarm" / "credential.json"
-    if not link.is_symlink():
-        if link.exists():
+def swarm_accounts(kitchen: str) -> list[dict]:
+    """The credentials of the swarm accounts this kitchen acts as: links at
+    `<state>/swarm/credential.json` (its own account) and `credential-*.json`
+    (one more per other server) to swarm's copies under ~/.swarm/accounts."""
+    swarm = state_dir(kitchen) / "swarm"
+    links = [swarm / "credential.json", *sorted(swarm.glob("credential-*.json"))]
+    for link in links:
+        if link.exists() and not link.is_symlink():
             sys.exit(f"{link} is a pre-accounts swarm credential: move its account into "
                      "~/.swarm/accounts/<server>/<name>/ and link it back here (see the README).")
-        return None
-    return json.loads(link.read_text())  # a dangling link fails here, loudly
+    if not links[0].is_symlink():
+        return []
+    return [json.loads(link.read_text()) for link in links]  # a dangling link fails here, loudly
+
+
+def swarm_account(kitchen: str) -> dict | None:
+    """The kitchen's own swarm account, the one its public persona speaks for."""
+    return next(iter(swarm_accounts(kitchen)), None)
 
 
 def mcp_servers(kitchen: str) -> dict:
     """What a sous loads: its channels, plus swarm once this kitchen has an
     account, which `swarm mcp claude` serves itself through Claude Code's inbox."""
     servers = channel_servers(kitchen)
-    if account := swarm_account(kitchen):
-        servers["swarm"] = {"command": swarm_binary(), "args": ["mcp", "claude", "--account", account["user_id"]]}
+    if accounts := swarm_accounts(kitchen):
+        # Bound to one account, swarm refuses the others; unbound, it takes one per server.
+        bound = ["--account", accounts[0]["user_id"]] if len(accounts) == 1 else []
+        servers["swarm"] = {"command": swarm_binary(), "args": ["mcp", "claude", *bound]}
     return servers
 
 
@@ -145,9 +155,10 @@ def swarm_join_prompt(user_id: str, rooms: list[str]) -> str:
 
 def sous_first_turn(kitchen: str) -> list[str]:
     """The sous's launch prompt, if it has swarm rooms to join."""
-    if not (account := swarm_account(kitchen)):
+    accounts = swarm_accounts(kitchen)
+    if not accounts:
         return []
-    return [swarm_join_prompt(account["user_id"], swarm_rooms(account))]
+    return [" ".join(swarm_join_prompt(a["user_id"], swarm_rooms(a)) for a in accounts)]
 
 
 def channel_servers(kitchen: str) -> dict:

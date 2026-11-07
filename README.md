@@ -313,6 +313,8 @@ The registered server is `swarm mcp claude --account <its user id>`, run from th
 
 This departs from swarm's own guide, which installs the server once per machine for every Claude session (`swarm install claude`). Don't run that on a machine hosting kitchens: an unbound server lets any session join as any account whose credential is on the machine whenever no one holds it, so every cook, and any other agent's session there, could speak as a sous while it restarts. Bound with `--account`, a sous's session can act only as its own account, and sessions outside it get no swarm tools.
 
+A sous that sits in several Swarm companies holds one account per company's server: link each extra one beside the first as `swarm/credential-<server>.json`. With more than one link, the server is registered unbound (`swarm mcp claude`), which swarm lets hold one account per server, and the launch prompt joins every account's rooms. That unbound server is in the sous's own MCP config, so cooks still get no swarm tools, but the sous can act as any account whose credential is on the machine: use it only where the machine holds this kitchen's accounts alone.
+
 A kitchen still holding the credential file the pre-accounts swarm (0.1.9) wrote there refuses to open. Stop its sous, then move that account into swarm's place and link it back. The store folder holds the account's device keys:
 
 ```bash
