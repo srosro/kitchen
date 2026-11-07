@@ -655,26 +655,27 @@ class TestStatusPreservationAcrossNonStopWriters:
             cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="quick task", chat_message=None))
         assert json.loads((tmp_path / "cooks" / "eng.json").read_text())["status"] == "idle"
 
-    @patch("claude_kitchen.cli.send_keys")
     @patch("claude_kitchen.cli.state_dir")
     @patch("claude_kitchen.cli.resolve_kitchen", return_value="risotto")
-    def test_chat_message_rides_back_on_the_next_report_only(self, mock_rk, mock_state, mock_keys, monkeypatch, tmp_path):
+    def test_chat_message_rides_back_on_the_next_report_only(self, mock_rk, mock_state, monkeypatch, tmp_path):
         mock_state.return_value = tmp_path
         write_status(tmp_path, "eng", {"status": "idle", "agent": "eng", "backend": "claude"})
-        from claude_kitchen.cli import cmd_ticket
-        cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message="swarm !r:s $ev"))
-
         monkeypatch.setenv("AGENT_NAME", "eng")
         monkeypatch.setenv("AGENT_KITCHEN", "risotto")
         monkeypatch.setenv("STATUS_DIR", str(tmp_path))
         pushes = []
-        for _ in range(2):
+
+        def report(*_a, **_k):
             _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message="done",
                 session_id="00000000-0000-0000-0000-000000000000", transcript_path=str(tmp_path / "none.jsonl"))
-            mock_send = MagicMock()
-            with patch("claude_kitchen.channel.send_to_socket", mock_send):
+            with patch("claude_kitchen.channel.send_to_socket", lambda _sock, push: pushes.append(push)):
                 cmd_hook(argparse.Namespace(command="hook"))
-            pushes.append(mock_send.call_args[0][1])
+
+        from claude_kitchen.cli import cmd_ticket
+        # The cook's turn finishes while the ticket is still being sent.
+        with patch("claude_kitchen.cli.send_keys", side_effect=report):
+            cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message="swarm !r:s $ev"))
+        report()
         assert [p.get("chat_message") for p in pushes] == ["swarm !r:s $ev", None]
 
     def test_stop_with_failed_transcript_read_preserves_prior_tokens(self, monkeypatch, tmp_path):

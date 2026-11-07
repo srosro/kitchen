@@ -781,9 +781,10 @@ def cmd_ticket(args):
         return
 
     backend = (read_status(base, name) or {}).get("backend")
-    send_keys(kitchen, name, message, backend=backend)
+    # Before the send: a fast turn's Stop can land before send_keys returns.
     if args.chat_message:
         update_status(base, name, chat_message=args.chat_message)
+    send_keys(kitchen, name, message, backend=backend)
 
     # Claude's UserPromptSubmit hook owns its start state; a write here could
     # land after a fast turn's Stop and leave it "working". Codex and Gemini
