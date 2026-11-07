@@ -197,6 +197,8 @@ async def run_server(kitchen: str):
         # token info yet — the sous shouldn't see ctx="" or ctx="null".
         if data.get("ctx"):
             meta["ctx"] = data["ctx"]
+        if data.get("chat_message"):
+            meta["chat_message"] = data["chat_message"]
         await push(ws, summary, meta)
 
     async def on_connection(reader, writer):
