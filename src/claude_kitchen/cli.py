@@ -783,6 +783,8 @@ def cmd_ticket(args):
     backend = (read_status(base, name) or {}).get("backend")
     # Before the send: a fast turn's Stop can land before send_keys returns.
     if args.chat_message:
+        if pane_busy(kitchen, name, backend):
+            sys.exit(f"{name} is mid-turn, so its current report would carry this chat message. Ticket it once it reports, or hire another cook.")
         update_status(base, name, chat_message=args.chat_message)
     send_keys(kitchen, name, message, backend=backend)
 

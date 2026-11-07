@@ -16,7 +16,7 @@ from unittest.mock import patch, MagicMock, call
 import pytest
 
 from claude_kitchen.cli import resolve_kitchen, resolve_project, cmd_brigade, cmd_hook, cmd_open, cmd_hire, cmd_close, cmd_clock_out, _codex_rollout, _sweep_cooks, cmd_sweep, _parent_push_base, main, _agy_summary
-from claude_kitchen.state import update_status, write_status
+from claude_kitchen.state import read_status, update_status, write_status
 from claude_kitchen.tmux import CK_PREFIX, PROBE_TIMEOUT, SESSION, PromptBlocked
 
 
@@ -673,10 +673,24 @@ class TestStatusPreservationAcrossNonStopWriters:
 
         from claude_kitchen.cli import cmd_ticket
         # The cook's turn finishes while the ticket is still being sent.
-        with patch("claude_kitchen.cli.send_keys", side_effect=report):
+        with patch("claude_kitchen.cli.send_keys", side_effect=report), patch("claude_kitchen.cli.pane_busy", return_value=False):
             cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message="swarm !r:s $ev"))
         report()
         assert [p.get("chat_message") for p in pushes] == ["swarm !r:s $ev", None]
+
+    @patch("claude_kitchen.cli.pane_busy", return_value=True)
+    @patch("claude_kitchen.cli.send_keys")
+    @patch("claude_kitchen.cli.state_dir")
+    @patch("claude_kitchen.cli.resolve_kitchen", return_value="risotto")
+    def test_chat_message_refused_while_the_cook_is_mid_turn(self, mock_rk, mock_state, mock_keys, mock_busy, tmp_path):
+        # Its current turn's report would otherwise carry the new ticket's message.
+        mock_state.return_value = tmp_path
+        write_status(tmp_path, "eng", {"status": "working", "agent": "eng", "backend": "claude"})
+        from claude_kitchen.cli import cmd_ticket
+        with pytest.raises(SystemExit, match="mid-turn"):
+            cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message="swarm !r:s $ev"))
+        assert not mock_keys.called
+        assert "chat_message" not in read_status(tmp_path, "eng")
 
     def test_stop_with_failed_transcript_read_preserves_prior_tokens(self, monkeypatch, tmp_path):
         """Realistic 'turn N succeeded, turn N+1's transcript read fails'
