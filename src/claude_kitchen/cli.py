@@ -1265,10 +1265,11 @@ def _link_skills(src_root: Path, home: Path) -> list[str]:
                 if target == src:
                     report.append(f"ok {dest}")
                     continue
-                if target.parts[-4:-2] not in {("code-config", "claude"), ("code-config", "codex")} or target.name != src.name:
+                if target.parts[-4:] not in {("code-config", side, "skills", src.name) for side in ("claude", "codex")}:
                     report.append(f"skipped {dest}: links to {target}")
                     continue
                 tmp = dest.with_name(f".{src.name}.kitchen-tmp")
+                tmp.unlink(missing_ok=True)  # left by an interrupted run
                 tmp.symlink_to(src)
                 os.replace(tmp, dest)  # atomic: a reader never sees the link missing
                 report.append(f"retargeted {dest} (was {target})")

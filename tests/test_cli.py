@@ -3037,7 +3037,8 @@ class TestLinkSkills:
         cc = tmp_path / "services" / "code-config"
         (claude / "moved").symlink_to(cc / "claude" / "skills" / "moved")
         (claude / "mine").mkdir()  # a real directory: never touched
-        (claude / "theirs").symlink_to(tmp_path / "elsewhere" / "theirs")
+        (claude / "theirs").symlink_to(cc / "claude" / "other" / "theirs")  # code-config, but not its skills dir
+        (claude / ".moved.kitchen-tmp").symlink_to(tmp_path / "stale")  # an interrupted run's leftover
         agents.mkdir(parents=True)
         (agents / "moved").symlink_to(cc / "codex" / "skills" / "moved")
 
@@ -3048,7 +3049,7 @@ class TestLinkSkills:
         assert os.readlink(claude / "moved") == str(src_root / "moved")
         assert os.readlink(agents / "moved") == str(src_root / "moved")
         assert (claude / "mine").is_dir() and not (claude / "mine").is_symlink()
-        assert os.readlink(claude / "theirs") == str(tmp_path / "elsewhere" / "theirs")
+        assert os.readlink(claude / "theirs") == str(cc / "claude" / "other" / "theirs")
         assert not (claude / "README.md").exists()
         assert sum(l.startswith("skipped") for l in first) == 2
         assert sum(l.startswith("retargeted") for l in first) == 2
