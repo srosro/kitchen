@@ -1227,10 +1227,14 @@ def _ctx_for_channel(tokens):
     return f"{pct}% ({inp_k}k/{mx_k}k)"
 
 
+PLAYWRIGHT_READ_ONLY_TOOLS = ("mcp__playwright__browser_snapshot", "mcp__playwright__browser_take_screenshot")
+
+
 def _install_claude_hooks(settings: Path) -> list[str]:
-    """Append a `kitchen hook` entry to each Claude hook event that lacks one,
-    leaving every other key and hook untouched. Backs the file up and keeps its
-    mode before writing. Returns the events it added."""
+    """Append a `kitchen hook` entry to each Claude hook event that lacks one, and
+    allow the playwright skill's two screen-only tools, leaving every other key and
+    hook untouched. Backs the file up and keeps its mode before writing. Returns
+    what it added."""
     cmd = {"type": "command", "command": "kitchen hook"}
     entries = {"Stop": {"hooks": [cmd]}, "UserPromptSubmit": {"matcher": "", "hooks": [cmd]}}
     raw = settings.read_text() if settings.exists() else None
@@ -1238,10 +1242,14 @@ def _install_claude_hooks(settings: Path) -> list[str]:
     hooks = data.setdefault("hooks", {})
     added = [ev for ev in entries if not any(
         h.get("command") == cmd["command"] for e in hooks.get(ev, []) for h in e.get("hooks", []))]
-    if not added:
+    allow = data.setdefault("permissions", {}).setdefault("allow", [])
+    missing = [t for t in PLAYWRIGHT_READ_ONLY_TOOLS if t not in allow]
+    if not added and not missing:
         return added
     for ev in added:
         hooks.setdefault(ev, []).append(entries[ev])
+    allow.extend(missing)
+    added += missing
     mode = 0o600
     if raw is not None:
         mode = settings.stat().st_mode & 0o777
@@ -1290,7 +1298,7 @@ def cmd_setup(args):
     # --- Claude Code hooks ---
     claude_settings = Path.home() / ".claude" / "settings.json"
     added = _install_claude_hooks(claude_settings)
-    print(f"✅ Claude hooks {'added (' + ', '.join(added) + ') to ' + str(claude_settings) if added else 'installed'}")
+    print(f"✅ Claude settings {'added (' + ', '.join(added) + ') to ' + str(claude_settings) if added else 'installed'}")
 
     # --- Skills ---
     for line in _link_skills(_PKG_DIR / "skills", Path.home()):

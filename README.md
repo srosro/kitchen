@@ -92,6 +92,8 @@ You continue talking to the sous while both cook sessions remain visible in tmux
 - **superpowers plugin** — the supplied sous workflow invokes its brainstorming and development skills.
   - Install from Claude Code: `/plugin install superpowers@claude-plugins-official` (the `superpowers-marketplace` install also works)
 - **`mcp` Python SDK** — installed automatically as a transitive dependency of this project; no separate install step is needed.
+- **Node.js with `npm`/`npx`** — `kitchen setup` registers the Playwright MCP server (for the `playwright` skill) through `npx`, and on Linux without a system Chromium it resolves Playwright's browser through `npm`.
+  - Verify: `npx --version`
 
 ### Optional backends and tools
 

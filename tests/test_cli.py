@@ -2089,6 +2089,7 @@ class TestCmdSetupHooks:
         other = {"type": "command", "command": "$HOME/.claude/hooks/capture-prompt.sh"}
         original = {
             "model": "opus",
+            "permissions": {"allow": ["Bash(ls:*)", "mcp__playwright__browser_snapshot"]},
             "hooks": {
                 "Stop": [{"hooks": [{"type": "command", "command": "kitchen hook"}]}],
                 "UserPromptSubmit": [{"hooks": [other]}],
@@ -2112,7 +2113,9 @@ class TestCmdSetupHooks:
         assert settings.stat().st_mode & 0o777 == 0o640
         backups = list(settings.parent.glob("settings.json.bak-kitchen-*"))
         assert len(backups) == 1 and json.loads(backups[0].read_text()) == original
-        assert "Claude hooks added (UserPromptSubmit)" in capsys.readouterr().out
+        assert data["permissions"]["allow"] == [
+            "Bash(ls:*)", "mcp__playwright__browser_snapshot", "mcp__playwright__browser_take_screenshot"]
+        assert "Claude settings added (UserPromptSubmit, mcp__playwright__browser_take_screenshot)" in capsys.readouterr().out
 
 
 class TestCmdSetupStatusline:

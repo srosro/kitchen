@@ -33,6 +33,10 @@ def test_main_registers_the_bundled_chromium_on_headless_linux(tmp_path):
     claude.write_text('#!/usr/bin/env bash\necho "$*" >> "$ARGV_LOG"\n')  # logs argv; `mcp list` prints nothing
     chrome.write_text("#!/usr/bin/env bash\nexit 0\n")
     claude.chmod(0o755), chrome.chmod(0o755)
+    codex = tmp_path / ".local" / "bin" / "codex"
+    codex.parent.mkdir(parents=True)
+    codex.write_text('#!/usr/bin/env bash\necho "codex $*" >> "$ARGV_LOG"\n')
+    codex.chmod(0o755)
     log = tmp_path / "argv.log"
     bash(f"""
 find_claude() {{ echo {claude}; }}
@@ -44,7 +48,9 @@ main >/dev/null 2>&1
 echo "$MCP_VERSION"
 """, HOME=str(tmp_path), ARGV_LOG=str(log))
     version = bash("echo $MCP_VERSION")
-    assert f"mcp add -s user playwright -- npx @playwright/mcp@{version} --isolated --headless --executable-path {chrome}" in log.read_text()
+    args = f"npx @playwright/mcp@{version} --isolated --headless --executable-path {chrome}"
+    assert f"mcp add -s user playwright -- {args}" in log.read_text()
+    assert f"codex mcp add playwright -- {args}" in log.read_text()  # Codex gets the same server
 
 
 def test_rerun_when_registered_needs_no_network(tmp_path):

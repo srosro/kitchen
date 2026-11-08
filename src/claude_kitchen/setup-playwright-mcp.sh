@@ -58,21 +58,6 @@ main() {
   test_bin=""
   [[ "$os" == "Linux" ]] && chromium="$(command -v chromium 2>/dev/null || command -v chromium-browser 2>/dev/null || true)"
 
-  # Allowlist the two screen-only read-only tools (console/network stay gated).
-  # Runs every time, before the fast-path return, so a host already registered
-  # still gets the allowlist. Stage in-dir so the final mv is an atomic rename
-  # even when $TMPDIR is a different filesystem from $HOME.
-  local settings="$HOME/.claude/settings.json"
-  if command -v jq >/dev/null 2>&1; then
-    mkdir -p "$HOME/.claude"
-    [[ -f "$settings" ]] || echo "{}" > "$settings"
-    local tmp; tmp="$(mktemp "$settings.XXXXXX")"
-    jq '.permissions.allow += ["mcp__playwright__browser_snapshot","mcp__playwright__browser_take_screenshot"] | .permissions.allow |= unique' \
-      "$settings" > "$tmp" && mv "$tmp" "$settings"
-  else
-    echo "setup-playwright-mcp: jq not found — skipping read-only allowlist (tools will prompt)" >&2
-  fi
-
   # Decide --no-sandbox per host BEFORE the fast-path, by launch-testing the
   # actual browser: keep the sandbox on (page content is untrusted), fall back
   # to --no-sandbox only where the sandboxed launch fails (e.g. a kernel with
@@ -134,6 +119,17 @@ main() {
   base_args="$(derive_mcp_args "$os" "$test_bin")"
   local args="$base_args"
   [[ -n "$sandbox_flag" ]] && args="$base_args $sandbox_flag"
+
+  # Codex reads the same skill (kitchen links it into ~/.agents/skills), so give it
+  # the same server. Re-registering is local and cheap, so no fast path here.
+  local codex
+  codex="$(command -v codex 2>/dev/null || true)"
+  [[ -z "$codex" && -x "$HOME/.local/bin/codex" ]] && codex="$HOME/.local/bin/codex"
+  if [[ -n "$codex" ]]; then
+    "$codex" mcp remove playwright >/dev/null 2>&1 || true
+    "$codex" mcp add playwright -- npx "@playwright/mcp@$MCP_VERSION" $args >/dev/null
+    echo "setup-playwright-mcp: registered with Codex: npx @playwright/mcp@$MCP_VERSION $args"
+  fi
 
   # Fast-path: already registered with exactly this command. The trailing ` - `
   # (the `claude mcp list` "<cmd> - <status>" separator) anchors an exact match,
