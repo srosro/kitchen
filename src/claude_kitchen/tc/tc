@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+# tc — fleet tmux connect + checkout provisioning.
+#   tc <repo> <N> <host>         connect to slot ~/Hacking/<repo><N> (N: 0-9)
+#   tc new <repo> <host>         connect to next free workspace (0..9)
+#   tc setup <repo> <host> [url] provision <repo>0..<repo>9
+#   tc claim <repo> <branch> [N] claim+branch a free local slot, or exact slot N
+set -euo pipefail
+
+# Resolve this script's real dir (follow symlink) to find lib/fleet.sh.
+_src=${BASH_SOURCE[0]}
+while [ -L "$_src" ]; do
+  _d=$(cd -P "$(dirname "$_src")" && pwd); _src=$(readlink "$_src")
+  case $_src in /*) ;; *) _src=$_d/$_src ;; esac
+done
+TC_ROOT=$(cd -P "$(dirname "$_src")" && pwd)
+. "$TC_ROOT/lib/fleet.sh"
+
+# Reject names with shell metacharacters before they're interpolated into a
+# remote command string — an injected repo/tag arg must fail loudly, not run.
+_safe_name() {
+  case $1 in
+    ''|*[!A-Za-z0-9._-]*) echo "tc: invalid name '$1' (allowed: A-Za-z 0-9 . _ -)" >&2; exit 2 ;;
+  esac
+}
+
+# Branch names may contain '/', so they need a looser validator than _safe_name.
+# Reject empty, a leading '-' (would be read as a git flag), '..' (invalid ref),
+# and any shell metacharacter. Used only locally (no remote command string), so
+# this is belt-and-suspenders ahead of git's own check-ref-format.
+_safe_branch() {
+  case $1 in
+    ''|-*|*..*|*[!A-Za-z0-9._/-]*) echo "tc: invalid branch '$1' (allowed: A-Za-z 0-9 . _ / -, no leading -)" >&2; exit 2 ;;
+  esac
+}
+
+usage() {
+  sed -n '3,6p' "$_src" | sed 's/^#  *//' >&2
+  exit 2
+}
+
+# Run RCMD on <host>: locally if it's this machine (self-loopback), else ssh -t.
+# In TC_DRYRUN mode, print the final (host, rcmd) and return instead of running.
+connect() { # connect <host> <rcmd>
+  local host=$1 rcmd=$2 user
+  if fleet_is_self "$host"; then
+    [ -n "${TC_DRYRUN:-}" ] && { printf 'host=%s\nrcmd=%s\n' "$host" "$rcmd"; return 0; }
+    eval "$rcmd"                             # self-loopback: run locally
+  else
+    user=$(fleet_user "$host")
+    [ -n "${TC_DRYRUN:-}" ] && { printf 'host=%s\nrcmd=%s\n' "$host" "$rcmd"; return 0; }
+    exec ssh -t "$user@$host" "$rcmd"
+  fi
+}
+
+# Build the connect RCMD for an explicit slot's dir+session.
+connect_dir() { # connect_dir <repo> <N> <host-or-alias>
+  local repo=$1 n=$2 host sess dir
+  _safe_name "$repo"
+  host=$(fleet_host "$3")                  # canonicalize alias + validate (rc 1 if unknown)
+  sess=$(fleet_session "$repo" "$n" "$host")
+  dir=$(fleet_dir "$repo" "$n")            # literal ~ for remote expansion
+  connect "$host" "d=$dir; [ -d \"\$d\" ] || { echo \"tc: \$d not found on $host (try: tc setup $repo $host)\" >&2; exit 3; }; exec tmux new -A -s $sess -c \"\$d\""
+}
+
+connect_new() { # connect_new <repo> <host-or-alias>
+  local raw=$1 host repo tag pick
+  _safe_name "$raw"
+  host=$(fleet_host "$2")                  # canonicalize alias + validate
+  repo=$(fleet_repo "$raw"); tag=$(fleet_tag "$raw")
+  pick=$(cat "$TC_ROOT/lib/pick.sh")       # ship the picker inline → no remote PATH dep
+  # _tcp prints "<sess> <dir>"; split with parameter expansion (no process
+  # substitution — the remote login shell may be POSIX sh/zsh).
+  connect "$host" "$pick
+out=\$(_tcp $(printf %q "$repo") $(printf %q "$tag") $(printf %q "$host")) || exit \$?
+exec tmux new -A -s \"\${out%% *}\" -c \"\${out#* }\""
+}
+
+# Headless local claim: pick a free+unlocked slot, atomically lock it, branch it,
+# print JUST the dir, release the lock (the branch is now the steady-state claim —
+# pick.sh skips non-main checkouts). No ssh/tmux: a dispatched subagent runs on
+# this host. Consumer: dir=$(tc claim plow feat/foo) || { echo "no slot"; exit; }
+tc_claim() { # tc_claim <repo-or-tag> <branch> [exact-slot]
+  local raw=$1 branch=$2 exact=${3:-} repo tag out dir lock
+  _safe_name "$raw"; _safe_branch "$branch"
+  case $exact in ''|[0-9]) ;; *) usage ;; esac
+  repo=$(fleet_repo "$raw"); tag=$(fleet_tag "$raw")
+  . "$TC_ROOT/lib/pick.sh"     # _tcp <repo-dir> <tag> <host>
+  . "$TC_ROOT/lib/claim.sh"    # claim_slot / release_slot
+  if [ -n "$exact" ]; then
+    dir=$HOME/Hacking/$repo$exact
+    [ -d "$dir/.git" ] || { echo "tc claim: $dir not found" >&2; return 1; }
+    lock=$(claim_lock_path "$dir")
+    claim_slot "$lock" || { echo "tc claim: $dir is already claimed" >&2; return 1; }
+    if ! _tcp_eligible "$dir"; then
+      release_slot "$lock"
+      echo "tc claim: $dir is not clean and available" >&2
+      return 1
+    fi
+    if git -C "$dir" checkout -b "$branch" 1>&2; then
+      printf '%s\n' "$dir"
+      release_slot "$lock"
+      return 0
+    fi
+    release_slot "$lock"
+    return 1
+  fi
+  # _tcp returns 1 + prints "no free workspace" to stderr when nothing qualifies.
+  # _tcp skips a slot with a live OR leaked `.steal` mutex, so an unreclaimable stale
+  # lock can't loop us forever — it's hidden until someone clears it (rmdir the .steal).
+  while out=$(_tcp "$repo" "$tag" local); do
+    dir=${out#* }
+    lock=$(claim_lock_path "$dir")
+    if claim_slot "$lock"; then
+      # Re-check eligibility UNDER the lock: the lock only guards concurrent CLAIMS,
+      # not a user (or `tc new`) branching/dirtying/opening the slot in the window
+      # since _tcp picked it. _tcp_eligible is the same branch+clean+busy predicate
+      # _tcp selects on (shared so the two can't drift); release + re-pick on change.
+      # Its `|| return 1` shape also absorbs a failed symbolic-ref (detached/removed
+      # mid-race) without tripping errexit before release_slot runs.
+      if ! _tcp_eligible "$dir"; then
+        release_slot "$lock"; continue
+      fi
+      # checkout output → stderr; stdout must stay JUST the dir for command substitution.
+      if git -C "$dir" checkout -b "$branch" 1>&2; then
+        printf '%s\n' "$dir"
+        release_slot "$lock"
+        return 0
+      fi
+      release_slot "$lock"   # branch already exists / git error → fail loud
+      return 1
+    fi
+    # Lost the claim race: _tcp now skips this just-locked slot, so the loop
+    # re-picks the next free one (or exits when none remain). Always terminates.
+  done
+  return 1
+}
+
+# Provision snippet: repo via $TC_REPO env, url via stdin (kept out of argv).
+# Clones ~/Hacking/<repo>0..<repo>9 idempotently. With no url, origin resolves
+# from <repo>0, falling back to a legacy bare ~/Hacking/<repo> checkout (which
+# setup otherwise leaves untouched).
+TC_PROVISION='
+set -e
+repo=$TC_REPO
+IFS= read -r url || url=
+cd "$HOME/Hacking"
+if [ -z "$url" ]; then
+  for c in "${repo}0" "$repo"; do
+    if [ -d "$c/.git" ]; then url=$(git -C "$c" remote get-url origin); break; fi
+  done
+  if [ -z "$url" ]; then echo "tc setup: no ~/Hacking/${repo}0 or ~/Hacking/$repo checkout and no git-url given" >&2; exit 1; fi
+fi
+case $url in
+  http://*@*|https://*@*) echo "tc setup: refusing a credential-bearing origin URL — use an SSH remote" >&2; exit 1 ;;
+esac
+# A trailing .git or /, and SSH vs HTTPS, are cosmetic — same remote. Normalize to
+# host/path before comparing so a slot cloned either way is not misread as a different origin.
+_norm() { u=${1%/}; u=${u%.git}; u=${u#*://}; u=${u#*@}; printf "%s\n" "${u/://}"; }
+nurl=$(_norm "$url")
+for n in 0 1 2 3 4 5 6 7 8 9; do
+  d=$repo$n
+  if [ -d "$d" ]; then
+    if [ -d "$d/.git" ] && [ "$(_norm "$(git -C "$d" remote get-url origin 2>/dev/null)")" = "$nurl" ]; then
+      echo "skip:  $d (exists)"; continue
+    fi
+    echo "error: $d exists but has a different origin" >&2; exit 1
+  fi
+  if [ -e "$d" ]; then echo "error: $d exists, not a dir" >&2; exit 1; fi
+  echo "clone: $d ..."; git clone "$url" "$d"; echo "done:  $d"
+done'
+
+tc_setup() { # tc_setup <repo> <host-or-alias> [url]
+  local repo host url user
+  _safe_name "$1"
+  repo=$(fleet_repo "$1"); host=$(fleet_host "$2"); url=${3:-}
+  # Reject a credential-bearing URL up front — it must never enter dry-run output,
+  # the clone argv, or a persisted remote. SSH remotes / credential helpers only.
+  case $url in
+    http://*@*|https://*@*) echo "tc setup: refusing a credential-bearing URL — use an SSH remote or a git credential helper" >&2; exit 2 ;;
+  esac
+  if [ -n "${TC_DRYRUN:-}" ]; then
+    # Never echo the raw url — an HTTPS remote can carry an embedded token.
+    printf 'setup-host=%s\nsetup-repo=%s\nsetup-url-given=%s\n%s\n' \
+      "$host" "$repo" "$([ -n "$url" ] && echo yes || echo no)" "$TC_PROVISION"
+    return 0
+  fi
+  # url flows over stdin only (never argv); repo (not secret) via env.
+  if fleet_is_self "$host"; then
+    printf '%s\n' "$url" | TC_REPO="$repo" bash -c "$TC_PROVISION"
+  else
+    user=$(fleet_user "$host")
+    printf '%s\n' "$url" | ssh "$user@$host" "TC_REPO=$(printf %q "$repo"); $TC_PROVISION"
+  fi
+}
+
+[ $# -ge 1 ] || usage
+case $1 in
+  -h|--help) usage ;;
+  new)   shift; [ $# -eq 2 ] || usage; connect_new "$1" "$2" ;;
+  setup) shift; { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; tc_setup "$@" ;;
+  claim) shift; { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; tc_claim "$@" ;;
+  *)     [ $# -eq 3 ] || usage
+         case $2 in [0-9]) ;; *) usage ;; esac  # slot N is a single digit 0-9
+         connect_dir "$1" "$2" "$3" ;;
+esac

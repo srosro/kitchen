@@ -151,7 +151,7 @@ kitchen setup
 `kitchen setup` installs and verifies:
 
 1. Claude `Stop` and `UserPromptSubmit` hooks: it appends a `kitchen hook` entry to `~/.claude/settings.json` for each event that lacks one, after a `settings.json.bak-kitchen-<time>` backup, and leaves every other setting alone.
-2. Kitchen's skills (`src/claude_kitchen/skills/*`): each is linked into `~/.claude/skills` and `~/.agents/skills`. A missing link is created, a link to a `code-config` copy of the same skill is retargeted, and anything else is left alone and reported.
+2. Kitchen's skills (`src/claude_kitchen/skills/*`), linked into `~/.claude/skills` and `~/.agents/skills`, and its `tc`, linked into `~/.local/bin`. A missing link is created, a link to the `code-config` copy it moved from is retargeted, and anything else is left alone and reported.
 3. The Playwright MCP server behind the `playwright` skill (`setup-playwright-mcp.sh`): a pinned `@playwright/mcp`, headed on macOS and headless on Linux, with Playwright's Chromium downloaded when the host has none. It is a no-op once registered.
 4. The `mcp` Python SDK.
 5. The superpowers plugin.
@@ -159,6 +159,23 @@ kitchen setup
 7. That no legacy kitchen uses the reserved name `projects`.
 
 The statusline check is advisory. Re-run the command until the blocking checks are green.
+
+## `tc` — fleet tmux/checkout tool
+
+Collapses the `ssh -t <host> 'tmux new -A -s …'` + `cd ~/Hacking/<repo>` ritual into one command, with consistent `<tag><N>-<host>` session names and the right start dir. Checkouts are uniform numbered slots `~/Hacking/<repo>0..<repo>9`. `<repo>` accepts a short tag (`kwr`) or the full dir name (`knightwatch-reviewer`).
+
+```sh
+tc <repo> <N> <host>        # attach/create slot N:  ~/Hacking/<repo><N>  → <tag><N>-<host>
+tc new <repo> <host>        # next FREE workspace (on main + clean + not busy), scanning <repo>0..9
+tc claim <repo> <branch> [N]  # headless: claim a free local slot, or exact slot N; checkout -b <branch>
+tc setup <repo> <host> [url]  # clone <repo>0..<repo>9 on <host> (idempotent)
+```
+
+`kitchen setup` links `tc` into `~/.local/bin`. It needs a host table at `~/.config/kitchen/fleet-hosts` (override with `KITCHEN_FLEET_HOSTS`), one `<host> <user> [alias]` row per line; host-dependent `tc` commands (connect, `new`, `setup`) and the fleet helpers fail loudly without it; `tc claim` is local and still works. `tests/shell/fixtures/fleet-hosts` shows the shape; the optional alias gives a host one short name (a row `laptop-pro alice lp` lets `tc my-app 5 lp` reach it). Short repo tags come from an optional `~/.config/kitchen/fleet-repos` (`<tag> <repo-dir>` rows; override with `KITCHEN_FLEET_REPOS`); without it a repo is named by its dir. Running `tc … <thishost>` runs tmux locally instead of SSH-to-self. `tc setup` resolves the git URL from `<repo>0`'s `origin` — falling back to a legacy bare `~/Hacking/<repo>` checkout — or takes an explicit `[url]`. A legacy bare checkout is otherwise ignored: `tc` no longer attaches to it, scans it, or clones it, so fleets migrate organically to the numbered slots.
+
+A remote host needs `tmux` resolvable from a **non-login** shell — `ssh host cmd` gets a bare PATH, so a Homebrew or `~/.local/bin` tmux is invisible unless `~/.zshenv` adds its dir. Linux hosts get this free (`/usr/bin/tmux`); macOS ones may not.
+
+`tc` ssh's to the bare short hostname, so it must resolve from the calling host (MagicDNS short names, or `~/.ssh/config` entries).
 
 ## Quick start
 
@@ -236,7 +253,7 @@ kitchen hire architect --model opus
 # Codex model; astra is passed to `codex -m` as gpt-6-astra (Codex cooks only)
 kitchen hire reviewer --backend codex --model astra
 
-# Work in a free ~/Hacking/plow<N> slot claimed with code-config's `tc claim`
+# Work in a free ~/Hacking/plow<N> slot claimed with kitchen's `tc claim`
 kitchen hire eng --role eng --slot plow
 
 # Near-fresh eval worker: no role, auto-memory, or superpowers startup injection

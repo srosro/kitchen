@@ -889,7 +889,7 @@ class TestStatusPreservationAcrossNonStopWriters:
 
     @staticmethod
     def _fake_tc(tmp_path, monkeypatch, backend):
-        """HOME at tmp_path and a `tc` that records its args and claims plow3
+        """HOME at tmp_path and a kitchen `tc` that records its args and claims plow3
         (or fails for slot `none`); returns `--slot plow` hire args."""
         monkeypatch.setenv("HOME", str(tmp_path))
         bin_dir = tmp_path / "bin"
@@ -897,7 +897,7 @@ class TestStatusPreservationAcrossNonStopWriters:
         tc = bin_dir / "tc"
         tc.write_text(f'#!/bin/sh\necho "$@" > {tmp_path}/argv\n[ "$2" = none ] && exit 1\necho /home/u/Hacking/plow3\n')
         tc.chmod(0o755)
-        monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+        monkeypatch.setattr("claude_kitchen.cli.TC", tc)
         return argparse.Namespace(kitchen="risotto", name="eng", backend=backend, project=None,
                                   slot="plow", role=None, effort=None, clean_room=False,
                                   with_skill=[], model=None, swarm_account=None)
@@ -3027,15 +3027,17 @@ class TestTicketSous:
         assert "AGENT_KITCHEN" in exit_.value.code
 
 
-class TestLinkSkills:
+class TestLinkInstalls:
     def test_creates_retargets_skips_and_reruns_clean(self, tmp_path):
-        from claude_kitchen.cli import _link_skills
-        src_root = tmp_path / "pkg" / "skills"
+        from claude_kitchen.cli import _link_installs
+        pkg = tmp_path / "pkg"
         for name in ("fresh", "moved", "mine", "theirs"):
-            (src_root / name).mkdir(parents=True)
-        (src_root / "README.md").write_text("not a skill")
+            (pkg / "skills" / name).mkdir(parents=True)
+        (pkg / "skills" / "README.md").write_text("not a skill")
+        (pkg / "tc").mkdir()
+        (pkg / "tc" / "tc").write_text("#!/bin/sh\n")
         home = tmp_path / "home"
-        claude, agents = home / ".claude" / "skills", home / ".agents" / "skills"
+        claude, agents, local_bin = home / ".claude" / "skills", home / ".agents" / "skills", home / ".local" / "bin"
         claude.mkdir(parents=True)
         cc = tmp_path / "services" / "code-config"
         (claude / "moved").symlink_to(cc / "claude" / "skills" / "moved")
@@ -3044,20 +3046,23 @@ class TestLinkSkills:
         (claude / ".moved.kitchen-tmp").symlink_to(tmp_path / "stale")  # an interrupted run's leftover
         agents.mkdir(parents=True)
         (agents / "moved").symlink_to(cc / "codex" / "skills" / "moved")
+        local_bin.mkdir(parents=True)
+        (local_bin / "tc").symlink_to(cc / "tc")
 
-        first = _link_skills(src_root, home)
+        first = _link_installs(pkg, home)
 
-        assert (claude / "fresh").resolve() == src_root / "fresh"
-        assert (agents / "fresh").resolve() == src_root / "fresh"
-        assert os.readlink(claude / "moved") == str(src_root / "moved")
-        assert os.readlink(agents / "moved") == str(src_root / "moved")
+        assert (claude / "fresh").resolve() == pkg / "skills" / "fresh"
+        assert (agents / "fresh").resolve() == pkg / "skills" / "fresh"
+        assert os.readlink(claude / "moved") == str(pkg / "skills" / "moved")
+        assert os.readlink(agents / "moved") == str(pkg / "skills" / "moved")
+        assert os.readlink(local_bin / "tc") == str(pkg / "tc" / "tc")
         assert (claude / "mine").is_dir() and not (claude / "mine").is_symlink()
         assert os.readlink(claude / "theirs") == str(cc / "claude" / "other" / "theirs")
         assert not (claude / "README.md").exists()
         assert sum(l.startswith("skipped") for l in first) == 2
-        assert sum(l.startswith("retargeted") for l in first) == 2
+        assert sum(l.startswith("retargeted") for l in first) == 3
 
-        second = _link_skills(src_root, home)
-        assert [l.split()[0] for l in second].count("ok") == 6
+        second = _link_installs(pkg, home)
+        assert [l.split()[0] for l in second].count("ok") == 7
         assert sum(l.startswith("skipped") for l in second) == 2
         assert not list(claude.glob(".*kitchen-tmp"))
