@@ -111,7 +111,12 @@ def swarm_rooms(account: dict) -> list[str]:
     the server publishes for it. Spaces are left out: swarm refuses them as
     unencrypted. A room that can't be named or looked up is skipped, loudly."""
     listed = subprocess.run([swarm_binary(), "accounts", "list"], capture_output=True, text=True, check=True)
-    rooms = next(a["rooms"] for a in json.loads(listed.stdout)["accounts"] if a["account"] == account["user_id"])
+    row = next(a for a in json.loads(listed.stdout)["accounts"] if a["account"] == account["user_id"])
+    if row["rooms"] is None:  # swarm couldn't read the account, as when its token was revoked
+        print(f"kitchen: swarm can't list {account['user_id']}'s rooms ({row.get('error')}); "
+              "the sous launches without joining them", file=sys.stderr)
+        return []
+    rooms = row["rooms"]
 
     def get(path: str) -> dict:
         url = f"{account['homeserver'].rstrip('/')}/_matrix/client/v3{path}"
@@ -155,10 +160,8 @@ def swarm_join_prompt(user_id: str, rooms: list[str]) -> str:
 
 def sous_first_turn(kitchen: str) -> list[str]:
     """The sous's launch prompt, if it has swarm rooms to join."""
-    accounts = swarm_accounts(kitchen)
-    if not accounts:
-        return []
-    return [" ".join(swarm_join_prompt(a["user_id"], swarm_rooms(a)) for a in accounts)]
+    joins = [swarm_join_prompt(a["user_id"], rooms) for a in swarm_accounts(kitchen) if (rooms := swarm_rooms(a))]
+    return [" ".join(joins)] if joins else []
 
 
 def channel_servers(kitchen: str) -> dict:

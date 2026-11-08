@@ -10,6 +10,9 @@ from claude_kitchen.tmux import tmux, has_session, target, SESSION
 from claude_kitchen.state import MCP_CONFIG_NAME, channel_flags, sous_first_turn
 
 
+FIRST_TURN_ENV = "KITCHEN_SOUS_FIRST_TURN"
+
+
 def check_sous_pid(state_dir: Path):
     """Exit if another sous is already running for this kitchen.
 
@@ -80,7 +83,9 @@ def spawn_sous(kitchen: str, state_dir: Path, sous_prompt: str,
     if resume_session_id:
         claude_args.extend(["--resume", resume_session_id])
     claude_args.extend(["--append-system-prompt", sous_prompt])
-    claude_args.extend(sous_first_turn(kitchen))
+    # `kitchen restart` builds the turn while the old sous still runs and hands it over here.
+    turn = os.environ.pop(FIRST_TURN_ENV, None)
+    claude_args.extend(json.loads(turn) if turn is not None else sous_first_turn(kitchen))
     if project:
         os.chdir(project)
     os.execvp("claude", claude_args)
