@@ -2103,6 +2103,8 @@ class TestCmdSetupHooks:
                                # the legacy roborev installer's copy (XDG-relocatable dir)
                                {"matcher": "Bash", "hooks": [{"type": "command", "command": "/home/u/xdg/roborev/claude-hooks/roborev-pre-checkout-gate.py"}]},
                                {"matcher": "Bash", "hooks": [gate]},
+                               # the same canonical entry twice in one group: the second copy goes
+                               {"matcher": "Bash", "hooks": [{"type": "command", "command": str(HOOKS_DIR / "roborev-pre-commit-context.py")}] * 2},
                                # kitchen's own path with the timeout missing: replaced by the canonical entry
                                {"matcher": "Bash", "hooks": [{"type": "command", "command": str(HOOKS_DIR / "roborev-pre-push-gate.py")}]}],
             },
@@ -3084,3 +3086,16 @@ class TestLinkInstalls:
         assert [l.split()[0] for l in second].count("ok") == 7
         assert sum(l.startswith("skipped") for l in second) == 2
         assert not list(claude.glob(".*kitchen-tmp"))
+
+
+def test_install_claude_hooks_drops_a_duplicate_in_otherwise_canonical_settings(tmp_path):
+    from claude_kitchen.cli import _install_claude_hooks, OWNED_HOOKS
+    settings = tmp_path / "settings.json"
+    _install_claude_hooks(settings)  # canonical install
+    data = json.loads(settings.read_text())
+    group = next(g for g in data["hooks"]["PreToolUse"] if g["hooks"][0]["command"].endswith("roborev-pre-commit-context.py"))
+    group["hooks"] = group["hooks"] * 2  # the only defect: one entry twice
+    settings.write_text(json.dumps(data))
+    assert _install_claude_hooks(settings) == ["-roborev-pre-commit-context.py"]
+    commands = [h["command"] for gs in json.loads(settings.read_text())["hooks"].values() for g in gs for h in g["hooks"]]
+    assert len(commands) == len(OWNED_HOOKS)

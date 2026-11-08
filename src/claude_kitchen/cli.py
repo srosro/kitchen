@@ -1273,9 +1273,10 @@ def _install_claude_hooks(settings: Path) -> list[str]:
 
     for ev in list(hooks):
         for group in hooks[ev]:
-            keep = [h for h in group.get("hooks", []) if keeps(ev, group, h)]
-            added += [f"-{Path(h['command']).name}" for h in group.get("hooks", []) if h not in keep]
-            group["hooks"] = keep
+            entries = group.get("hooks", [])
+            kept = [keeps(ev, group, h) for h in entries]  # per entry, so an identical duplicate is dropped too
+            added += [f"-{Path(h.get('command') or '').name}" for h, k in zip(entries, kept) if not k]
+            group["hooks"] = [h for h, k in zip(entries, kept) if k]
         hooks[ev] = [g for g in hooks[ev] if g.get("hooks")]
         if not hooks[ev]:
             del hooks[ev]
