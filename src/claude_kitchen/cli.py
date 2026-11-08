@@ -1229,24 +1229,67 @@ def _ctx_for_channel(tokens):
 PLAYWRIGHT_READ_ONLY_TOOLS = ("mcp__playwright__browser_snapshot", "mcp__playwright__browser_take_screenshot")
 
 
+HOOKS = _PKG_DIR / "hooks"
+# (event, matcher, command, timeout): the Claude hook entries kitchen owns.
+OWNED_HOOKS = (
+    ("Stop", None, "kitchen hook", None),
+    ("UserPromptSubmit", "", "kitchen hook", None),
+    ("UserPromptSubmit", None, str(HOOKS / "capture-prompt.sh"), None),
+    ("PostToolUse", "AskUserQuestion", str(HOOKS / "capture-answer.sh"), None),
+    ("PreToolUse", "Bash", str(HOOKS / "roborev-pre-commit-context.py"), None),
+    ("PreToolUse", "Bash", str(HOOKS / "roborev-pre-push-gate.py"), 660),
+    ("PreToolUse", "Bash", str(HOOKS / "roborev-pre-checkout-gate.py"), None),
+)
+
+
 def _install_claude_hooks(settings: Path) -> list[str]:
-    """Append a `kitchen hook` entry to each Claude hook event that lacks one, and
-    allow the playwright skill's two screen-only tools, leaving every other key and
-    hook untouched. Backs the file up and keeps its mode before writing. Returns
-    what it added."""
-    cmd = {"type": "command", "command": "kitchen hook"}
-    entries = {"Stop": {"hooks": [cmd]}, "UserPromptSubmit": {"matcher": "", "hooks": [cmd]}}
+    """Make kitchen the one owner of its Claude hooks: drop an entry that runs an
+    older copy of a hook kitchen ships, add each owned entry
+    that is missing, and allow the playwright skill's two screen-only tools. Every
+    other key and hook is left untouched. Backs the file up and keeps its mode
+    before writing. Returns what it changed."""
     raw = settings.read_text() if settings.exists() else None
     data = json.loads(raw) if raw else {}
     hooks = data.setdefault("hooks", {})
-    added = [ev for ev in entries if not any(
-        h.get("command") == cmd["command"] for e in hooks.get(ev, []) for h in e.get("hooks", []))]
+    moved = {Path(cmd).name for _, _, cmd, _ in OWNED_HOOKS if "/" in cmd}
+    canonical = {(ev, m, cmd, t) for ev, m, cmd, t in OWNED_HOOKS}
+    owned = {cmd for _, _, cmd, _ in OWNED_HOOKS}
+    added, seen = [], set()
+
+    def keeps(ev, group, h):
+        """Drop an older copy (code-config's ~/.claude/hooks, or the legacy roborev
+        installer's .../roborev/claude-hooks), and any copy of an owned hook that isn't
+        the canonical entry (wrong matcher or timeout) or repeats one already kept."""
+        cmd = h.get("command") or ""
+        if any(cmd.endswith(d + m) for m in moved for d in ("/.claude/hooks/", "/roborev/claude-hooks/")):
+            return False
+        if cmd not in owned:
+            return True
+        key = (ev, group.get("matcher"), cmd, h.get("timeout"))
+        if key not in canonical or key in seen:
+            return False
+        seen.add(key)
+        return True
+
+    for ev in list(hooks):
+        for group in hooks[ev]:
+            entries = group.get("hooks", [])
+            kept = [keeps(ev, group, h) for h in entries]  # per entry, so an identical duplicate is dropped too
+            added += [f"-{Path(h.get('command') or '').name}" for h, k in zip(entries, kept) if not k]
+            group["hooks"] = [h for h, k in zip(entries, kept) if k]
+        hooks[ev] = [g for g in hooks[ev] if g.get("hooks")]
+        if not hooks[ev]:
+            del hooks[ev]
+    for ev, matcher, cmd, timeout in OWNED_HOOKS:
+        if (ev, matcher, cmd, timeout) in seen:
+            continue
+        entry = {"type": "command", "command": cmd, **({"timeout": timeout} if timeout else {})}
+        hooks.setdefault(ev, []).append({**({"matcher": matcher} if matcher is not None else {}), "hooks": [entry]})
+        added.append(ev if cmd == "kitchen hook" else Path(cmd).name)
     allow = data.setdefault("permissions", {}).setdefault("allow", [])
     missing = [t for t in PLAYWRIGHT_READ_ONLY_TOOLS if t not in allow]
     if not added and not missing:
         return added
-    for ev in added:
-        hooks.setdefault(ev, []).append(entries[ev])
     allow.extend(missing)
     added += missing
     mode = 0o600

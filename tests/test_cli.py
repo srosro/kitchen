@@ -2081,41 +2081,61 @@ class TestCmdSetupExit:
 
 class TestCmdSetupHooks:
     @patch("claude_kitchen.cli.subprocess.run")
-    def test_adds_missing_hooks_without_clobbering(self, mock_run, monkeypatch, tmp_path, capsys):
+    def test_takes_over_its_hooks_without_clobbering(self, mock_run, monkeypatch, tmp_path, capsys):
+        """kitchen setup owns its hook entries: the old ~/.claude/hooks copy of a hook
+        it ships is dropped, each owned entry appears exactly once, and everything
+        else (keys, other hooks, a hook sharing a group with an old one) survives."""
         mock_run.return_value = MagicMock(returncode=0, stdout="2.1.99 (claude)\n", stderr="")
         monkeypatch.setenv("HOME", str(tmp_path))
         settings = tmp_path / ".claude" / "settings.json"
         settings.parent.mkdir()
-        other = {"type": "command", "command": "$HOME/.claude/hooks/capture-prompt.sh"}
+        from claude_kitchen.cli import HOOKS as HOOKS_DIR
+        old = lambda name: {"type": "command", "command": f"$HOME/.claude/hooks/{name}"}
+        mine = {"type": "command", "command": "$HOME/bin/my-prompt-hook"}
+        gate = {"type": "command", "command": "$HOME/.claude/hooks/knightwatch-inflight-push-gate.py"}  # not kitchen's
         original = {
             "model": "opus",
             "permissions": {"allow": ["Bash(ls:*)", "mcp__playwright__browser_snapshot"]},
             "hooks": {
                 "Stop": [{"hooks": [{"type": "command", "command": "kitchen hook"}]}],
-                "UserPromptSubmit": [{"hooks": [other]}],
+                "UserPromptSubmit": [{"hooks": [old("capture-prompt.sh"), mine]}],
+                "PreToolUse": [{"matcher": "Bash", "hooks": [old("roborev-pre-push-gate.py")]},
+                               # the legacy roborev installer's copy (XDG-relocatable dir)
+                               {"matcher": "Bash", "hooks": [{"type": "command", "command": "/home/u/xdg/roborev/claude-hooks/roborev-pre-checkout-gate.py"}]},
+                               {"matcher": "Bash", "hooks": [gate]},
+                               # the same canonical entry twice in one group: the second copy goes
+                               {"matcher": "Bash", "hooks": [{"type": "command", "command": str(HOOKS_DIR / "roborev-pre-commit-context.py")}] * 2},
+                               # kitchen's own path with the timeout missing: replaced by the canonical entry
+                               {"matcher": "Bash", "hooks": [{"type": "command", "command": str(HOOKS_DIR / "roborev-pre-push-gate.py")}]}],
             },
         }
         settings.write_text(json.dumps(original))
         settings.chmod(0o640)
-        from claude_kitchen.cli import cmd_setup
+        from claude_kitchen.cli import cmd_setup, HOOKS
 
         for _ in range(2):
             with pytest.raises(SystemExit):  # superpowers is absent from this HOME
                 cmd_setup(MagicMock())
 
         data = json.loads(settings.read_text())
+        commands = [h["command"] for groups in data["hooks"].values() for g in groups for h in g["hooks"]]
         assert data["model"] == "opus"
-        assert data["hooks"]["Stop"] == original["hooks"]["Stop"]
-        assert data["hooks"]["UserPromptSubmit"] == [
-            {"hooks": [other]},
-            {"matcher": "", "hooks": [{"type": "command", "command": "kitchen hook"}]},
-        ]
+        assert not any(c.startswith("$HOME/.claude/hooks/") and "knightwatch" not in c for c in commands)
+        assert not any("/roborev/claude-hooks/" in c for c in commands)
+        assert mine["command"] in commands and gate["command"] in commands
+        for name in ("capture-prompt.sh", "capture-answer.sh", "roborev-pre-commit-context.py",
+                     "roborev-pre-push-gate.py", "roborev-pre-checkout-gate.py"):
+            assert commands.count(str(HOOKS / name)) == 1, name
+        assert commands.count("kitchen hook") == 2  # Stop + UserPromptSubmit
+        push = [h for g in data["hooks"]["PreToolUse"] for h in g["hooks"] if h["command"].endswith("roborev-pre-push-gate.py")]
+        assert push == [{"type": "command", "command": str(HOOKS / "roborev-pre-push-gate.py"), "timeout": 660}]
         assert settings.stat().st_mode & 0o777 == 0o640
         backups = list(settings.parent.glob("settings.json.bak-kitchen-*"))
-        assert len(backups) == 1 and json.loads(backups[0].read_text()) == original
+        assert len(backups) == 1 and json.loads(backups[0].read_text()) == original  # run 2 changed nothing
         assert data["permissions"]["allow"] == [
             "Bash(ls:*)", "mcp__playwright__browser_snapshot", "mcp__playwright__browser_take_screenshot"]
-        assert "Claude settings added (UserPromptSubmit, mcp__playwright__browser_take_screenshot)" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "-capture-prompt.sh" in out and "-roborev-pre-push-gate.py" in out
 
 
 class TestCmdSetupStatusline:
@@ -3066,3 +3086,16 @@ class TestLinkInstalls:
         assert [l.split()[0] for l in second].count("ok") == 7
         assert sum(l.startswith("skipped") for l in second) == 2
         assert not list(claude.glob(".*kitchen-tmp"))
+
+
+def test_install_claude_hooks_drops_a_duplicate_in_otherwise_canonical_settings(tmp_path):
+    from claude_kitchen.cli import _install_claude_hooks, OWNED_HOOKS
+    settings = tmp_path / "settings.json"
+    _install_claude_hooks(settings)  # canonical install
+    data = json.loads(settings.read_text())
+    group = next(g for g in data["hooks"]["PreToolUse"] if g["hooks"][0]["command"].endswith("roborev-pre-commit-context.py"))
+    group["hooks"] = group["hooks"] * 2  # the only defect: one entry twice
+    settings.write_text(json.dumps(data))
+    assert _install_claude_hooks(settings) == ["-roborev-pre-commit-context.py"]
+    commands = [h["command"] for gs in json.loads(settings.read_text())["hooks"].values() for g in gs for h in g["hooks"]]
+    assert len(commands) == len(OWNED_HOOKS)

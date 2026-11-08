@@ -150,7 +150,7 @@ kitchen setup
 
 `kitchen setup` installs and verifies:
 
-1. Claude `Stop` and `UserPromptSubmit` hooks: it appends a `kitchen hook` entry to `~/.claude/settings.json` for each event that lacks one, after a `settings.json.bak-kitchen-<time>` backup, and leaves every other setting alone.
+1. Claude hooks, owned by kitchen: `kitchen hook` (`Stop`, `UserPromptSubmit`); the memory-capture nudges `capture-prompt.sh` (`UserPromptSubmit`) and `capture-answer.sh` (after `AskUserQuestion`); and the roborev gates for `git commit`, `git push` and branch switches (`PreToolUse[Bash]`), all from `src/claude_kitchen/hooks/`. Setup drops an older `~/.claude/hooks/<name>` copy of any of these, adds each missing entry once, keeps every other setting and hook, and writes a `settings.json.bak-kitchen-<time>` backup first. The roborev gates need the `roborev` CLI; without it they stay silent.
 2. Kitchen's skills (`src/claude_kitchen/skills/*`), linked into `~/.claude/skills` and `~/.agents/skills`, and its `tc`, linked into `~/.local/bin`. A missing link is created, a link to the `code-config` copy it moved from is retargeted, and anything else is left alone and reported.
 3. The Playwright MCP server behind the `playwright` skill (`setup-playwright-mcp.sh`): a pinned `@playwright/mcp`, headed on macOS and headless on Linux, with Playwright's Chromium downloaded when the host has none. It is a no-op once registered.
 4. The `mcp` Python SDK.
