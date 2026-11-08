@@ -102,52 +102,36 @@ rc=0; HOME="$SBX" TC_LOCK_DIR="$SBX/locks" perl -e 'alarm 10; exec @ARGV' "$TC" 
 assert_rc 1 "$rc" "claim: unreclaimable stale lock → fails loud (rc 1, no infinite spin)"
 rm -rf "$SBX"
 
-# 9. in-lock branch re-check: a slot that reads `main` for _tcp but turns to a
-# feature branch by the in-lock re-check (a concurrent claim branched it) must be
-# released and skipped, landing on the next slot. Fake git: code-config0 reads
-# `main` on its 1st symbolic-ref (the _tcp check) then `feat/race` after (the
-# re-check + subsequent _tcp), code-config2 stays `main`.
-SBX=$(mktemp -d); mkdir -p "$SBX/Hacking/code-config0/.git" "$SBX/Hacking/code-config2/.git" "$SBX/locks" "$SBX/bin"
-cat >"$SBX/bin/git" <<'FAKE'
+# 9–10. in-lock re-check: a slot that is main + clean for _tcp but changes by the
+# in-lock re-check must be released and skipped, landing on the next slot. Rows:
+# `symref` (a concurrent claim branched it) and `status` (a user or `tc new`
+# dirtied it). Fake git: code-config0 gives the normal answer on its first call of
+# the row's kind (the _tcp check) and the changed one after; code-config2 stays put.
+while read -r kind what; do
+  SBX=$(mktemp -d); mkdir -p "$SBX/Hacking/code-config0/.git" "$SBX/Hacking/code-config2/.git" "$SBX/locks" "$SBX/bin"
+  cat >"$SBX/bin/git" <<'FAKE'
 #!/usr/bin/env bash
 d=""; [ "$1" = "-C" ] && { d=$2; shift 2; }
 case "$1 $2" in
-  "symbolic-ref --short")
-    c="$d/.symref-n"; n=$(cat "$c" 2>/dev/null || echo 0); echo $((n+1)) >"$c"
-    if [ "$(basename "$d")" = code-config0 ] && [ "$n" != 0 ]; then echo feat/race; else echo main; fi ;;
-  "status --porcelain") : ;;   # clean
-  *) : ;;                      # checkout -b etc. succeed silently
+  "symbolic-ref --short") k=symref normal=main changed=feat/race ;;
+  "status --porcelain")   k=status normal=     changed=" M f" ;;
+  *) exit 0 ;;                 # checkout -b etc. succeed silently
 esac
+c="$d/.$k-n"; n=$(cat "$c" 2>/dev/null || echo 0); echo $((n+1)) >"$c"
+if [ "$CHANGE" = "$k" ] && [ "$(basename "$d")" = code-config0 ] && [ "$n" != 0 ]; then echo "$changed"
+elif [ -n "$normal" ]; then echo "$normal"; fi
 FAKE
-chmod +x "$SBX/bin/git"
-# perl alarm caps the run: an inverted re-check (release-and-continue on main too)
-# would spin _tcp forever, and the cap surfaces that as a failed assert, not a hang.
-dir=$(PATH="$SBX/bin:$PATH" HOME="$SBX" TC_LOCK_DIR="$SBX/locks" perl -e 'alarm 10; exec @ARGV' "$TC" claim cc feat/q 2>/dev/null)
-assert_eq "$SBX/Hacking/code-config2" "$dir" "claim: re-check sees a branched slot → releases + lands the next slot"
-assert_eq "" "$(ls "$SBX/locks")" "claim: branch-changed re-check releases the lock"
-rm -rf "$SBX"
-
-# 10. in-lock CLEAN re-check: a slot clean for _tcp but dirtied by the in-lock
-# re-check (a user/`tc new` touched it in the window) must be released and skipped,
-# not branched over. Fake git: code-config0's status is clean on call 1 (the _tcp
-# check) then dirty after (the re-check + later _tcp); code-config2 stays clean.
-SBX=$(mktemp -d); mkdir -p "$SBX/Hacking/code-config0/.git" "$SBX/Hacking/code-config2/.git" "$SBX/locks" "$SBX/bin"
-cat >"$SBX/bin/git" <<'FAKE'
-#!/usr/bin/env bash
-d=""; [ "$1" = "-C" ] && { d=$2; shift 2; }
-case "$1 $2" in
-  "symbolic-ref --short") echo main ;;
-  "status --porcelain")
-    c="$d/.status-n"; n=$(cat "$c" 2>/dev/null || echo 0); echo $((n+1)) >"$c"
-    [ "$(basename "$d")" = code-config0 ] && [ "$n" != 0 ] && echo " M f" ;;   # dirty after call 1
-  *) : ;;
-esac
-FAKE
-chmod +x "$SBX/bin/git"
-dir=$(PATH="$SBX/bin:$PATH" HOME="$SBX" TC_LOCK_DIR="$SBX/locks" perl -e 'alarm 10; exec @ARGV' "$TC" claim cc feat/q 2>/dev/null)
-assert_eq "$SBX/Hacking/code-config2" "$dir" "claim: re-check sees a dirtied slot → releases + lands the next slot"
-assert_eq "" "$(ls "$SBX/locks")" "claim: dirtied-slot re-check releases the lock"
-rm -rf "$SBX"
+  chmod +x "$SBX/bin/git"
+  # perl alarm caps the run: an inverted re-check (release-and-continue on main too)
+  # would spin _tcp forever, and the cap surfaces that as a failed assert, not a hang.
+  dir=$(CHANGE=$kind PATH="$SBX/bin:$PATH" HOME="$SBX" TC_LOCK_DIR="$SBX/locks" perl -e 'alarm 10; exec @ARGV' "$TC" claim cc feat/q 2>/dev/null)
+  assert_eq "$SBX/Hacking/code-config2" "$dir" "claim: re-check sees a $what slot → releases + lands the next slot"
+  assert_eq "" "$(ls "$SBX/locks")" "claim: $what-slot re-check releases the lock"
+  rm -rf "$SBX"
+done <<'ROWS'
+symref branched
+status dirtied
+ROWS
 
 # 11. in-lock BUSY re-check: a slot idle for _tcp but busy-in-tmux by the in-lock
 # re-check (a `tc new`/human opened a non-shell pane in the window) must be released
