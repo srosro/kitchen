@@ -2089,6 +2089,7 @@ class TestCmdSetupHooks:
         monkeypatch.setenv("HOME", str(tmp_path))
         settings = tmp_path / ".claude" / "settings.json"
         settings.parent.mkdir()
+        from claude_kitchen.cli import HOOKS as HOOKS_DIR
         old = lambda name: {"type": "command", "command": f"$HOME/.claude/hooks/{name}"}
         mine = {"type": "command", "command": "$HOME/bin/my-prompt-hook"}
         gate = {"type": "command", "command": "$HOME/.claude/hooks/knightwatch-inflight-push-gate.py"}  # not kitchen's
@@ -2099,7 +2100,9 @@ class TestCmdSetupHooks:
                 "Stop": [{"hooks": [{"type": "command", "command": "kitchen hook"}]}],
                 "UserPromptSubmit": [{"hooks": [old("capture-prompt.sh"), mine]}],
                 "PreToolUse": [{"matcher": "Bash", "hooks": [old("roborev-pre-push-gate.py")]},
-                               {"matcher": "Bash", "hooks": [gate]}],
+                               {"matcher": "Bash", "hooks": [gate]},
+                               # kitchen's own path with the timeout missing: replaced by the canonical entry
+                               {"matcher": "Bash", "hooks": [{"type": "command", "command": str(HOOKS_DIR / "roborev-pre-push-gate.py")}]}],
             },
         }
         settings.write_text(json.dumps(original))

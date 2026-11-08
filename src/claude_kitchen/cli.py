@@ -1252,18 +1252,34 @@ def _install_claude_hooks(settings: Path) -> list[str]:
     data = json.loads(raw) if raw else {}
     hooks = data.setdefault("hooks", {})
     moved = {Path(cmd).name for _, _, cmd, _ in OWNED_HOOKS if "/" in cmd}
-    added = []
+    canonical = {(ev, m, cmd, t) for ev, m, cmd, t in OWNED_HOOKS}
+    owned = {cmd for _, _, cmd, _ in OWNED_HOOKS}
+    added, seen = [], set()
+
+    def keeps(ev, group, h):
+        """Drop an old ~/.claude/hooks copy, and any copy of an owned hook that isn't
+        the canonical entry (wrong matcher or timeout) or repeats one already kept."""
+        cmd = h.get("command") or ""
+        if any(cmd.endswith("/.claude/hooks/" + m) for m in moved):
+            return False
+        if cmd not in owned:
+            return True
+        key = (ev, group.get("matcher"), cmd, h.get("timeout"))
+        if key not in canonical or key in seen:
+            return False
+        seen.add(key)
+        return True
+
     for ev in list(hooks):
         for group in hooks[ev]:
-            keep = [h for h in group.get("hooks", [])
-                    if not any((h.get("command") or "").endswith("/.claude/hooks/" + m) for m in moved)]
+            keep = [h for h in group.get("hooks", []) if keeps(ev, group, h)]
             added += [f"-{Path(h['command']).name}" for h in group.get("hooks", []) if h not in keep]
             group["hooks"] = keep
         hooks[ev] = [g for g in hooks[ev] if g.get("hooks")]
         if not hooks[ev]:
             del hooks[ev]
     for ev, matcher, cmd, timeout in OWNED_HOOKS:
-        if any(h.get("command") == cmd for g in hooks.get(ev, []) for h in g.get("hooks", [])):
+        if (ev, matcher, cmd, timeout) in seen:
             continue
         entry = {"type": "command", "command": cmd, **({"timeout": timeout} if timeout else {})}
         hooks.setdefault(ev, []).append({**({"matcher": matcher} if matcher is not None else {}), "hooks": [entry]})
