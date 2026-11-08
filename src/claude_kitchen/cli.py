@@ -1243,8 +1243,8 @@ OWNED_HOOKS = (
 
 
 def _install_claude_hooks(settings: Path) -> list[str]:
-    """Make kitchen the one owner of its Claude hooks: drop an entry that runs the
-    old `~/.claude/hooks/<name>` copy of a hook kitchen ships, add each owned entry
+    """Make kitchen the one owner of its Claude hooks: drop an entry that runs an
+    older copy of a hook kitchen ships, add each owned entry
     that is missing, and allow the playwright skill's two screen-only tools. Every
     other key and hook is left untouched. Backs the file up and keeps its mode
     before writing. Returns what it changed."""
@@ -1257,10 +1257,11 @@ def _install_claude_hooks(settings: Path) -> list[str]:
     added, seen = [], set()
 
     def keeps(ev, group, h):
-        """Drop an old ~/.claude/hooks copy, and any copy of an owned hook that isn't
+        """Drop an older copy (code-config's ~/.claude/hooks, or the legacy roborev
+        installer's .../roborev/claude-hooks), and any copy of an owned hook that isn't
         the canonical entry (wrong matcher or timeout) or repeats one already kept."""
         cmd = h.get("command") or ""
-        if any(cmd.endswith("/.claude/hooks/" + m) for m in moved):
+        if any(cmd.endswith(d + m) for m in moved for d in ("/.claude/hooks/", "/roborev/claude-hooks/")):
             return False
         if cmd not in owned:
             return True

@@ -2100,6 +2100,8 @@ class TestCmdSetupHooks:
                 "Stop": [{"hooks": [{"type": "command", "command": "kitchen hook"}]}],
                 "UserPromptSubmit": [{"hooks": [old("capture-prompt.sh"), mine]}],
                 "PreToolUse": [{"matcher": "Bash", "hooks": [old("roborev-pre-push-gate.py")]},
+                               # the legacy roborev installer's copy (XDG-relocatable dir)
+                               {"matcher": "Bash", "hooks": [{"type": "command", "command": "/home/u/xdg/roborev/claude-hooks/roborev-pre-checkout-gate.py"}]},
                                {"matcher": "Bash", "hooks": [gate]},
                                # kitchen's own path with the timeout missing: replaced by the canonical entry
                                {"matcher": "Bash", "hooks": [{"type": "command", "command": str(HOOKS_DIR / "roborev-pre-push-gate.py")}]}],
@@ -2117,6 +2119,7 @@ class TestCmdSetupHooks:
         commands = [h["command"] for groups in data["hooks"].values() for g in groups for h in g["hooks"]]
         assert data["model"] == "opus"
         assert not any(c.startswith("$HOME/.claude/hooks/") and "knightwatch" not in c for c in commands)
+        assert not any("/roborev/claude-hooks/" in c for c in commands)
         assert mine["command"] in commands and gate["command"] in commands
         for name in ("capture-prompt.sh", "capture-answer.sh", "roborev-pre-commit-context.py",
                      "roborev-pre-push-gate.py", "roborev-pre-checkout-gate.py"):
