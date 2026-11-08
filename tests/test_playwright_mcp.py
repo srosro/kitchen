@@ -45,3 +45,29 @@ echo "$MCP_VERSION"
 """, HOME=str(tmp_path), ARGV_LOG=str(log))
     version = bash("echo $MCP_VERSION")
     assert f"mcp add -s user playwright -- npx @playwright/mcp@{version} --isolated --headless --executable-path {chrome}" in log.read_text()
+
+
+def test_rerun_when_registered_needs_no_network(tmp_path):
+    """Already registered at the pin with a bundled Chromium that still exists: a
+    re-run reuses that path and calls neither npm nor npx (an offline re-run passes)."""
+    version = bash("echo $MCP_VERSION")
+    (tmp_path / "bin").mkdir()
+    chrome = tmp_path / "pw" / "chrome"
+    chrome.parent.mkdir()
+    chrome.write_text("#!/usr/bin/env bash\nexit 0\n")
+    chrome.chmod(0o755)
+    registered = f"playwright: npx @playwright/mcp@{version} --isolated --headless --executable-path {chrome} - ✓ Connected"
+    claude = tmp_path / "bin" / "claude"
+    claude.write_text(f'#!/usr/bin/env bash\necho "$*" >> "$ARGV_LOG"\n[[ "$1 $2" == "mcp list" ]] && echo "{registered}"\nexit 0\n')
+    claude.chmod(0o755)
+    log = tmp_path / "argv.log"
+    out = bash(f"""
+find_claude() {{ echo {claude}; }}
+uname() {{ echo Linux; }}
+command() {{ if [[ "$1" == -v ]]; then case "$2" in chromium|chromium-browser) return 1;; esac; fi; builtin command "$@"; }}
+npm() {{ echo "npm called: $*" >&2; return 1; }}
+npx() {{ echo "npx called: $*" >&2; return 1; }}
+main
+""", HOME=str(tmp_path), ARGV_LOG=str(log))
+    assert "already registered" in out
+    assert "mcp add" not in log.read_text()

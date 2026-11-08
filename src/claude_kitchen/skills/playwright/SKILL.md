@@ -5,7 +5,7 @@ description: Use when front-end behavior needs to be inspected in a real browser
 
 # Playwright (browser debugging)
 
-Drive a real browser to debug front-ends. The capability comes from the **Playwright MCP server** (`@playwright/mcp`), registered globally as `playwright` — tools appear as `mcp__playwright__browser_*`. If those tools aren't present, the server isn't registered on this machine: see `INSTALL.md` → "Playwright MCP server".
+Drive a real browser to debug front-ends. The capability comes from the **Playwright MCP server** (`@playwright/mcp`), registered globally as `playwright` — tools appear as `mcp__playwright__browser_*`. If those tools aren't present, the server isn't registered on this machine: run `kitchen setup` (kitchen's README, `kitchen setup` section).
 
 This skill is for *driving* a browser, not *launching* the app. Start the app first — the **`run`** skill if it's available, otherwise the project's documented dev command — to get a URL, then come here to interact with it.
 
@@ -69,5 +69,5 @@ Pixels are the *last* signal, not the first. A screenshot tells you it looks wro
 - **Diagnose from console + network, not guesses about pixels.** If you're about to explain a bug from a screenshot alone, pull the console first.
 - **Snapshot before you act.** `browser_click`/`browser_type` target a `ref` that only exists in a fresh snapshot; the page may have changed since the last one.
 - **Close the browser when finished.** Leaving it open wastes a process and the next session starts dirty-looking.
-- **Headed on macOS, headless on Linux.** `kitchen setup` registers macOS headed (so you can watch) and Linux `--headless` (no display on the servers/Pi) — see `INSTALL.md` Step 5. So on Linux, lean on the accessibility snapshot rather than expecting a visible window.
+- **Headed on macOS, headless on Linux.** `kitchen setup` registers macOS headed (so you can watch) and Linux `--headless` (no display on the servers/Pi) — see kitchen's README, `kitchen setup` section. So on Linux, lean on the accessibility snapshot rather than expecting a visible window.
 - **Don't paste secrets** read off the page (tokens in network responses, etc.) — use `…***` below 8 characters and last-3 otherwise for anything the browser surfaces too.

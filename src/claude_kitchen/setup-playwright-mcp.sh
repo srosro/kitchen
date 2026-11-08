@@ -86,6 +86,12 @@ main() {
     if [[ -n "$chromium" ]]; then
       test_bin="$chromium"
     else
+      # Already registered at this pin with a bundled build that still exists:
+      # reuse it, so a re-run needs no network. Otherwise resolve it below.
+      test_bin="$("$claude" mcp list 2>/dev/null | sed -n "s|^playwright: npx @playwright/mcp@$MCP_VERSION .*--executable-path \([^ ]*\).*|\1|p" | head -1)"
+      [[ -x "$test_bin" ]] || test_bin=""
+    fi
+    if [[ "$os" == "Linux" && -z "$test_bin" ]]; then
       # Bundled: let Playwright own the cache. `install` is idempotent — it
       # no-ops when the build matching the pinned MCP version is already present,
       # and pulls the right one when only an older build is cached. Resolve the
@@ -114,7 +120,7 @@ main() {
       else
         echo "setup-playwright-mcp: WARNING — $test_bin failed to launch headless:" >&2
         tail -2 /tmp/kitchen-cr-launch.err >&2 2>/dev/null || true
-        [[ -z "$chromium" ]] && echo "    fix (run once on this host): sudo npx playwright@$pw_ver install-deps chromium" >&2
+        [[ -z "$chromium" ]] && echo "    fix (run once on this host): sudo npx playwright@${pw_ver:-<version>} install-deps chromium" >&2
       fi
     fi
   fi
