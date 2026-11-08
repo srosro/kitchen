@@ -20,12 +20,12 @@ from claude_kitchen.tmux import (
 from claude_kitchen.state import (
     state_dir, write_status, read_status, update_status, chat_record, read_waits, write_waits,
     project_slug, namespaced, wiki_dir, notes_dir, mcp_servers,
-    atomic_write_json, state_root, swarm_binary, swarm_credential, swarm_join_prompt, swarm_rooms,
+    atomic_write_json, state_root, swarm_binary, swarm_credential, swarm_join_prompt, swarm_rooms, sous_first_turn,
     MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME,
 )
 from claude_kitchen.models import max_context_for
 from claude_kitchen.spawn import (spawn_window, spawn_sous, spawn_sous_window,
-                                  check_sous_pid, CLAUDE_MODELS, CODEX_MODELS,
+                                  check_sous_pid, FIRST_TURN_ENV, CLAUDE_MODELS, CODEX_MODELS,
                                   SUPERPOWERS_MARKETPLACES)
 
 _PKG_DIR = Path(__file__).parent
@@ -1500,10 +1500,13 @@ def cmd_restart(args):
         os.kill(pid, 0)
     except ProcessLookupError:
         sys.exit(f"The sous of \"{kitchen}\" isn't running; bring it back with `kitchen open --resume`.")
+    # The new sous's swarm joins are built now, while the old sous still runs,
+    # so a swarm that fails fails this restart rather than leaving no sous.
+    first_turn = f"{FIRST_TURN_ENV}={json.dumps(sous_first_turn(kitchen))}"
     # Wait out the old sous so open's live-sous check passes; a shell takes the
     # pane back when the new sous exits, as it had before.
     relaunch = (f"while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; "
-                f"{shlex.join(launch['argv'] + ['--resume'])}; exec \"$SHELL\" -l")
+                f"{shlex.join(['env', first_turn, *launch['argv'], '--resume'])}; exec \"$SHELL\" -l")
     t = shlex.join(["tmux", "-S", launch["socket"]])
     pane = shlex.quote(launch["pane"])
     # Then confirm the dev-channels dialog the new sous opens on, as

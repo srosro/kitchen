@@ -1,7 +1,10 @@
 """Tests for state read/write."""
+import argparse
 import http.server
 import json
+import os
 import re
+import subprocess
 import threading
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -370,6 +373,40 @@ def test_a_kitchen_on_several_servers_runs_one_unbound_swarm_and_joins_every_acc
     [turn] = sous_first_turn("boss")
     assert f"as account {ACCOUNT} once for each of: #dm-so-cedar:p" in turn
     assert "as account @other:x once for each of: #general:x." in turn
+
+
+def test_restart_keeps_a_sous_running_when_swarm_cant_read_its_account(tmp_path, monkeypatch, capsys):
+    # A revoked token leaves swarm listing the account with rooms null.
+    from claude_kitchen import cli, spawn
+    monkeypatch.setenv("HOME", str(tmp_path))
+    swarm = fake_swarm(tmp_path)
+    monkeypatch.setenv("PATH", f"{swarm.parent}:/usr/bin:/bin")
+    link_account(tmp_path)
+    swarm.write_text("#!/bin/sh\necho '%s'\n" % json.dumps(
+        {"accounts": [{"account": ACCOUNT, "rooms": None, "error": {"code": "denied"}}]}))
+    base = state_dir("boss")
+    (base / "kitchen.json").write_text(json.dumps({"sous_session_id": "s", "sous_launch": {
+        "argv": ["kitchen", "open"], "cwd": str(tmp_path), "socket": "/sock", "pane": "%1"}}))
+    (base / "sous.pid").write_text(str(os.getpid()))
+    monkeypatch.setattr(cli, "resolve_kitchen", lambda k: k)
+    scheduled, popen = [], subprocess.Popen
+    monkeypatch.setattr(subprocess, "Popen", lambda argv, **kw: scheduled.append(argv[2]) if argv[0] == "sh" else popen(argv, **kw))
+    args = argparse.Namespace(kitchen="boss")
+
+    cli.cmd_restart(args)
+    [script] = scheduled
+    assert f"{spawn.FIRST_TURN_ENV}=[]" in script and ACCOUNT in capsys.readouterr().err
+    # The relaunched sous takes the turn restart built and never asks swarm again.
+    monkeypatch.setenv(spawn.FIRST_TURN_ENV, '["join #general"]')
+    swarm.write_text("#!/bin/sh\nexit 1\n")
+    monkeypatch.setattr(os, "execvp", lambda _, argv: (_ for _ in ()).throw(SystemExit(argv)))
+    with pytest.raises(SystemExit) as launched:
+        spawn.spawn_sous("boss", base, "role")
+    assert launched.value.code[-1] == "join #general"
+    # A swarm that fails outright fails the restart before the old sous is stopped.
+    with pytest.raises(subprocess.CalledProcessError):
+        cli.cmd_restart(args)
+    assert len(scheduled) == 1
 
 
 def test_a_pre_accounts_or_dangling_swarm_credential_refuses_to_open(tmp_path, monkeypatch):
