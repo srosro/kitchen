@@ -1296,6 +1296,10 @@ def cmd_setup(args):
     for line in _link_skills(_PKG_DIR / "skills", Path.home()):
         print(f"{'⚠️ ' if line.startswith('skipped') else '✅'} skill {line}")
 
+    # --- Playwright MCP server (the playwright skill's browser); idempotent ---
+    if subprocess.run(["bash", str(_PKG_DIR / "setup-playwright-mcp.sh")]).returncode != 0:
+        all_good = False
+
     # --- mcp SDK ---
     try:
         import mcp  # noqa: F401
