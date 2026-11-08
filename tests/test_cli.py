@@ -696,9 +696,9 @@ class TestStatusPreservationAcrossNonStopWriters:
     def test_wait_records_and_clears_by_message_id(self, mock_rk, mock_state, monkeypatch, tmp_path):
         from claude_kitchen.state import read_waits
         mock_state.return_value = tmp_path
-        monkeypatch.setattr(sys, "argv", ["kitchen", "wait", "swarm", "!r:s", "$ev", "the OK", "--on", "sam"])
+        monkeypatch.setattr(sys, "argv", ["kitchen", "wait", "swarm", "!r:s", "$ev", "the OK", "--on", "jordan"])
         main()
-        assert [(w["message"], w["on"], w["note"]) for w in read_waits(tmp_path)] == [("swarm !r:s $ev", "sam", "the OK")]
+        assert [(w["message"], w["on"], w["note"]) for w in read_waits(tmp_path)] == [("swarm !r:s $ev", "jordan", "the OK")]
         monkeypatch.setattr(sys, "argv", ["kitchen", "wait", "done", "$ev"])
         main()
         assert read_waits(tmp_path) == []
@@ -858,7 +858,7 @@ class TestStatusPreservationAcrossNonStopWriters:
         account, then is asked to join that account's rooms; Codex is refused."""
         mock_state.return_value = tmp_path
         monkeypatch.setenv("HOME", str(tmp_path))
-        credential = tmp_path / ".swarm/accounts/chief.swarm.plow.co/cypress/credential.json"
+        credential = tmp_path / ".swarm/accounts/chief.swarm.example.com/cypress/credential.json"
         credential.parent.mkdir(parents=True)
         credential.write_text(json.dumps({"user_id": "@cypress:c", "homeserver": "https://c", "access_token": "t"}))
         (tmp_path / "cooks").mkdir()

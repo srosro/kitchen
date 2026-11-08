@@ -11,7 +11,7 @@ from claude_kitchen.plow_chat import CREDENTIALS, Bridge, call, content_type_of
 from claude_kitchen.state import read_env
 from tests.fake_plow import SIGNATURE, TOKEN, FakePlow
 
-SAM, PLUCAS, STRANGER = "+15550000001", "+15550000002", "+15550000099"
+OWNER, TEAMMATE, STRANGER = "+15550000001", "+15550000002", "+15550000099"
 SPRUCE = {"type": "agent", "relationship": "peer", "line": {"display_name": "Spruce", "uid": "ln_peer"}}
 PLOW = {"type": "system", "name": "Plow"}
 NAMELESS = {"type": "agent", "relationship": "peer", "line": {"display_name": None, "uid": "ln_bare", "provider_key": "+15550000077"}}
@@ -56,23 +56,23 @@ def run_bridge(scenario, fake=None, cursor=None):
     asyncio.run(main())
 
 
-@pytest.mark.parametrize("handle, name", [(PLUCAS, "Patrick"), (STRANGER, STRANGER), (SPRUCE, "Spruce"),
+@pytest.mark.parametrize("handle, name", [(TEAMMATE, "Alex"), (STRANGER, STRANGER), (SPRUCE, "Spruce"),
                                           (NAMELESS, "+15550000077")],
                          ids=["named", "unnamed", "peer-agent", "unnamed-peer-agent"])
 def test_any_participant_is_delivered_by_name_without_the_chats_history(handle, name):
     async def scenario(fake, bridge, delivered):
-        await fake.inbound(HOME, handle, "can you look at the mba?")
+        await fake.inbound(HOME, handle, "can you look at the laptop?")
         await eventually(lambda: delivered)
         await fake.drop_sockets()  # the catch-up after reconnecting must not replay it either
         await eventually(lambda: fake.sockets)
-        await fake.inbound(HOME, SAM, "marker")
+        await fake.inbound(HOME, OWNER, "marker")
         await eventually(lambda: len(delivered) >= 2)
         await asyncio.sleep(0.2)
-        assert delivered == [("can you look at the mba?", {"from": name, "chat": HOME}),
-                             ("marker", {"from": "Sam", "chat": HOME})]
+        assert delivered == [("can you look at the laptop?", {"from": name, "chat": HOME}),
+                             ("marker", {"from": "Jordan", "chat": HOME})]
 
     fake = FakePlow()
-    fake.add(HOME, SAM, "said before the sous was listening")
+    fake.add(HOME, OWNER, "said before the sous was listening")
     run_bridge(scenario, fake)
 
 
@@ -80,7 +80,7 @@ def test_a_reconnect_inside_a_new_chats_first_burst_never_replays_its_history(mo
     monkeypatch.setattr(plow_chat, "BURST_SECONDS", 0.5)
 
     async def scenario(fake, bridge, delivered):
-        await fake.inbound(HOME, SAM, "fresh")
+        await fake.inbound(HOME, OWNER, "fresh")
         await asyncio.sleep(0.05)  # heard, but its burst is still open
         await fake.drop_sockets()
         await eventually(lambda: delivered)
@@ -88,7 +88,7 @@ def test_a_reconnect_inside_a_new_chats_first_burst_never_replays_its_history(mo
         assert [c for c, _ in delivered] == ["fresh"]
 
     fake = FakePlow()
-    fake.add(HOME, SAM, "said before the sous was listening")
+    fake.add(HOME, OWNER, "said before the sous was listening")
     run_bridge(scenario, fake)
 
 
@@ -99,7 +99,7 @@ def test_reply_echo_system_notes_and_blank_texts_never_reach_the_sous():
         await fake.inbound(HOME, PLOW, "Spruce joined the chat")
         await fake.inbound(HOME, SPRUCE, "")  # a tapback
         await asyncio.sleep(0.2)
-        await fake.inbound(HOME, SAM, "marker")
+        await fake.inbound(HOME, OWNER, "marker")
         await eventually(lambda: delivered)
         assert [c for c, _ in delivered] == ["marker"]
     run_bridge(scenario)
@@ -108,14 +108,14 @@ def test_reply_echo_system_notes_and_blank_texts_never_reach_the_sous():
 @pytest.mark.parametrize("flaky", [False, True], ids=["normal", "503-then-retry"])
 def test_reconnect_catches_up_without_duplicates(flaky):
     async def scenario(fake, bridge, delivered):
-        await fake.inbound(HOME, SAM, "before")
+        await fake.inbound(HOME, OWNER, "before")
         await eventually(lambda: delivered)
         await fake.drop_sockets()
-        fake.add(HOME, SAM, "during the gap")
+        fake.add(HOME, OWNER, "during the gap")
         if flaky:
             fake.flaky.add(HOME)  # the first catch-up read answers 503
         await eventually(lambda: len(delivered) == 2)
-        await fake.inbound(HOME, SAM, "after")
+        await fake.inbound(HOME, OWNER, "after")
         await eventually(lambda: len(delivered) == 3)
         await asyncio.sleep(0.2)
         assert [c for c, _ in delivered] == ["before", "during the gap", "after"]
@@ -126,7 +126,7 @@ def test_restart_delivers_texts_sent_while_down_exactly_once(tmp_path):
     fake, cursor = FakePlow(), tmp_path / "last_seen.json"
 
     async def before_restart(fake, bridge, delivered):
-        await fake.inbound(HOME, SAM, "before restart")
+        await fake.inbound(HOME, OWNER, "before restart")
         await eventually(lambda: delivered)
 
     async def after_restart(fake, bridge, delivered):
@@ -135,7 +135,7 @@ def test_restart_delivers_texts_sent_while_down_exactly_once(tmp_path):
         assert [c for c, _ in delivered] == ["while down"]
 
     run_bridge(before_restart, fake, cursor)
-    fake.add(HOME, SAM, "while down")
+    fake.add(HOME, OWNER, "while down")
     run_bridge(after_restart, fake, cursor)
     assert cursor.stat().st_mode & 0o777 == 0o600
 
@@ -144,12 +144,12 @@ def test_a_late_text_never_replays_an_earlier_one_after_restart(tmp_path):
     fake, cursor = FakePlow(), tmp_path / "last_seen.json"
 
     async def before_restart(fake, bridge, delivered):
-        await fake.inbound(HOME, SAM, "sent second, landed first")
-        await fake.inbound(HOME, PLUCAS, "sent first, landed second", late=True)
+        await fake.inbound(HOME, OWNER, "sent second, landed first")
+        await fake.inbound(HOME, TEAMMATE, "sent first, landed second", late=True)
         await eventually(lambda: len(delivered) == 2)
 
     async def after_restart(fake, bridge, delivered):
-        await fake.inbound(HOME, SAM, "marker")
+        await fake.inbound(HOME, OWNER, "marker")
         await eventually(lambda: delivered)
         await asyncio.sleep(0.2)
         assert [c for c, _ in delivered] == ["marker"]
@@ -161,10 +161,10 @@ def test_a_late_text_never_replays_an_earlier_one_after_restart(tmp_path):
 @pytest.mark.parametrize("live", [True, False], ids=["socket", "catch-up"])
 def test_one_speakers_back_to_back_texts_reach_the_sous_as_one(live, tmp_path):
     fake, cursor = FakePlow(), tmp_path / "last_seen.json"
-    texts = [(SAM, "add this to the page"), (SAM, "https://example.com/paper"), (PLUCAS, "me too")]
+    texts = [(OWNER, "add this to the page"), (OWNER, "https://example.com/paper"), (TEAMMATE, "me too")]
 
     async def first_contact(fake, bridge, delivered):  # catch-up reads only chats the bridge has heard from
-        await fake.inbound(HOME, SAM, "hi")
+        await fake.inbound(HOME, OWNER, "hi")
         await eventually(lambda: delivered)
 
     async def burst(fake, bridge, delivered):
@@ -174,7 +174,7 @@ def test_one_speakers_back_to_back_texts_reach_the_sous_as_one(live, tmp_path):
         await eventually(lambda: len(delivered) >= 2)
         await asyncio.sleep(0.3)
         assert [(c, m["from"]) for c, m in delivered] == [
-            ("add this to the page\n\nhttps://example.com/paper", "Sam"), ("me too", "Patrick")]
+            ("add this to the page\n\nhttps://example.com/paper", "Jordan"), ("me too", "Alex")]
 
     run_bridge(first_contact, fake, cursor)
     if not live:
@@ -195,11 +195,11 @@ PHOTO = b"\xff\xd8\xff fake jpeg"
 def test_a_members_attachments_reach_the_sous_as_local_files(texts, files, content, saved):
     async def scenario(fake, bridge, delivered):
         for i, text in enumerate(texts):
-            await fake.inbound(HOME, SAM, text, files=files[i:i + 1] if len(texts) > 1 else files)
+            await fake.inbound(HOME, OWNER, text, files=files[i:i + 1] if len(texts) > 1 else files)
         await eventually(lambda: delivered)
         await asyncio.sleep(0.2)
         [(got, meta)] = delivered
-        assert (got, meta["from"]) == (content, "Sam")
+        assert (got, meta["from"]) == (content, "Jordan")
         paths = [Path(p) for p in meta["file"].split()] if saved else []
         assert "file" in meta if saved else "file" not in meta
         assert [p.read_bytes() for p in paths] == saved
