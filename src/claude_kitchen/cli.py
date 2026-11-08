@@ -29,6 +29,7 @@ from claude_kitchen.spawn import (spawn_window, spawn_sous, spawn_sous_window,
                                   SUPERPOWERS_MARKETPLACES)
 
 _PKG_DIR = Path(__file__).parent
+TC = _PKG_DIR / "tc" / "tc"  # the slot tool kitchen ships; `kitchen setup` links it onto PATH
 
 # Appended to the role prompt on send_keys delivery (Codex only — Claude
 # gets the role via --append-system-prompt-file, which never surfaces as a
@@ -669,9 +670,7 @@ def cmd_hire(args):
     # and branches as <kitchen>/<cook>, so kitchen and tc hand out slots under one
     # lock; the cook record's cwd keeps it taken until clock-out.
     if args.slot:
-        if shutil.which("tc") is None:
-            sys.exit("tc not on PATH — --slot needs code-config's tc.")
-        claim = subprocess.run(["tc", "claim", args.slot, f"{kitchen}/{name}"],
+        claim = subprocess.run([str(TC), "claim", args.slot, f"{kitchen}/{name}"],
                                stdout=subprocess.PIPE, text=True)
         if claim.returncode:
             sys.exit(f"tc claim {args.slot} failed for {name}; see its error above.")
@@ -1259,34 +1258,37 @@ def _install_claude_hooks(settings: Path) -> list[str]:
     return added
 
 
-def _link_skills(src_root: Path, home: Path) -> list[str]:
-    """Link each skill dir under src_root into ~/.claude/skills (Claude) and
-    ~/.agents/skills (Codex). A link is created when absent and retargeted when it
-    points at code-config's copy of the same skill, which the skill moved from;
-    anything else there is left alone and reported. Returns one line per link."""
-    report = []
-    for src in sorted(p for p in src_root.iterdir() if p.is_dir()):
+def _place_link(src: Path, dest: Path, moved_from: tuple[str, ...]) -> str:
+    """Point dest at src: create it when absent, retarget it when it points at the
+    copy src moved from (a path ending in one of moved_from), otherwise leave it
+    alone. Returns one report line."""
+    if dest.is_symlink():
+        target = Path(os.readlink(dest))
+        if target == src:
+            return f"ok {dest}"
+        if not any(target.as_posix().endswith("/" + m) for m in moved_from):
+            return f"skipped {dest}: links to {target}"
+        tmp = dest.with_name(f".{dest.name}.kitchen-tmp")
+        tmp.unlink(missing_ok=True)  # left by an interrupted run
+        tmp.symlink_to(src)
+        os.replace(tmp, dest)  # atomic: a reader never sees the link missing
+        return f"retargeted {dest} (was {target})"
+    if dest.exists():
+        return f"skipped {dest}: not a symlink"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.symlink_to(src)
+    return f"linked {dest}"
+
+
+def _link_installs(pkg: Path, home: Path) -> list[str]:
+    """Link kitchen's skills into ~/.claude/skills (Claude) and ~/.agents/skills
+    (Codex), and its `tc` into ~/.local/bin. A link left by code-config, which
+    these moved from, is retargeted. Returns one line per link."""
+    report = [_place_link(pkg / "tc" / "tc", home / ".local" / "bin" / "tc", ("code-config/tc",))]
+    for src in sorted(p for p in (pkg / "skills").iterdir() if p.is_dir()):
+        moved = (f"code-config/claude/skills/{src.name}", f"code-config/codex/skills/{src.name}")
         for root in (home / ".claude" / "skills", home / ".agents" / "skills"):
-            dest = root / src.name
-            if dest.is_symlink():
-                target = Path(os.readlink(dest))
-                if target == src:
-                    report.append(f"ok {dest}")
-                    continue
-                if target.parts[-4:] not in {("code-config", side, "skills", src.name) for side in ("claude", "codex")}:
-                    report.append(f"skipped {dest}: links to {target}")
-                    continue
-                tmp = dest.with_name(f".{src.name}.kitchen-tmp")
-                tmp.unlink(missing_ok=True)  # left by an interrupted run
-                tmp.symlink_to(src)
-                os.replace(tmp, dest)  # atomic: a reader never sees the link missing
-                report.append(f"retargeted {dest} (was {target})")
-            elif dest.exists():
-                report.append(f"skipped {dest}: not a symlink")
-            else:
-                root.mkdir(parents=True, exist_ok=True)
-                dest.symlink_to(src)
-                report.append(f"linked {dest}")
+            report.append(_place_link(src, root / src.name, moved))
     return report
 
 
@@ -1301,8 +1303,8 @@ def cmd_setup(args):
     print(f"✅ Claude settings {'added (' + ', '.join(added) + ') to ' + str(claude_settings) if added else 'installed'}")
 
     # --- Skills ---
-    for line in _link_skills(_PKG_DIR / "skills", Path.home()):
-        print(f"{'⚠️ ' if line.startswith('skipped') else '✅'} skill {line}")
+    for line in _link_installs(_PKG_DIR, Path.home()):
+        print(f"{'⚠️ ' if line.startswith('skipped') else '✅'} link {line}")
 
     # --- Playwright MCP server (the playwright skill's browser); idempotent ---
     if subprocess.run(["bash", str(_PKG_DIR / "setup-playwright-mcp.sh")]).returncode != 0:
