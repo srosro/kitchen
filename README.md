@@ -92,6 +92,8 @@ You continue talking to the sous while both cook sessions remain visible in tmux
 - **superpowers plugin** — the supplied sous workflow invokes its brainstorming and development skills.
   - Install from Claude Code: `/plugin install superpowers@claude-plugins-official` (the `superpowers-marketplace` install also works)
 - **`mcp` Python SDK** — installed automatically as a transitive dependency of this project; no separate install step is needed.
+- **Node.js with `npm`/`npx`** — `kitchen setup` registers the Playwright MCP server (for the `playwright` skill) through `npx`, and on Linux without a system Chromium it resolves Playwright's browser through `npm`.
+  - Verify: `npx --version`
 
 ### Optional backends and tools
 
@@ -150,10 +152,11 @@ kitchen setup
 
 1. Claude `Stop` and `UserPromptSubmit` hooks: it appends a `kitchen hook` entry to `~/.claude/settings.json` for each event that lacks one, after a `settings.json.bak-kitchen-<time>` backup, and leaves every other setting alone.
 2. Kitchen's skills (`src/claude_kitchen/skills/*`): each is linked into `~/.claude/skills` and `~/.agents/skills`. A missing link is created, a link to a `code-config` copy of the same skill is retargeted, and anything else is left alone and reported.
-3. The `mcp` Python SDK.
-4. The superpowers plugin.
-5. Claude Code version 2.1.80 or newer.
-6. That no legacy kitchen uses the reserved name `projects`.
+3. The Playwright MCP server behind the `playwright` skill (`setup-playwright-mcp.sh`): a pinned `@playwright/mcp`, headed on macOS and headless on Linux, with Playwright's Chromium downloaded when the host has none. It is a no-op once registered.
+4. The `mcp` Python SDK.
+5. The superpowers plugin.
+6. Claude Code version 2.1.80 or newer.
+7. That no legacy kitchen uses the reserved name `projects`.
 
 The statusline check is advisory. Re-run the command until the blocking checks are green.
 
