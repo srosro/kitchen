@@ -61,14 +61,14 @@ def run_bridge(scenario, fake=None, cursor=None):
                          ids=["named", "unnamed", "peer-agent", "unnamed-peer-agent"])
 def test_any_participant_is_delivered_by_name_without_the_chats_history(handle, name):
     async def scenario(fake, bridge, delivered):
-        await fake.inbound(HOME, handle, "can you look at the mba?")
+        await fake.inbound(HOME, handle, "can you look at the laptop?")
         await eventually(lambda: delivered)
         await fake.drop_sockets()  # the catch-up after reconnecting must not replay it either
         await eventually(lambda: fake.sockets)
         await fake.inbound(HOME, OWNER, "marker")
         await eventually(lambda: len(delivered) >= 2)
         await asyncio.sleep(0.2)
-        assert delivered == [("can you look at the mba?", {"from": name, "chat": HOME}),
+        assert delivered == [("can you look at the laptop?", {"from": name, "chat": HOME}),
                              ("marker", {"from": "Jordan", "chat": HOME})]
 
     fake = FakePlow()
