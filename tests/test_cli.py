@@ -2081,41 +2081,53 @@ class TestCmdSetupExit:
 
 class TestCmdSetupHooks:
     @patch("claude_kitchen.cli.subprocess.run")
-    def test_adds_missing_hooks_without_clobbering(self, mock_run, monkeypatch, tmp_path, capsys):
+    def test_takes_over_its_hooks_without_clobbering(self, mock_run, monkeypatch, tmp_path, capsys):
+        """kitchen setup owns its hook entries: the old ~/.claude/hooks copy of a hook
+        it ships is dropped, each owned entry appears exactly once, and everything
+        else (keys, other hooks, a hook sharing a group with an old one) survives."""
         mock_run.return_value = MagicMock(returncode=0, stdout="2.1.99 (claude)\n", stderr="")
         monkeypatch.setenv("HOME", str(tmp_path))
         settings = tmp_path / ".claude" / "settings.json"
         settings.parent.mkdir()
-        other = {"type": "command", "command": "$HOME/.claude/hooks/capture-prompt.sh"}
+        old = lambda name: {"type": "command", "command": f"$HOME/.claude/hooks/{name}"}
+        mine = {"type": "command", "command": "$HOME/bin/my-prompt-hook"}
+        gate = {"type": "command", "command": "$HOME/.claude/hooks/knightwatch-inflight-push-gate.py"}  # not kitchen's
         original = {
             "model": "opus",
             "permissions": {"allow": ["Bash(ls:*)", "mcp__playwright__browser_snapshot"]},
             "hooks": {
                 "Stop": [{"hooks": [{"type": "command", "command": "kitchen hook"}]}],
-                "UserPromptSubmit": [{"hooks": [other]}],
+                "UserPromptSubmit": [{"hooks": [old("capture-prompt.sh"), mine]}],
+                "PreToolUse": [{"matcher": "Bash", "hooks": [old("roborev-pre-push-gate.py")]},
+                               {"matcher": "Bash", "hooks": [gate]}],
             },
         }
         settings.write_text(json.dumps(original))
         settings.chmod(0o640)
-        from claude_kitchen.cli import cmd_setup
+        from claude_kitchen.cli import cmd_setup, HOOKS
 
         for _ in range(2):
             with pytest.raises(SystemExit):  # superpowers is absent from this HOME
                 cmd_setup(MagicMock())
 
         data = json.loads(settings.read_text())
+        commands = [h["command"] for groups in data["hooks"].values() for g in groups for h in g["hooks"]]
         assert data["model"] == "opus"
-        assert data["hooks"]["Stop"] == original["hooks"]["Stop"]
-        assert data["hooks"]["UserPromptSubmit"] == [
-            {"hooks": [other]},
-            {"matcher": "", "hooks": [{"type": "command", "command": "kitchen hook"}]},
-        ]
+        assert not any(c.startswith("$HOME/.claude/hooks/") and "knightwatch" not in c for c in commands)
+        assert mine["command"] in commands and gate["command"] in commands
+        for name in ("capture-prompt.sh", "capture-answer.sh", "roborev-pre-commit-context.py",
+                     "roborev-pre-push-gate.py", "roborev-pre-checkout-gate.py"):
+            assert commands.count(str(HOOKS / name)) == 1, name
+        assert commands.count("kitchen hook") == 2  # Stop + UserPromptSubmit
+        push = [h for g in data["hooks"]["PreToolUse"] for h in g["hooks"] if h["command"].endswith("roborev-pre-push-gate.py")]
+        assert push == [{"type": "command", "command": str(HOOKS / "roborev-pre-push-gate.py"), "timeout": 660}]
         assert settings.stat().st_mode & 0o777 == 0o640
         backups = list(settings.parent.glob("settings.json.bak-kitchen-*"))
-        assert len(backups) == 1 and json.loads(backups[0].read_text()) == original
+        assert len(backups) == 1 and json.loads(backups[0].read_text()) == original  # run 2 changed nothing
         assert data["permissions"]["allow"] == [
             "Bash(ls:*)", "mcp__playwright__browser_snapshot", "mcp__playwright__browser_take_screenshot"]
-        assert "Claude settings added (UserPromptSubmit, mcp__playwright__browser_take_screenshot)" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "-capture-prompt.sh" in out and "-roborev-pre-push-gate.py" in out
 
 
 class TestCmdSetupStatusline:
