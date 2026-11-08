@@ -121,12 +121,12 @@ main() {
   [[ -n "$sandbox_flag" ]] && args="$base_args $sandbox_flag"
 
   # Codex reads the same skill (kitchen links it into ~/.agents/skills), so give it
-  # the same server. Re-registering is local and cheap, so no fast path here.
+  # the same server. `codex mcp add` replaces an existing entry in place, so a
+  # failed add leaves the old one; an exact match is left alone.
   local codex
   codex="$(command -v codex 2>/dev/null || true)"
   [[ -z "$codex" && -x "$HOME/.local/bin/codex" ]] && codex="$HOME/.local/bin/codex"
-  if [[ -n "$codex" ]]; then
-    "$codex" mcp remove playwright >/dev/null 2>&1 || true
+  if [[ -n "$codex" ]] && ! "$codex" mcp get playwright 2>/dev/null | grep -qxF "  args: @playwright/mcp@$MCP_VERSION $args"; then
     "$codex" mcp add playwright -- npx "@playwright/mcp@$MCP_VERSION" $args >/dev/null
     echo "setup-playwright-mcp: registered with Codex: npx @playwright/mcp@$MCP_VERSION $args"
   fi
