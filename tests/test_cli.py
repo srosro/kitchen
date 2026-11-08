@@ -3022,3 +3022,38 @@ class TestTicketSous:
             self.ticket(monkeypatch, "--kitchen", "target-main")
 
         assert "AGENT_KITCHEN" in exit_.value.code
+
+
+class TestLinkSkills:
+    def test_creates_retargets_skips_and_reruns_clean(self, tmp_path):
+        from claude_kitchen.cli import _link_skills
+        src_root = tmp_path / "pkg" / "skills"
+        for name in ("fresh", "moved", "mine", "theirs"):
+            (src_root / name).mkdir(parents=True)
+        (src_root / "README.md").write_text("not a skill")
+        home = tmp_path / "home"
+        claude, agents = home / ".claude" / "skills", home / ".agents" / "skills"
+        claude.mkdir(parents=True)
+        cc = tmp_path / "services" / "code-config"
+        (claude / "moved").symlink_to(cc / "claude" / "skills" / "moved")
+        (claude / "mine").mkdir()  # a real directory: never touched
+        (claude / "theirs").symlink_to(tmp_path / "elsewhere" / "theirs")
+        agents.mkdir(parents=True)
+        (agents / "moved").symlink_to(cc / "codex" / "skills" / "moved")
+
+        first = _link_skills(src_root, home)
+
+        assert (claude / "fresh").resolve() == src_root / "fresh"
+        assert (agents / "fresh").resolve() == src_root / "fresh"
+        assert os.readlink(claude / "moved") == str(src_root / "moved")
+        assert os.readlink(agents / "moved") == str(src_root / "moved")
+        assert (claude / "mine").is_dir() and not (claude / "mine").is_symlink()
+        assert os.readlink(claude / "theirs") == str(tmp_path / "elsewhere" / "theirs")
+        assert not (claude / "README.md").exists()
+        assert sum(l.startswith("skipped") for l in first) == 2
+        assert sum(l.startswith("retargeted") for l in first) == 2
+
+        second = _link_skills(src_root, home)
+        assert [l.split()[0] for l in second].count("ok") == 6
+        assert sum(l.startswith("skipped") for l in second) == 2
+        assert not list(claude.glob(".*kitchen-tmp"))

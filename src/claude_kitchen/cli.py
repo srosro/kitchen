@@ -1251,6 +1251,36 @@ def _install_claude_hooks(settings: Path) -> list[str]:
     return added
 
 
+def _link_skills(src_root: Path, home: Path) -> list[str]:
+    """Link each skill dir under src_root into ~/.claude/skills (Claude) and
+    ~/.agents/skills (Codex). A link is created when absent and retargeted when it
+    points at code-config's copy of the same skill, which the skill moved from;
+    anything else there is left alone and reported. Returns one line per link."""
+    report = []
+    for src in sorted(p for p in src_root.iterdir() if p.is_dir()):
+        for root in (home / ".claude" / "skills", home / ".agents" / "skills"):
+            dest = root / src.name
+            if dest.is_symlink():
+                target = Path(os.readlink(dest))
+                if target == src:
+                    report.append(f"ok {dest}")
+                    continue
+                if target.parts[-4:-2] not in {("code-config", "claude"), ("code-config", "codex")} or target.name != src.name:
+                    report.append(f"skipped {dest}: links to {target}")
+                    continue
+                tmp = dest.with_name(f".{src.name}.kitchen-tmp")
+                tmp.symlink_to(src)
+                os.replace(tmp, dest)  # atomic: a reader never sees the link missing
+                report.append(f"retargeted {dest} (was {target})")
+            elif dest.exists():
+                report.append(f"skipped {dest}: not a symlink")
+            else:
+                root.mkdir(parents=True, exist_ok=True)
+                dest.symlink_to(src)
+                report.append(f"linked {dest}")
+    return report
+
+
 def cmd_setup(args):
     """Install kitchen's Claude hooks, check the environment, print what's needed."""
     all_good = True
@@ -1260,6 +1290,10 @@ def cmd_setup(args):
     claude_settings = Path.home() / ".claude" / "settings.json"
     added = _install_claude_hooks(claude_settings)
     print(f"✅ Claude hooks {'added (' + ', '.join(added) + ') to ' + str(claude_settings) if added else 'installed'}")
+
+    # --- Skills ---
+    for line in _link_skills(_PKG_DIR / "skills", Path.home()):
+        print(f"{'⚠️ ' if line.startswith('skipped') else '✅'} skill {line}")
 
     # --- mcp SDK ---
     try:
