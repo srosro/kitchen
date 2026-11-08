@@ -14,7 +14,7 @@ from starlette.websockets import WebSocketDisconnect
 TOKEN = "agt_fake-token-xyz"
 SIGNATURE = "signed-write-capability"
 ACCEPTED_TYPES = {"image/png", "application/pdf"}  # the types the tests send
-NAMES = {"+15550000001": "Sam", "+15550000002": "Patrick"}  # as Plow names members it knows
+NAMES = {"+15550000001": "Sam", "+15550000002": "Alex"}  # as Plow names members it knows
 
 
 class FakePlow:

@@ -1531,7 +1531,7 @@ def main():
     p_hire.add_argument("--effort", help="Reasoning effort (low, medium, high, xhigh, max, ultra; support is backend/model-dependent, Claude maps ultra to max)")
     p_hire.add_argument("--model", choices=[*CLAUDE_MODELS, *CODEX_MODELS], help="Model for the cook: fable, sonnet, or opus (Claude cooks; passed to `claude --model` verbatim, resolving the latest model in that tier), or astra (Codex cooks; passed to `codex -m` as gpt-6-astra). Omit to use the account default.")
     p_hire.add_argument("--clean-room", action="store_true", help="Isolated eval hire (Claude or Codex): no memory, no plugin/skill startup injection, no role prompt. Sous supplies the one eval prompt via a ticket. (gemini not yet supported)")
-    p_hire.add_argument("--swarm-account", metavar="ID", help="Give the cook its own swarm server, bound to this account on this machine (e.g. @cypress:chief.swarm.plow.co), and have it join that account's rooms (Claude only)")
+    p_hire.add_argument("--swarm-account", metavar="ID", help="Give the cook its own swarm server, bound to this account on this machine (e.g. @cypress:chief.swarm.example.com), and have it join that account's rooms (Claude only)")
     p_hire.add_argument("--with-skill", action="append", default=[], metavar="PATH", help="Load a custom skill/plugin dir into a --clean-room cook (repeatable; Claude only). Path needs a SKILL.md or .claude-plugin/plugin.json. Additive opt-in to the blank slate.")
 
     p_ticket = sub.add_parser("ticket", help="Send a ticket to a cook")

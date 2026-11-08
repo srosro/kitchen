@@ -858,7 +858,7 @@ class TestStatusPreservationAcrossNonStopWriters:
         account, then is asked to join that account's rooms; Codex is refused."""
         mock_state.return_value = tmp_path
         monkeypatch.setenv("HOME", str(tmp_path))
-        credential = tmp_path / ".swarm/accounts/chief.swarm.plow.co/cypress/credential.json"
+        credential = tmp_path / ".swarm/accounts/chief.swarm.example.com/cypress/credential.json"
         credential.parent.mkdir(parents=True)
         credential.write_text(json.dumps({"user_id": "@cypress:c", "homeserver": "https://c", "access_token": "t"}))
         (tmp_path / "cooks").mkdir()

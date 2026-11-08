@@ -11,7 +11,7 @@ from claude_kitchen.plow_chat import CREDENTIALS, Bridge, call, content_type_of
 from claude_kitchen.state import read_env
 from tests.fake_plow import SIGNATURE, TOKEN, FakePlow
 
-SAM, PLUCAS, STRANGER = "+15550000001", "+15550000002", "+15550000099"
+SAM, TEAMMATE, STRANGER = "+15550000001", "+15550000002", "+15550000099"
 SPRUCE = {"type": "agent", "relationship": "peer", "line": {"display_name": "Spruce", "uid": "ln_peer"}}
 PLOW = {"type": "system", "name": "Plow"}
 NAMELESS = {"type": "agent", "relationship": "peer", "line": {"display_name": None, "uid": "ln_bare", "provider_key": "+15550000077"}}
@@ -56,7 +56,7 @@ def run_bridge(scenario, fake=None, cursor=None):
     asyncio.run(main())
 
 
-@pytest.mark.parametrize("handle, name", [(PLUCAS, "Patrick"), (STRANGER, STRANGER), (SPRUCE, "Spruce"),
+@pytest.mark.parametrize("handle, name", [(TEAMMATE, "Alex"), (STRANGER, STRANGER), (SPRUCE, "Spruce"),
                                           (NAMELESS, "+15550000077")],
                          ids=["named", "unnamed", "peer-agent", "unnamed-peer-agent"])
 def test_any_participant_is_delivered_by_name_without_the_chats_history(handle, name):
@@ -145,7 +145,7 @@ def test_a_late_text_never_replays_an_earlier_one_after_restart(tmp_path):
 
     async def before_restart(fake, bridge, delivered):
         await fake.inbound(HOME, SAM, "sent second, landed first")
-        await fake.inbound(HOME, PLUCAS, "sent first, landed second", late=True)
+        await fake.inbound(HOME, TEAMMATE, "sent first, landed second", late=True)
         await eventually(lambda: len(delivered) == 2)
 
     async def after_restart(fake, bridge, delivered):
@@ -161,7 +161,7 @@ def test_a_late_text_never_replays_an_earlier_one_after_restart(tmp_path):
 @pytest.mark.parametrize("live", [True, False], ids=["socket", "catch-up"])
 def test_one_speakers_back_to_back_texts_reach_the_sous_as_one(live, tmp_path):
     fake, cursor = FakePlow(), tmp_path / "last_seen.json"
-    texts = [(SAM, "add this to the page"), (SAM, "https://example.com/paper"), (PLUCAS, "me too")]
+    texts = [(SAM, "add this to the page"), (SAM, "https://example.com/paper"), (TEAMMATE, "me too")]
 
     async def first_contact(fake, bridge, delivered):  # catch-up reads only chats the bridge has heard from
         await fake.inbound(HOME, SAM, "hi")
@@ -174,7 +174,7 @@ def test_one_speakers_back_to_back_texts_reach_the_sous_as_one(live, tmp_path):
         await eventually(lambda: len(delivered) >= 2)
         await asyncio.sleep(0.3)
         assert [(c, m["from"]) for c, m in delivered] == [
-            ("add this to the page\n\nhttps://example.com/paper", "Sam"), ("me too", "Patrick")]
+            ("add this to the page\n\nhttps://example.com/paper", "Sam"), ("me too", "Alex")]
 
     run_bridge(first_contact, fake, cursor)
     if not live:

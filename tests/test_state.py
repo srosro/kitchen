@@ -271,7 +271,7 @@ def test_discord_server_refuses_a_plugin_copy_that_is_not_the_reviewed_one(tmp_p
         exec_discord_server()
 
 
-ACCOUNT = "@cedar:plow.swarm.plow.co"
+ACCOUNT = "@cedar:plow.swarm.example.com"
 
 
 def fake_swarm(tmp_path):
@@ -285,9 +285,9 @@ def fake_swarm(tmp_path):
     return swarm
 
 
-def link_account(tmp_path, homeserver="https://plow.swarm.plow.co"):
+def link_account(tmp_path, homeserver="https://plow.swarm.example.com"):
     """The sous's account as `swarm accounts add` keeps it, linked into its kitchen."""
-    credential = tmp_path / ".swarm/accounts/plow.swarm.plow.co/cedar/credential.json"
+    credential = tmp_path / ".swarm/accounts/plow.swarm.example.com/cedar/credential.json"
     credential.parent.mkdir(parents=True)
     credential.write_text(json.dumps({"user_id": ACCOUNT, "homeserver": homeserver, "access_token": "tok"}))
     link = state_dir("boss") / "swarm" / "credential.json"
@@ -398,10 +398,10 @@ def test_digest_lists_what_the_sous_owes_oldest_first(tmp_path):
     assert with_digest(tmp_path, "report") == (
         "♨️ Waiting on cooks:\n- ops · plow-chat c1 m1 · 3h\n- eng · swarm !r $new · 5m\n\nreport")
 
-    write_waits(tmp_path, [{"message": "swarm !r $b", "opened_at": ago(minutes=1), "on": "daniel", "note": None},
+    write_waits(tmp_path, [{"message": "swarm !r $b", "opened_at": ago(minutes=1), "on": "robin", "note": None},
                            {"message": "swarm !r $a", "opened_at": ago(days=2), "on": "sam", "note": "the OK"}])
     assert with_digest(tmp_path, "report").split("\n\n")[0].endswith(
-        "🍗 Waiting on others:\n- sam · swarm !r $a · the OK · 2d\n- daniel · swarm !r $b · 1m")
+        "🍗 Waiting on others:\n- sam · swarm !r $a · the OK · 2d\n- robin · swarm !r $b · 1m")
 
 
 def test_concurrent_waits_all_survive(tmp_path, monkeypatch):
