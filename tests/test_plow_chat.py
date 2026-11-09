@@ -105,6 +105,29 @@ def test_reply_echo_system_notes_and_blank_texts_never_reach_the_sous():
     run_bridge(scenario)
 
 
+@pytest.mark.parametrize("unread", ["unheard", "in-burst"])
+def test_a_reply_is_refused_while_newer_texts_are_unread(monkeypatch, unread):
+    """A text the sous hasn't been handed yet, whether the socket missed it or
+    its burst is still open, stops the reply and reaches the sous instead."""
+    monkeypatch.setattr(plow_chat, "BURST_SECONDS", 30)
+
+    async def scenario(fake, bridge, delivered):
+        await fake.inbound(HOME, OWNER, "how's the demo?")
+        await eventually(lambda: bridge.burst)
+        await bridge.flush()  # the sous has read it
+        if unread == "unheard":
+            fake.add(HOME, TEAMMATE, "and when can we show it?")
+        else:
+            await fake.inbound(HOME, TEAMMATE, "and when can we show it?")
+            await eventually(lambda: bridge.burst)
+        assert (await bridge.reply(HOME, "build 47 is out")).startswith("not sent")
+        assert fake.sent == []
+        assert delivered[-1] == ("and when can we show it?", {"from": "Alex", "chat": HOME})
+        assert (await bridge.reply(HOME, "build 47 is out; Thursday works")).startswith("sent")
+        assert fake.sent == [(HOME, "build 47 is out; Thursday works")]
+    run_bridge(scenario)
+
+
 @pytest.mark.parametrize("flaky", [False, True], ids=["normal", "503-then-retry"])
 def test_reconnect_catches_up_without_duplicates(flaky):
     async def scenario(fake, bridge, delivered):

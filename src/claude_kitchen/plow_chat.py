@@ -126,6 +126,7 @@ class Bridge:
     taken: dict = field(init=False)
     burst: list = field(init=False, default_factory=list)  # one speaker's texts not yet handed over
     due: float = 0.0  # loop time the burst closes at
+    handing: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)  # the socket and a send both take and flush
 
     def __post_init__(self):
         self.taken = json.loads(self.cursor.read_text()) if self.cursor.exists() else {}
@@ -133,13 +134,14 @@ class Bridge:
     async def take(self, message: dict):
         """Add a message to the burst once, handing the burst over first if
         the message is someone else's or in another chat."""
-        uids = self.taken.setdefault(message["chat_uid"], [])
-        if message["uid"] in uids or message["uid"] in [m["uid"] for m in self.burst]:
-            return
-        if self.burst and speaker(self.burst[0]) != speaker(message):
-            await self.flush()
-        self.burst.append(message)
-        self.due = asyncio.get_running_loop().time() + BURST_SECONDS
+        async with self.handing:
+            uids = self.taken.setdefault(message["chat_uid"], [])
+            if message["uid"] in uids or message["uid"] in [m["uid"] for m in self.burst]:
+                return
+            if self.burst and speaker(self.burst[0]) != speaker(message):
+                await self._flush()
+            self.burst.append(message)
+            self.due = asyncio.get_running_loop().time() + BURST_SECONDS
 
     async def fetch(self, attachment: dict) -> Path:
         """Save an inbound attachment under files/, named by its uid."""
@@ -156,6 +158,11 @@ class Bridge:
         notes and messages with neither text nor files (tapbacks) are only
         recorded. An attachment that can't be fetched is named in the text
         rather than holding up the burst."""
+        async with self.handing:
+            if self.burst:
+                await self._flush()
+
+    async def _flush(self):
         first = self.burst[0]
         if name := sender_name(first["sender"]):
             texts = [m["body"] for m in self.burst if m["body"].strip()]
@@ -179,20 +186,39 @@ class Bridge:
         page's messages above the newest one taken. Plow pages only backwards,
         so a gap of more than one page loses its oldest texts; what sits below a
         taken text is history, never replayed; a text still in the burst counts
-        as taken. A busy or failing Plow raises into the reconnect retry."""
+        as taken. A busy or failing Plow raises into the reconnect retry.
+        Returns the messages it took."""
         r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": PAGE})
         if r.status_code == 429 or r.status_code >= 500:
             r.raise_for_status()
         if r.is_error:
             log(f"HTTP {r.status_code} reading chat {chat}; skipped")
-            return
+            return []
         uids = self.taken[chat] + [m["uid"] for m in self.burst]
-        for message in reversed(list(takewhile(lambda m: m["uid"] not in uids, r.json()["data"]))):
+        newer = list(reversed(list(takewhile(lambda m: m["uid"] not in uids, r.json()["data"]))))
+        for message in newer:
             await self.take(message)
+        return newer
+
+    async def unread(self, chat: str) -> str | None:
+        """Refuse a send while others have texted `chat` since the sous last
+        read it: hand those texts over now and say so, so it answers them in
+        one message instead of talking past them."""
+        if chat not in self.taken:  # never read, so nothing in it is news
+            return None
+        held = [m for m in self.burst if m["chat_uid"] == chat]
+        news = [m for m in held + await self.catch_up(chat)
+                if sender_name(m["sender"]) and (m["body"].strip() or m["attachments"])]
+        if not news:
+            return None
+        await self.flush()
+        return f"not sent: {len(news)} newer message(s) in this chat reach you next; read them, then answer again"
 
     async def reply(self, chat: str, text: str) -> str:
         if not text.strip():
             raise ValueError("reply text is empty; not sent")
+        if refusal := await self.unread(chat):
+            return refusal
         return sent(await self.client.post(f"/v1/chats/{chat}/messages", json={"body": text}), "reply")
 
     async def upload(self, chat: str, file: Path) -> str:
@@ -219,6 +245,8 @@ class Bridge:
         if not 1 <= len(paths) <= MAX_ATTACHMENTS:
             raise ValueError(f"{len(paths)} files given; a message takes 1 to {MAX_ATTACHMENTS}; nothing sent")
         files = [attachable(path) for path in paths]  # all of them before Plow hears of any
+        if refusal := await self.unread(chat):
+            return refusal
         uids = [await self.upload(chat, file) for file in files]
         return sent(await self.client.post(f"/v1/chats/{chat}/messages", json={
             "attachment_uids": uids, "body": caption,
