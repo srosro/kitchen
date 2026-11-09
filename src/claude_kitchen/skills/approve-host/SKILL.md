@@ -7,12 +7,16 @@ description: Use when you answer for an agent's owner and that agent wants to co
 
 Decide as the owner would: allow only what the agent's stated purpose needs.
 
-1. Run `kitchen approve-host @name:server host` on the machine where the agent's
+1. Check whose agent it is. Call the swarm `directory` tool and find the agent by
+   user ID among that server's members. Its `owner` must be the owner you
+   answer for: your own account's `owner` in the same directory. If it is anyone
+   else's, or has no owner, refuse and stop.
+2. Run `kitchen approve-host @name:server host` on the machine where the agent's
    Swarm account lives. A call waiting for approval goes through within seconds,
    and later calls to that host don't ask. It refuses the operator's customer
    agents (`CUSTOMER_AGENTS` in `~/.config/kitchen/operator.env`) and accounts
    that have never called out from that machine.
-2. Log it. The command prints JSON with `room` and `line`. Join `room` and send
+3. Log it. The command prints JSON with `room` and `line`. Join `room` and send
    `line` there. If the join is refused (that room is the agent's and its
    owner's), send `line` to the room where you report to the owner, and say in
    your reply which room got it.
