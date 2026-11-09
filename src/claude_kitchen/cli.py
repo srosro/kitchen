@@ -956,6 +956,11 @@ def cmd_hook(args):
 
     event = payload.get("hook_event_name", "")
 
+    # A `claude -p` the agent runs inherits its AGENT_* env and fires this hook
+    # too; only the agent's own interactive session speaks for it.
+    if backend == "claude" and os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-cli":
+        return
+
     if name == "sous":
         # Sous hook is otherwise a no-op — prevents echo loops where the sous's
         # own Stop events would feed back through the cook channel push below.
@@ -1059,6 +1064,10 @@ def cmd_hook(args):
     # update_status (not write_status) preserves `tokens` and `backend` if
     # this Stop write didn't compute them (e.g. transcript missing).
     update_status(base, name, **updates)
+    # A turn ending on the line SILENT wakes no one; a chat_message it carries
+    # waits for the cook's next report.
+    if summary.rstrip().rpartition("\n")[2].strip() == "SILENT":
+        return
 
     # Read back so the channel push reflects the merged tokens — covers
     # the transcript-miss case where `updates` skipped tokens but prior

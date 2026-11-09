@@ -107,6 +107,39 @@ class TestHook:
         assert call_args[0][1]["cook"] == "eng"
         assert call_args[0][1]["summary"] == "all tests pass"
 
+    def test_a_silent_turn_end_records_idle_but_wakes_no_one(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("AGENT_NAME", "relay")
+        monkeypatch.setenv("AGENT_KITCHEN", "risotto")
+        monkeypatch.setenv("STATUS_DIR", str(tmp_path))
+        update_status(tmp_path, "relay", chat_message={"message": "swarm !room $evt"})
+        _stdin_payload(monkeypatch, hook_event_name="Stop",
+                       last_assistant_message="Nothing to relay.\n\nSILENT\n")
+
+        mock_send = MagicMock()
+        with patch("claude_kitchen.channel.send_to_socket", mock_send):
+            cmd_hook(argparse.Namespace(command="hook"))
+
+        mock_send.assert_not_called()
+        status = read_status(tmp_path, "relay")
+        assert status["status"] == "idle"
+        assert status["chat_message"] == {"message": "swarm !room $evt"}  # kept for the next report
+
+    def test_a_claude_p_run_inside_a_cook_does_not_report_as_it(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("AGENT_NAME", "eng")
+        monkeypatch.setenv("AGENT_KITCHEN", "risotto")
+        monkeypatch.setenv("STATUS_DIR", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "sdk-cli")
+        update_status(tmp_path, "eng", status="working", session_id="cook-session")
+        _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message="pong",
+                       session_id="nested-session")
+
+        mock_send = MagicMock()
+        with patch("claude_kitchen.channel.send_to_socket", mock_send):
+            cmd_hook(argparse.Namespace(command="hook"))
+
+        mock_send.assert_not_called()
+        assert read_status(tmp_path, "eng") == {"status": "working", "session_id": "cook-session"}
+
     def test_sous_stop_is_noop(self, monkeypatch, tmp_path):
         monkeypatch.setenv("AGENT_NAME", "sous")
         monkeypatch.setenv("AGENT_KITCHEN", "risotto")
