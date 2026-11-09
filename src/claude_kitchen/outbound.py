@@ -7,9 +7,10 @@ credential, only the access to the account's folder that already holds one.
 A hand-off to a new owner clears the list, as it clears the owner's own approvals.
 """
 import json
-import os
 import re
 from pathlib import Path
+
+from claude_kitchen.state import atomic_write_json
 
 ACCOUNT = re.compile(r"@([a-z0-9][a-z0-9._=-]*):([A-Za-z0-9][A-Za-z0-9.-]*(?::\d+)?)")
 HOST = re.compile(r"[a-z0-9]([a-z0-9.-]*[a-z0-9])?")
@@ -34,9 +35,7 @@ def approve_host(account: str, host: str, customers: set[str], home: Path) -> di
     if host not in saved["approved"]:
         saved["approved"].append(host)
     saved["asks"].pop(host, None)
-    fresh = ledger.with_name("outbound.json.approve-host")
-    fresh.write_text(json.dumps(saved))
-    os.replace(fresh, ledger)
+    atomic_write_json(ledger, saved)
     return {"account": account, "host": host, "room": f"#{name}-outbound:{server}",
             "line": f"Approved {host} for {name}, as its owner's delegate."}
 
