@@ -11,7 +11,7 @@ import os
 import re
 from pathlib import Path
 
-ACCOUNT = re.compile(r"@([a-z0-9._=-]+):([A-Za-z0-9.-]+(?::\d+)?)")
+ACCOUNT = re.compile(r"@([a-z0-9][a-z0-9._=-]*):([A-Za-z0-9][A-Za-z0-9.-]*(?::\d+)?)")
 HOST = re.compile(r"[a-z0-9]([a-z0-9.-]*[a-z0-9])?")
 
 
