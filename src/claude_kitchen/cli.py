@@ -24,6 +24,7 @@ from claude_kitchen.state import (
     MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME,
 )
 from claude_kitchen.models import max_context_for
+from claude_kitchen.outbound import approve_host, customer_agents
 from claude_kitchen.spawn import (spawn_window, spawn_sous, spawn_sous_window,
                                   check_sous_pid, FIRST_TURN_ENV, CLAUDE_MODELS, CODEX_MODELS,
                                   SUPERPOWERS_MARKETPLACES)
@@ -841,6 +842,12 @@ def cmd_roles(args):
         first = content.splitlines()[0] if content else ""
         desc = first.lstrip("# ").strip()
         print(f"  {f.stem:12s}  {desc}")
+
+
+def cmd_approve_host(args):
+    customers = customer_agents(Path.home() / ".config" / "kitchen" / "operator.env")
+    home = Path(os.environ.get("SWARM_HOME") or Path.home() / ".swarm")
+    print(json.dumps(approve_host(args.account, args.host, customers, home)))
 
 
 def cmd_brigade(kitchen: str = None):
@@ -1685,6 +1692,9 @@ def main():
     )
 
     sub.add_parser("roles", help="List available cook roles")
+    p_approve = sub.add_parser("approve-host", help="Approve an outside host for a Swarm agent here, as its owner's delegate")
+    p_approve.add_argument("account", help="The agent's Swarm id, @name:server")
+    p_approve.add_argument("host", help="The host to allow, e.g. example.com")
 
     p_channel = sub.add_parser("channel-server", help="(internal) Run channel MCP server")
     p_channel.add_argument("kitchen", help="Kitchen name")
@@ -1726,6 +1736,8 @@ def main():
         cmd_statusline_segment(args)
     elif args.command == "roles":
         cmd_roles(args)
+    elif args.command == "approve-host":
+        cmd_approve_host(args)
     elif args.command in ("hook", "hook-codex", "hook-agy"):
         cmd_hook(args)
     elif args.command == "channel-server":
