@@ -11,7 +11,7 @@ import os
 import re
 from pathlib import Path
 
-ACCOUNT = re.compile(r"@([a-z0-9._=/-]+):([A-Za-z0-9.-]+(?::\d+)?)")
+ACCOUNT = re.compile(r"@([a-z0-9._=-]+):([A-Za-z0-9.-]+(?::\d+)?)")
 HOST = re.compile(r"[a-z0-9]([a-z0-9.-]*[a-z0-9])?")
 
 
@@ -45,5 +45,5 @@ def customer_agents(operator_env: Path) -> set[str]:
     """The operator's customer agents (`CUSTOMER_AGENTS`, ids or names, space-separated)."""
     for line in operator_env.read_text().splitlines():
         if line.startswith("CUSTOMER_AGENTS="):
-            return set(line.split("=", 1)[1].split())
+            return set(line.split("=", 1)[1].strip("\"'").split())
     raise SystemExit(f"{operator_env} sets no CUSTOMER_AGENTS: refusing to approve for any agent.")
