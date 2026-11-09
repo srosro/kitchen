@@ -245,9 +245,9 @@ class Bridge:
         if not 1 <= len(paths) <= MAX_ATTACHMENTS:
             raise ValueError(f"{len(paths)} files given; a message takes 1 to {MAX_ATTACHMENTS}; nothing sent")
         files = [attachable(path) for path in paths]  # all of them before Plow hears of any
-        if refusal := await self.unread(chat):
-            return refusal
         uids = [await self.upload(chat, file) for file in files]
+        if refusal := await self.unread(chat):  # after the uploads, which can take a while
+            return refusal
         return sent(await self.client.post(f"/v1/chats/{chat}/messages", json={
             "attachment_uids": uids, "body": caption,
         }), "file")
