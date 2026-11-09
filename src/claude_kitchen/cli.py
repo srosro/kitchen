@@ -24,7 +24,7 @@ from claude_kitchen.state import (
     MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME,
 )
 from claude_kitchen.models import max_context_for
-from claude_kitchen.outbound import approve_host, customer_agents
+from claude_kitchen.outbound import approve_host, operator_setting
 from claude_kitchen.spawn import (spawn_window, spawn_sous, spawn_sous_window,
                                   check_sous_pid, FIRST_TURN_ENV, CLAUDE_MODELS, CODEX_MODELS,
                                   SUPERPOWERS_MARKETPLACES)
@@ -845,9 +845,10 @@ def cmd_roles(args):
 
 
 def cmd_approve_host(args):
-    customers = customer_agents(Path.home() / ".config" / "kitchen" / "operator.env")
+    env = Path.home() / ".config" / "kitchen" / "operator.env"
+    customers = set(operator_setting(env, "CUSTOMER_AGENTS").split())
     home = Path(os.environ.get("SWARM_HOME") or Path.home() / ".swarm")
-    print(json.dumps(approve_host(args.account, args.host, customers, home)))
+    print(json.dumps(approve_host(args.account, args.host, customers, operator_setting(env, "APPROVER_SENDER"), home)))
 
 
 def cmd_brigade(kitchen: str = None):
