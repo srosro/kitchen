@@ -1064,16 +1064,15 @@ def cmd_hook(args):
     # update_status (not write_status) preserves `tokens` and `backend` if
     # this Stop write didn't compute them (e.g. transcript missing).
     update_status(base, name, **updates)
-    # A turn ending on the line SILENT wakes no one; a chat_message it carries
-    # waits for the cook's next report.
-    if summary.rstrip().rpartition("\n")[2].strip() == "SILENT":
-        return
 
     # Read back so the channel push reflects the merged tokens — covers
     # the transcript-miss case where `updates` skipped tokens but prior
     # tokens survived via update_status.
     push = {"cook": name, "summary": summary, "ts": ts}
     final = read_status(base, name) or {}
+    # A turn ending on the line SILENT wakes no one, unless it owes a chat an answer.
+    if "chat_message" not in final and summary.rstrip().rpartition("\n")[2].strip() == "SILENT":
+        return
     if "chat_message" in final:
         push["chat_message"] = final.pop("chat_message")["message"]
         write_status(base, name, final)
