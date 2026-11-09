@@ -956,6 +956,11 @@ def cmd_hook(args):
 
     event = payload.get("hook_event_name", "")
 
+    # A `claude -p` the agent runs inherits its AGENT_* env and fires this hook
+    # too; only the agent's own interactive session speaks for it.
+    if backend == "claude" and os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-cli":
+        return
+
     if name == "sous":
         # Sous hook is otherwise a no-op — prevents echo loops where the sous's
         # own Stop events would feed back through the cook channel push below.
@@ -1065,6 +1070,9 @@ def cmd_hook(args):
     # tokens survived via update_status.
     push = {"cook": name, "summary": summary, "ts": ts}
     final = read_status(base, name) or {}
+    # A turn ending on the line SILENT wakes no one, unless it owes a chat an answer.
+    if "chat_message" not in final and summary.rstrip().rpartition("\n")[2].strip() == "SILENT":
+        return
     if "chat_message" in final:
         push["chat_message"] = final.pop("chat_message")["message"]
         write_status(base, name, final)
