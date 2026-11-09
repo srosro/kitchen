@@ -105,7 +105,7 @@ def test_reply_echo_system_notes_and_blank_texts_never_reach_the_sous():
     run_bridge(scenario)
 
 
-@pytest.mark.parametrize("unread", ["unheard", "in-burst"])
+@pytest.mark.parametrize("unread", ["unheard", "in-burst", "during-the-check"])
 def test_a_reply_is_refused_while_newer_texts_are_unread(monkeypatch, unread):
     """A text the sous hasn't been handed yet, whether the socket missed it or
     its burst is still open, stops the reply and reaches the sous instead."""
@@ -117,6 +117,17 @@ def test_a_reply_is_refused_while_newer_texts_are_unread(monkeypatch, unread):
         await bridge.flush()  # the sous has read it
         if unread == "unheard":
             fake.add(HOME, TEAMMATE, "and when can we show it?")
+        elif unread == "during-the-check":  # the socket takes it while the check reads the chat
+            read, once = bridge.client.get, []
+
+            async def get(*args, **kwargs):
+                r = await read(*args, **kwargs)
+                if not once:
+                    once.append(1)
+                    await fake.inbound(HOME, TEAMMATE, "and when can we show it?")
+                    await eventually(lambda: bridge.burst)
+                return r
+            monkeypatch.setattr(bridge.client, "get", get)
         else:
             await fake.inbound(HOME, TEAMMATE, "and when can we show it?")
             await eventually(lambda: bridge.burst)

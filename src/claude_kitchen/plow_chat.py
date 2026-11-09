@@ -206,8 +206,11 @@ class Bridge:
         one message instead of talking past them."""
         if chat not in self.taken:  # never read, so nothing in it is news
             return None
-        held = [m for m in self.burst if m["chat_uid"] == chat]
-        news = [m for m in held + await self.catch_up(chat)
+        held = [m for m in self.burst if m["chat_uid"] == chat]  # catch_up may hand these over
+        newer = await self.catch_up(chat)
+        async with self.handing:  # and the socket may take more while it reads
+            held += [m for m in self.burst if m["chat_uid"] == chat]
+        news = [m for m in {m["uid"]: m for m in held + newer}.values()
                 if sender_name(m["sender"]) and (m["body"].strip() or m["attachments"])]
         if not news:
             return None
