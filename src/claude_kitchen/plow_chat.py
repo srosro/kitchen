@@ -9,11 +9,13 @@ agent's line — is served.
 import asyncio
 import json
 import mimetypes
+import ssl
 import sys
 from dataclasses import dataclass, field
 from itertools import takewhile
 from pathlib import Path
 
+import certifi
 import httpx
 import websockets
 from mcp.server.stdio import stdio_server
@@ -34,6 +36,9 @@ BURST_SECONDS = 3.0
 MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024
 MAX_ATTACHMENTS = 4  # per message
 UPLOAD_TIMEOUT = httpx.Timeout(30, read=120)
+# httpx carries certifi's CA bundle; websockets uses the interpreter's, which a
+# python.org macOS install leaves empty until "Install Certificates" is run.
+WS_SSL = ssl.create_default_context(cafile=certifi.where())
 # No system files, so a guess doesn't change from one machine to another.
 STANDARD_TYPES = mimetypes.MimeTypes(filenames=())
 # Plow's spelling of the types the standard library misses or names differently.
@@ -260,11 +265,12 @@ class Bridge:
         known chat once it is open, take each message frame as it lands, and
         hand the burst over once it goes quiet."""
         ws_url = str(self.client.base_url).rstrip("/").replace("http", "ws", 1) + "/v1/ws"
+        tls = WS_SSL if ws_url.startswith("wss:") else None
         while True:
             try:
                 r = await self.client.post("/v1/ws/ticket", json={})
                 r.raise_for_status()
-                async with websockets.connect(f"{ws_url}?ticket={r.json()['ticket']}") as ws:
+                async with websockets.connect(f"{ws_url}?ticket={r.json()['ticket']}", ssl=tls) as ws:
                     for chat in list(self.taken):
                         await self.catch_up(chat)
                     log("connected")
