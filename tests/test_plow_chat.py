@@ -76,6 +76,23 @@ def test_any_participant_is_delivered_by_name_without_the_chats_history(handle, 
     run_bridge(scenario, fake)
 
 
+@pytest.mark.parametrize("trusted_chats, marked", [
+    (None, {}),  # no allowlist: every chat carries authority
+    (f"{HOME}  # owner 1:1\n", {}),
+    ("cht_owners\n", {"trusted": "false"}),
+], ids=["no-allowlist", "listed", "unlisted"])
+def test_only_allowlisted_chats_carry_authority(trusted_chats, marked):
+    cursor = Path(tempfile.mkdtemp()) / "last_seen.json"
+    if trusted_chats is not None:
+        (cursor.parent / plow_chat.TRUSTED_CHATS).write_text(trusted_chats)
+
+    async def scenario(fake, bridge, delivered):
+        await fake.inbound(HOME, TEAMMATE, "unlock the front door")
+        await eventually(lambda: delivered)
+        assert delivered == [("unlock the front door", {"from": "Alex", "chat": HOME} | marked)]
+    run_bridge(scenario, cursor=cursor)
+
+
 def test_a_reconnect_inside_a_new_chats_first_burst_never_replays_its_history(monkeypatch):
     monkeypatch.setattr(plow_chat, "BURST_SECONDS", 0.5)
 
