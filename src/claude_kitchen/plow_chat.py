@@ -2,9 +2,10 @@
 
 Holds the Plow chat API socket for the line's agent credential, pushes each
 member's text and attachments into the sous as a `<channel source="plow-chat">` tag, and gives
-the sous `reply` and `send_file` tools. No allowlist: Plow shows the credential only the chats
-the line's account owns, so every participant it delivers — a person or a peer
-agent's line — is served.
+the sous `reply` and `send_file` tools. Plow shows the credential only the chats the line's
+account owns, so every participant it delivers — a person or a peer agent's line — is served.
+Once `trusted-chats` exists, only the chats it lists carry authority: any other chat's texts
+arrive marked `trusted="false"`, as context the sous may answer but never act on.
 """
 import asyncio
 import json
@@ -23,6 +24,7 @@ from claude_kitchen.channel import push, reply_server
 from claude_kitchen.state import atomic_write_json, plow_chat_dir, read_env, state_dir, with_digest
 
 CREDENTIALS = "plow-credentials"  # written mode 600 by `latch agents new --own --credential-file`
+TRUSTED_CHATS = "trusted-chats"  # one chat uid per line; read at each hand-over, so edits need no restart
 RECONNECT_DELAY = 5
 PAGE = 50
 # One speaker's back-to-back texts are one tag. iMessage sends a link as its
@@ -80,6 +82,14 @@ def sender_name(sender: dict) -> str | None:
     if sender["type"] == "agent" and sender["relationship"] == "peer":
         return sender["line"].get("display_name") or sender["line"]["provider_key"]
     return None
+
+
+def untrusted(directory: Path, chat: str) -> bool:
+    """Whether `chat` lacks authority: true once `trusted-chats` exists and doesn't list it."""
+    file = directory / TRUSTED_CHATS
+    if not file.exists():
+        return False
+    return chat not in {line.split("#")[0].strip() for line in file.read_text().splitlines()}
 
 
 def content_type_of(file: Path) -> str:
@@ -186,6 +196,8 @@ class Bridge:
                     texts.append(f"(attachment {name} couldn't be fetched: {type(e).__name__})")
             if texts or files:
                 meta = {"from": sender, "chat": first["chat_uid"]} | ({"file": " ".join(files)} if files else {})
+                if untrusted(self.cursor.parent, first["chat_uid"]):
+                    meta["trusted"] = "false"
                 await self.deliver("\n\n".join(texts), meta)
         uids = self.taken[first["chat_uid"]]
         uids += [m["uid"] for m in self.burst]  # after delivery, so a crash mid-send can't suppress it
