@@ -29,6 +29,8 @@ class FakePlow:
         self.sockets = []
         self.flaky = set()  # chats whose next read answers 503
         self.inbound_files = {}  # attachment uid -> bytes a member sent; absent answers 404
+        self.files_host = None  # serve attachment URLs from this host, as absolute URLs
+        self.files_auth = {}  # attachment uid -> Authorization header its download carried
         self._uids = itertools.count(1)
         self.app = Starlette(routes=[
             Route("/v1/ws/ticket", self._ticket, methods=["POST"]),
@@ -51,8 +53,9 @@ class FakePlow:
             uid = f"att_{next(self._uids)}"
             if data is not None:
                 self.inbound_files[uid] = data
-            attachments.append({"uid": uid, "filename": name, "status": "received",
-                                "url": f"/v1/chats/{chat}/attachments/{uid}/content?sig={SIGNATURE}"})
+            path = f"/v1/chats/{chat}/attachments/{uid}/content?sig={SIGNATURE}"
+            host = f"http://{self.files_host}:{self.port}" if self.files_host else ""
+            attachments.append({"uid": uid, "filename": name, "status": "received", "url": host + path})
         message = {"uid": f"msg_{next(self._uids)}", "chat_uid": chat, "body": body, "sender": sender,
                    "attachments": attachments}
         # A late text was sent before the newest one, so Plow sorts it below it.
@@ -127,6 +130,7 @@ class FakePlow:
         }, status_code=201)
 
     async def _content(self, request):
+        self.files_auth[request.path_params["uid"]] = request.headers.get("authorization")
         data = self.inbound_files.get(request.path_params["uid"])
         if data is None or request.query_params.get("sig") != SIGNATURE:
             return JSONResponse({"error": "not_found"}, status_code=404)
@@ -153,7 +157,7 @@ class FakePlow:
         self.sockets.clear()
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
-            port = s.getsockname()[1]
+            port = self.port = s.getsockname()[1]
         server = uvicorn.Server(uvicorn.Config(self.app, host="127.0.0.1", port=port, log_level="warning", ws="websockets-sansio"))
         asyncio.create_task(server.serve())
         while not server.started:

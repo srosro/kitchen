@@ -179,19 +179,6 @@ class TestWaitForPrompt:
     @patch("claude_kitchen.tmux.time.sleep", return_value=None)
     @patch("claude_kitchen.tmux.tmux")
     @patch("claude_kitchen.tmux.capture_pane")
-    def test_confirms_dev_channels_dialog_for_claude(self, mock_cap, mock_tmux, mock_sleep):
-        """A claude sous launched with --dangerously-load-development-channels
-        shows a confirmation dialog before its welcome banner; wait_for_prompt
-        must auto-confirm it (bare Enter on the pre-selected option 1)."""
-        from claude_kitchen.tmux import wait_for_prompt
-        mock_cap.side_effect = [
-            "WARNING: Loading development channels\n  ❯ 1. I am using this for local development",
-            "Claude Code v2.1.120",
-        ]
-        assert wait_for_prompt("ck-x", "sous", "claude", timeout=5) is True
-        sent = [c.args for c in mock_tmux.call_args_list]
-        assert ("send-keys", "-t", "kitchen:sous", "Enter") in sent
-
     @pytest.mark.parametrize("screen, name", [
         ("Claude Code v2.1.319\nAccessing workspace:\n /home/r\n ❯ No, exit\n   Yes, I trust this folder",
          "folder-trust"),
@@ -222,6 +209,27 @@ class TestWaitForPrompt:
         mock_cap.side_effect = ["Claude Code v2.1.120"]
         assert wait_for_prompt("ck-x", "sous", "claude", timeout=5) is True
         mock_tmux.assert_not_called()
+
+    @pytest.mark.parametrize("screen, name", [
+        ("Claude Code v2.1.319\nAccessing workspace:\n /home/r\n ❯ No, exit\n   Yes, I trust this folder",
+         "folder-trust"),
+        ("WARNING: Claude Code running in Bypass Permissions mode\n ❯ 1. No, exit\n   2. Yes, I accept",
+         "Bypass Permissions"),
+    ])
+    @patch("claude_kitchen.tmux.time.sleep", return_value=None)
+    @patch("claude_kitchen.tmux.tmux")
+    @patch("claude_kitchen.tmux.capture_pane")
+    def test_one_time_modal_fails_with_its_fix(self, mock_cap, mock_tmux, mock_sleep, screen, name):
+        """A claude agent parked on a one-time modal whose default refuses must
+        fail at once with the fix, not stall out — and never answer it."""
+        from claude_kitchen.tmux import wait_for_prompt, PromptBlocked
+        mock_cap.return_value = screen
+        mock_tmux.return_value = MagicMock(stdout="/home/r x\n")
+        with pytest.raises(PromptBlocked) as e:
+            wait_for_prompt("ck-x", "eng", "claude", timeout=5)
+        assert f"one-time {name} prompt" in str(e.value)
+        assert "cd '/home/r x' && claude --dangerously-skip-permissions" in str(e.value)
+        assert not any(c.args[0] == "send-keys" for c in mock_tmux.call_args_list)
 
     @patch("claude_kitchen.tmux.time.sleep", return_value=None)
     @patch("claude_kitchen.tmux.tmux")
@@ -368,19 +376,27 @@ class TestCodexScreens:
         assert wait_for_prompt("ck-x", "cx", "codex", timeout=1000) is False
         mock_tmux.assert_not_called()
 
+    @pytest.mark.parametrize("trust", [
+        ("  Folder access\n  /private/tmp/cxtrust\n"
+         "  Trust this folder? Codex can read, edit, and run files here, subject to your\n"
+         "› 1. Trust and continue\n  2. Back to Agent Command Center\n"
+         "  enter continue · esc back\n"),
+        ("  Do you trust the contents of this directory?\n"
+         "› 1. Yes, continue\n  2. No, quit\n  Press enter to continue\n"),
+    ], ids=["codex-0.166", "codex-0.154"])
     @patch("claude_kitchen.tmux.time.sleep", return_value=None)
     @patch("claude_kitchen.tmux.tmux")
     @patch("claude_kitchen.tmux.capture_pane")
-    def test_trust_dialog_and_update_picker_answered(self, mock_cap, mock_tmux, mock_sleep):
-        """Trust dialog then update picker: each is answered once."""
+    def test_trust_dialog_and_update_picker_answered(self, mock_cap, mock_tmux, mock_sleep, trust):
+        """Trust dialog then update picker: each is answered once, with its
+        own keys, in either codex's wording of the trust dialog."""
         from claude_kitchen.tmux import wait_for_prompt
-        trust = ("  Do you trust the contents of this directory?\n"
-                 "› 1. Yes, continue\n  2. No, quit\n  Press enter to continue\n")
         mock_cap.side_effect = [trust, trust, trust + "✨ Update available! 1 -> 2",
                                 ">_ OpenAI Codex (v0.154.0)"]
         assert wait_for_prompt("ck-x", "cx", "codex", timeout=5) is True
         assert [c.args for c in mock_tmux.call_args_list] == [
-            ("send-keys", "-t", "kitchen:cx", "3", "Enter")] * 2
+            ("send-keys", "-t", "kitchen:cx", "Enter"),
+            ("send-keys", "-t", "kitchen:cx", "3", "Enter")]
 
     @pytest.mark.parametrize("pane", [CODEX_SIGNIN, "› 1. Yes, continue\n  2. No, quit\n"])
     @patch("claude_kitchen.tmux.tmux")
@@ -959,12 +975,13 @@ def test_join_swarm_types_the_join_until_the_account_is_held(tmp_path, monkeypat
     assert typed == []
 
 
-def test_kill_server_removes_the_socket(tmp_path):
+def test_kill_server_removes_the_socket():
     """tmux leaves its socket file behind when the server dies; a kitchen's
     teardown must not."""
+    from pathlib import Path
     from claude_kitchen.tmux import kill_server, tmux
     tmux("new-session", "-d", "-s", SESSION, kitchen="probe", check=True)
-    sock = tmp_path / f"tmux-{os.getuid()}" / "ck-probe"
+    sock = Path(os.environ["TMUX_TMPDIR"]) / f"tmux-{os.getuid()}" / "ck-probe"
     assert sock.exists()
     kill_server("probe")
     assert not sock.exists()

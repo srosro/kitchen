@@ -220,14 +220,21 @@ def test_one_speakers_back_to_back_texts_reach_the_sous_as_one(live, tmp_path):
 PHOTO = b"\xff\xd8\xff fake jpeg"
 
 
-@pytest.mark.parametrize("texts, files, content, saved", [
-    (["The spacing sucks. See screenshot"], [("IMG_5570.jpeg", PHOTO)], "The spacing sucks. See screenshot", [PHOTO]),
-    ([""], [("IMG_5571.jpeg", PHOTO)], "", [PHOTO]),
-    (["two shots", ""], [("a.jpeg", PHOTO), ("b.png", b"png")], "two shots", [PHOTO, b"png"]),
-    (["see this"], [("gone.jpeg", None)], "see this\n\n(attachment gone.jpeg couldn't be fetched: HTTPStatusError)", []),
-], ids=["captioned-photo", "bare-photo", "burst-of-two", "unfetchable"])
-def test_a_members_attachments_reach_the_sous_as_local_files(texts, files, content, saved):
+PLOW_AUTH = f"Bearer {TOKEN}"
+
+
+@pytest.mark.parametrize("texts, files, content, saved, files_host, auth", [
+    (["The spacing sucks. See screenshot"], [("IMG_5570.jpeg", PHOTO)], "The spacing sucks. See screenshot", [PHOTO],
+     None, PLOW_AUTH),
+    # Served from another origin, the same bytes arrive but the token stays home.
+    ([""], [("IMG_5571.jpeg", PHOTO)], "", [PHOTO], "localhost", None),
+    (["two shots", ""], [("a.jpeg", PHOTO), ("b.png", b"png")], "two shots", [PHOTO, b"png"], None, PLOW_AUTH),
+    (["see this"], [("gone.jpeg", None)], "see this\n\n(attachment gone.jpeg couldn't be fetched: HTTPStatusError)", [],
+     None, PLOW_AUTH),
+], ids=["captioned-photo", "bare-photo-other-host", "burst-of-two", "unfetchable"])
+def test_a_members_attachments_reach_the_sous_as_local_files(texts, files, content, saved, files_host, auth):
     async def scenario(fake, bridge, delivered):
+        fake.files_host = files_host
         for i, text in enumerate(texts):
             await fake.inbound(HOME, OWNER, text, files=files[i:i + 1] if len(texts) > 1 else files)
         await eventually(lambda: delivered)
@@ -238,10 +245,34 @@ def test_a_members_attachments_reach_the_sous_as_local_files(texts, files, conte
         assert "file" in meta if saved else "file" not in meta
         assert [p.read_bytes() for p in paths] == saved
         assert all(p.parent.stat().st_mode & 0o777 == 0o700 for p in paths)
+        assert list(fake.files_auth.values()) == [auth] * len(files)
     run_bridge(scenario)
 
 
-def test_reads_the_credential_file_plow_agents_mint_writes(tmp_path):
+@pytest.mark.parametrize("field, content, saved", [
+    ("url", "see this\n\n(attachment shot.jpeg isn't available)", False),
+    ("filename", "see this", True),
+], ids=["no-url", "no-filename"])
+def test_an_attachment_missing_a_field_never_holds_up_delivery(field, content, saved):
+    async def scenario(fake, bridge, delivered):
+        message = fake.add(HOME, OWNER, "see this", files=[("shot.jpeg", PHOTO)])
+        message["attachments"][0][field] = None
+        await fake._broadcast(message)
+        await eventually(lambda: delivered)
+        got, meta = delivered[0]
+        assert got == content
+        assert ("file" in meta) == saved
+        if saved:
+            [path] = meta["file"].split()
+            assert Path(path).read_bytes() == PHOTO
+        await asyncio.sleep(0.2)
+        await fake.inbound(HOME, OWNER, "marker")
+        await eventually(lambda: len(delivered) == 2)
+        assert delivered[1][0] == "marker"
+    run_bridge(scenario)
+
+
+def test_reads_the_credential_file_latch_agents_new_writes(tmp_path):
     (tmp_path / "plow-credentials").write_text(
         f"PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN={TOKEN}\n# plow-agent-uid: 73f5\n")
     assert read_env(tmp_path / CREDENTIALS) == {"PLOW_API_BASE": "https://api.plow.co", "PLOW_AGENT_TOKEN": TOKEN}

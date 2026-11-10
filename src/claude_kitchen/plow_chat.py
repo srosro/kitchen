@@ -22,7 +22,7 @@ from mcp.types import Tool
 from claude_kitchen.channel import push, reply_server
 from claude_kitchen.state import atomic_write_json, plow_chat_dir, read_env, state_dir, with_digest
 
-CREDENTIALS = "plow-credentials"  # written mode 600 by `plow-agents mint LINE --credential-file`
+CREDENTIALS = "plow-credentials"  # written mode 600 by `latch agents new --own --credential-file`
 RECONNECT_DELAY = 5
 PAGE = 50
 # One speaker's back-to-back texts are one tag. iMessage sends a link as its
@@ -144,10 +144,18 @@ class Bridge:
             self.due = asyncio.get_running_loop().time() + BURST_SECONDS
 
     async def fetch(self, attachment: dict) -> Path:
-        """Save an inbound attachment under files/, named by its uid."""
-        r = await self.client.get(attachment["url"])
+        """Save an inbound attachment under files/, named by its uid. The Plow
+        token goes only to Plow's own API origin: a URL anywhere else gets a
+        client of its own, with no credentials."""
+        base = self.client.base_url
+        url = base.join(attachment["url"])
+        if (url.scheme, url.host, url.port) == (base.scheme, base.host, base.port):
+            r = await self.client.get(url)
+        else:
+            async with httpx.AsyncClient(timeout=UPLOAD_TIMEOUT) as other:
+                r = await other.get(url)
         r.raise_for_status()
-        file = self.cursor.parent / "files" / (attachment["uid"] + Path(attachment["filename"]).suffix)
+        file = self.cursor.parent / "files" / (attachment["uid"] + Path(attachment["filename"] or "").suffix)
         file.parent.mkdir(mode=0o700, exist_ok=True)
         await asyncio.to_thread(file.write_bytes, r.content)
         return file
@@ -156,24 +164,28 @@ class Bridge:
         """Hand a participant's burst to the sous as one text, its attachments
         saved locally and their paths in `file`; our own sends, Plow's system
         notes and messages with neither text nor files (tapbacks) are only
-        recorded. An attachment that can't be fetched is named in the text
-        rather than holding up the burst."""
+        recorded. An attachment with no URL yet, or one that can't be fetched,
+        is named in the text rather than holding up the burst."""
         async with self.handing:
             if self.burst:
                 await self._flush()
 
     async def _flush(self):
         first = self.burst[0]
-        if name := sender_name(first["sender"]):
+        if sender := sender_name(first["sender"]):
             texts = [m["body"] for m in self.burst if m["body"].strip()]
             files = []
             for attachment in (a for m in self.burst for a in m["attachments"]):
+                name = attachment["filename"] or attachment["uid"]
+                if not attachment["url"]:
+                    texts.append(f"(attachment {name} isn't available)")
+                    continue
                 try:
                     files.append(str(await self.fetch(attachment)))
                 except httpx.HTTPError as e:
-                    texts.append(f"(attachment {attachment['filename']} couldn't be fetched: {type(e).__name__})")
+                    texts.append(f"(attachment {name} couldn't be fetched: {type(e).__name__})")
             if texts or files:
-                meta = {"from": name, "chat": first["chat_uid"]} | ({"file": " ".join(files)} if files else {})
+                meta = {"from": sender, "chat": first["chat_uid"]} | ({"file": " ".join(files)} if files else {})
                 await self.deliver("\n\n".join(texts), meta)
         uids = self.taken[first["chat_uid"]]
         uids += [m["uid"] for m in self.burst]  # after delivery, so a crash mid-send can't suppress it

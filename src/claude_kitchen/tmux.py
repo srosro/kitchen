@@ -14,8 +14,8 @@ from claude_kitchen.state import state_root, swarm_held
 
 # Per-call tmux timeout. Generous enough that fast queries (has-session,
 # new-session, list-windows) don't spuriously time out when the tmux server is
-# briefly serialized behind another kitchen launching at the same time — the
-# `kitchen open --sub-sous` x2 race that used to crash both opens at 5s.
+# briefly serialized behind another kitchen launching at the same time, which
+# at 5s used to crash both launches.
 TIMEOUT = 15
 
 # Probe budget for "is this kitchen's server alive?". Enumerating kitchens costs
@@ -171,6 +171,14 @@ _PROMPT_MARKERS = {
     "gemini": "? for shortcuts",  # agy TUI footer, present when input is editable
 }
 
+# The codex screens wait_for_prompt answers, by their own text, and the keys
+# each takes.
+_CODEX_SCREENS = {
+    "Update available!": ("3", "Enter"),
+    "Trust this folder?": ("Enter",),
+    "Do you trust the contents": ("Enter",),  # the same dialog in older codex (0.154)
+}
+
 # Claude Code's one-time modals, keyed by an option only the live dialog shows.
 # Both default to the refusing option, and accepting one is a trust decision
 # kitchen must not make for the head chef, so wait_for_prompt stops on them.
@@ -182,8 +190,7 @@ _CLAUDE_ONE_TIME = {
 
 class PromptBlocked(Exception):
     """A Claude agent is parked on a one-time modal only a human may accept.
-    `cwd` is where to accept it; a caller that is about to delete the pane's
-    directory points it at a surviving parent (trust covers subdirectories)."""
+    `cwd` is where to accept it."""
 
     def __init__(self, prompt: str, cwd: str):
         self.prompt, self.cwd = prompt, cwd
@@ -281,7 +288,7 @@ def wait_for_prompt(kitchen: str, window: str, backend: str,
 
     Progress-based, not a flat cap: under heavy machine load the whole boot
     (window → dialog → confirm → render the banner) can take far longer than any
-    fixed deadline — diagnosed live on a load-50 box, where a healthy child sous
+    fixed deadline — diagnosed live on a load-50 box, where a healthy agent
     simply booted slowly. So keep waiting as long as the pane keeps CHANGING
     (making progress) and give up only after `stall_timeout` seconds of NO change
     (truly stuck / crashed) or the `timeout` hard ceiling. Returns False on
@@ -289,21 +296,15 @@ def wait_for_prompt(kitchen: str, window: str, backend: str,
     """
     marker = _PROMPT_MARKERS[backend]
     hard_deadline = time.time() + timeout
-    # Codex can show two screens before its welcome banner: an "Update
-    # available!" picker when a new version is published, and the directory
-    # trust dialog. `3` + Enter answers both — "Skip until next version" on the
-    # picker; on the two-option trust dialog the `3` is ignored and Enter takes
-    # the pre-selected "Yes, continue". Match each screen by its own text: the
-    # sign-in screen also says "Press enter to continue", and there `3` selects
-    # "Provide your own API key", whose field then takes the next ticket as the
-    # key. Signed out, the cook gets no keys and hire fails at the stall.
+    # Codex can show two screens before its welcome banner, each answered by
+    # its own keys: an "Update available!" picker when a new version is
+    # published (`3` = "Skip until next version"), and the folder trust dialog,
+    # whose pre-selected yes takes a bare Enter. Match each
+    # screen by its own text: the sign-in screen also says "Press enter to
+    # continue", and there `3` selects "Provide your own API key", whose field
+    # then takes the next ticket as the key. Signed out, the cook gets no keys
+    # and hire fails at the stall.
     codex_answered = set()
-    # A claude agent launched with --dangerously-load-development-channels (the
-    # sous) shows a one-time "Loading development channels" confirmation before
-    # its welcome banner. Option 1 ("I am using this for local development") is
-    # pre-selected, so a bare Enter confirms it. Only the sous loads dev
-    # channels, so this never fires for cooks.
-    channels_confirmed = False
     last = None
     last_change = time.time()
     while time.time() < hard_deadline:
@@ -321,19 +322,13 @@ def wait_for_prompt(kitchen: str, window: str, backend: str,
                     raise PromptBlocked(blocker, cwd)
                 if marker in content:
                     return True
-                screen = next((s for s in ("Update available!",
-                                           "Do you trust the contents")
+                screen = next((s for s in _CODEX_SCREENS
                                if s in content and s not in codex_answered),
                               None)
                 if backend == "codex" and screen:
-                    tmux("send-keys", "-t", target(window), "3", "Enter",
+                    tmux("send-keys", "-t", target(window), *_CODEX_SCREENS[screen],
                          kitchen=kitchen, check=True)
                     codex_answered.add(screen)
-                if (backend == "claude" and not channels_confirmed
-                        and "Loading development channels" in content):
-                    tmux("send-keys", "-t", target(window), "Enter",
-                         kitchen=kitchen, check=True)
-                    channels_confirmed = True
                 if content != last:
                     last, last_change = content, time.time()
                 elif time.time() - last_change > stall_timeout:
