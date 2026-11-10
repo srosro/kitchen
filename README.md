@@ -17,7 +17,7 @@ It runs the stock agent CLIs you already use—authenticated through your existi
 | **Parallel work without a black box** | Each cook is an isolated tmux window. Run independent workstreams concurrently, attach to watch them live, inspect a pane with `kitchen peek`, or take over the keyboard yourself. |
 | **Memory that survives the shift** | Per-project `mistakes.md` and `preferences.md` files persist across kitchens, while per-kitchen notes support handoffs and task briefs. The team can carry forward lessons without keeping every old conversation alive. |
 
-Kitchen also integrates the superpowers skills workflow for brainstorming, specs, chunked implementation, review, and verification. For heavier use cases it can launch a child kitchen for an independent workstream or a clean-room Claude/Codex cook for a more reproducible evaluation—but the core stays deliberately small: tmux down, hooks and a Unix socket back up.
+Kitchen also integrates the superpowers skills workflow for brainstorming, specs, chunked implementation, review, and verification. For heavier use cases it can hand an independent workstream to another kitchen's sous with a ticket, or launch a clean-room Claude/Codex cook for a more reproducible evaluation—but the core stays deliberately small: tmux down, hooks and a Unix socket back up.
 
 ## The mental model
 
@@ -222,7 +222,6 @@ The sous runs these commands under the hood. You can also use them directly from
 | Command | What it does |
 |---|---|
 | `kitchen open [name] [project]` | Open a kitchen; an explicit name creates a worktree. |
-| `kitchen open <name> --sub-sous` | Launch a fresh child kitchen whose sous runs in its own tmux session. |
 | `kitchen hire <cook> [options]` | Spawn a cook and wait until its interactive prompt is ready. |
 | `kitchen roles` | List the packaged cook roles. |
 | `kitchen ticket <cook> "message" [--chat-message "<source> <chat> <id>"]` | Deliver a verified message to a cook. `--chat-message` names the chat message the ticket answers; it rides back on the cook's next report as `chat_message`. |
@@ -279,7 +278,7 @@ When a cook completes a turn:
 4. The per-kitchen MCP server emits a Claude channel notification.
 5. The response appears automatically in the sous's context, and the sous decides whether to follow up, review, iterate, or report back.
 
-The root sous's own Stop hook does not notify its own socket, preventing an echo loop. Child sous sessions are the deliberate exception: they can report completion to their parent kitchen.
+The sous's own Stop hook does not notify its own socket, preventing an echo loop.
 
 ## Where state lives
 
@@ -306,13 +305,14 @@ The root sous's own Stop hook does not notify its own socket, preventing an echo
 
 A kitchen whose state dir holds `plow-chat/plow-credentials` also loads the `plow-chat` channel when `kitchen open` starts its sous. Texts to that Plow line arrive as `<channel source="plow-chat" from="<name>" chat="<chat uid>">`; photos and files sent with them are saved under `plow-chat/files/` and their space-separated paths added as a `file` attribute. The sous answers with its `reply` tool, or sends up to four local files as one message with `send_file`. There is no allowlist: Plow delivers only chats the line's account owns, meaning the owner's 1:1 and any iMessage group the owner was in when its first text arrived. Every member of those chats speaks with head-chef authority, and so does any other agent's Plow line in them: its texts arrive under that line's name. Anyone who has both numbers can start such a group, so the owner should treat every group with the line as trusted.
 
-**Setup**, using [`plow-agents`](https://github.com/plow-pbc/plow-agents#quickstart) and the kitchen name `kitchen open` prints (a kitchen `boss` opened in a `widget` repo is `widget-boss`):
+**Setup**, using [`latch`](https://github.com/plow-pbc/latch-cli#install) and the kitchen name `kitchen open` prints (a kitchen `boss` opened in a `widget` repo is `widget-boss`):
 
 ```sh
-plow-agents login                 # text the printed phrase from your phone
-plow-agents lines                 # pick a free line
+latch login                       # text the printed code from your phone
+latch agents lines                # pick a free line
 mkdir -p -m 700 ~/.claude-kitchen/widget-boss/plow-chat
-plow-agents mint ln_... --credential-file ~/.claude-kitchen/widget-boss/plow-chat/plow-credentials
+latch agents new --own --name widget-boss --line ln_... \
+  --credential-file ~/.claude-kitchen/widget-boss/plow-chat/plow-credentials
 ```
 
 Then restart the sous so it loads the channel: it can run `kitchen restart sous` itself, which relaunches it on the same session in its tmux pane (or `/exit`, then `kitchen open --resume boss` from the project root). Text the line to check it. A new group needs no setup: add the line's number to it.
