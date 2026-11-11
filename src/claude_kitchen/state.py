@@ -115,11 +115,15 @@ def mcp_servers(kitchen: str) -> dict:
     return servers
 
 
+# A room's name goes into the sous's prompt, and any member can publish an alias: only plain ones do.
+SWARM_ROOM = re.compile(r"#[A-Za-z0-9._=/+-]+:[A-Za-z0-9.-]+(:[0-9]+)?|![A-Za-z0-9._=/+-]+(:[A-Za-z0-9.-]+(:[0-9]+)?)?")
+
+
 def swarm_rooms(account: dict) -> list[str]:
     """The account's chat rooms, as swarm lists them: by alias, or by bare ID
     (`!…`) when a room has none, as a DM doesn't; join takes either. Spaces are
-    left out: swarm refuses them as unencrypted. A room that can't be looked up
-    is skipped, loudly."""
+    left out: swarm refuses them as unencrypted. A room whose name isn't plain,
+    or that can't be looked up, is skipped, loudly."""
     listed = subprocess.run([swarm_binary(), "accounts", "list"], capture_output=True, text=True, check=True)
     row = next(a for a in json.loads(listed.stdout)["accounts"] if a["account"] == account["user_id"])
     if row["rooms"] is None:  # swarm couldn't read the account, as when its token was revoked
@@ -136,11 +140,13 @@ def swarm_rooms(account: dict) -> list[str]:
     joinable = []
     for room in rooms:
         try:
+            if not SWARM_ROOM.fullmatch(room):
+                raise ValueError("not a plain room name")
             room_id = room if room.startswith("!") else get(f"/directory/room/{quote(room, safe='')}")["room_id"]
             if get(f"/rooms/{quote(room_id, safe='')}/state/m.room.create").get("type") != "m.space":
                 joinable.append(room)
         except (OSError, ValueError, KeyError, TypeError) as e:
-            print(f"kitchen: swarm room {room} can't be looked up, so the sous won't join it ({e!r})", file=sys.stderr)
+            print(f"kitchen: swarm room {room!r} can't be looked up, so the sous won't join it ({e!r})", file=sys.stderr)
     return joinable
 
 
