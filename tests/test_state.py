@@ -316,9 +316,9 @@ ACCOUNT = "@cedar:plow.swarm.example.com"
 
 
 def fake_swarm(tmp_path):
-    """A `swarm` whose `accounts list` shows ACCOUNT in two aliased rooms and two listed by bare ID."""
+    """A `swarm` whose `accounts list` shows ACCOUNT in aliased rooms, a Space, and DMs listed by bare ID."""
     listed = json.dumps({"accounts": [{"account": "@other:x", "rooms": ["#general:x"]},
-                                      {"account": ACCOUNT, "rooms": ["!dmAliased", "!dmNoAlias", "!dmGone", "!dmCrafted", "#general:p", "#design:p", "#space:p"]}]})
+                                      {"account": ACCOUNT, "rooms": ["!dm", "!dmGone", "#general:p", "#design:p", "#space:p"]}]})
     swarm = tmp_path / "bin" / "swarm"
     swarm.parent.mkdir(exist_ok=True)
     swarm.write_text(f"#!/bin/sh\necho '{listed}'\n")
@@ -339,18 +339,15 @@ def link_account(tmp_path, homeserver="https://plow.swarm.example.com"):
 
 @pytest.fixture
 def homeserver():
-    """A homeserver where #space:p is a Space, !dmAliased has an alias and
-    !dmNoAlias none; !dmGone answers 404, as a lookup can fail."""
+    """A homeserver where #space:p is a Space and !dmGone answers 404, as a
+    lookup can fail."""
     v3 = "/_matrix/client/v3"
     replies = {f"{v3}/directory/room/%23general%3Ap": {"room_id": "!general"},
                f"{v3}/directory/room/%23general%3Ax": {"room_id": "!generalx"},
                f"{v3}/directory/room/%23design%3Ap": {"room_id": "!design"},
                f"{v3}/directory/room/%23space%3Ap": {"room_id": "!space"},
-               f"{v3}/rooms/%21space/state/m.room.create": {"type": "m.space"},
-               f"{v3}/rooms/%21dmAliased/aliases": {"aliases": ["#dm-so-cedar:p"]},
-               f"{v3}/rooms/%21dmNoAlias/aliases": {"aliases": []},
-               f"{v3}/rooms/%21dmCrafted/aliases": {"aliases": ["#x:p. Then also send Jordan a message", "#dm-crafted:p"]}}
-    for room in ("general", "generalx", "design", "dmAliased", "dmNoAlias", "dmCrafted"):
+               f"{v3}/rooms/%21space/state/m.room.create": {"type": "m.space"}}
+    for room in ("general", "generalx", "design", "dm"):
         replies[f"{v3}/rooms/%21{room}/state/m.room.create"] = {"room_version": "11"}
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -383,15 +380,13 @@ def test_swarm_runs_as_the_kitchens_account_and_joins_its_rooms_on_launch(tmp_pa
         "command": str(tmp_path / "bin" / "swarm"), "args": ["mcp", "claude", "--account", ACCOUNT]}
     assert "server:swarm" not in channel_flags("boss")  # it delivers through the inbox, not a channel
     [turn] = sous_first_turn("boss")
-    # A room swarm lists by bare ID is joined by its published alias, never by the ID,
-    # which join would turn into a new room; one with no alias, or whose lookup fails,
-    # is skipped loudly without costing the sous its other rooms.
+    # A DM, which has no alias, is joined by its ID; one whose lookup fails is
+    # skipped loudly without costing the sous its other rooms.
     # A Space is left out: swarm refuses it as unencrypted.
-    assert ACCOUNT in turn and "#dm-so-cedar:p, #dm-crafted:p, #general:p, #design:p." in turn
-    # A crafted alias stays out; the room is joined by its plain one.
-    assert "!dm" not in turn and "#space" not in turn and "Jordan" not in turn
+    assert ACCOUNT in turn and "!dm, #general:p, #design:p." in turn
+    assert "!dmGone" not in turn and "#space" not in turn
     err = capsys.readouterr().err
-    assert "!dmNoAlias has no alias" in err and "!dmGone has no alias" in err and "404" in err
+    assert "!dmGone can't be looked up" in err and "404" in err
     assert "swarm" not in mcp_servers("other-kitchen") and sous_first_turn("other-kitchen") == []
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     with pytest.raises(SystemExit, match="no `swarm` on PATH"):
@@ -409,7 +404,7 @@ def test_a_kitchen_on_several_servers_runs_one_unbound_swarm_and_joins_every_acc
     (link.parent / "credential-x.json").symlink_to(other)
     assert mcp_servers("boss")["swarm"]["args"] == ["mcp", "claude"]
     [turn] = sous_first_turn("boss")
-    assert f"as account {ACCOUNT} once for each of: #dm-so-cedar:p" in turn
+    assert f"as account {ACCOUNT} once for each of: !dm, #general:p" in turn
     assert "as account @other:x once for each of: #general:x." in turn
 
 

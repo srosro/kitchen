@@ -115,15 +115,11 @@ def mcp_servers(kitchen: str) -> dict:
     return servers
 
 
-SWARM_ALIAS = re.compile(r"#[A-Za-z0-9._=/+-]+:[A-Za-z0-9.-]+(:[0-9]+)?")
-
-
 def swarm_rooms(account: dict) -> list[str]:
-    """The account's chat rooms, each by a name `join` takes. swarm lists a
-    room with no canonical alias by its bare ID (`!…`), which join would turn
-    into a new room named after it; such a room is joined by the first alias
-    the server publishes for it. Spaces are left out: swarm refuses them as
-    unencrypted. A room that can't be named or looked up is skipped, loudly."""
+    """The account's chat rooms, as swarm lists them: by alias, or by bare ID
+    (`!…`) when a room has none, as a DM doesn't; join takes either. Spaces are
+    left out: swarm refuses them as unencrypted. A room that can't be looked up
+    is skipped, loudly."""
     listed = subprocess.run([swarm_binary(), "accounts", "list"], capture_output=True, text=True, check=True)
     row = next(a for a in json.loads(listed.stdout)["accounts"] if a["account"] == account["user_id"])
     if row["rooms"] is None:  # swarm couldn't read the account, as when its token was revoked
@@ -137,18 +133,15 @@ def swarm_rooms(account: dict) -> list[str]:
         with urlopen(Request(url, headers={"Authorization": f"Bearer {account['access_token']}"}), timeout=30) as r:
             return json.load(r)
 
-    named = []
+    joinable = []
     for room in rooms:
         try:
             room_id = room if room.startswith("!") else get(f"/directory/room/{quote(room, safe='')}")["room_id"]
-            if get(f"/rooms/{quote(room_id, safe='')}/state/m.room.create").get("type") == "m.space":
-                continue
-            names = [room] if room.startswith("#") else get(f"/rooms/{quote(room_id, safe='')}/aliases")["aliases"]
-            # Any member can publish an alias, and it goes into the sous's prompt: only plain ones do.
-            named.append(next(name for name in names if SWARM_ALIAS.fullmatch(name)))
-        except (OSError, ValueError, KeyError, StopIteration, TypeError) as e:  # no plain alias, or a lookup failed
-            print(f"kitchen: swarm room {room} has no alias the sous can join it by ({e!r})", file=sys.stderr)
-    return named
+            if get(f"/rooms/{quote(room_id, safe='')}/state/m.room.create").get("type") != "m.space":
+                joinable.append(room)
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            print(f"kitchen: swarm room {room} can't be looked up, so the sous won't join it ({e!r})", file=sys.stderr)
+    return joinable
 
 
 def swarm_held(account: str) -> bool:
