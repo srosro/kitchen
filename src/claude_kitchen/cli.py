@@ -672,7 +672,7 @@ def cmd_ticket(args):
     kitchen = resolve_kitchen(args.kitchen)
     base = state_dir(kitchen)
     name = args.cook
-    message = args.message
+    message = f"{args.message} [priority: {args.priority}]" if args.priority else args.message
 
     if name == "sous":
         _ticket_sous(kitchen, message)
@@ -1522,6 +1522,9 @@ def main():
     p_ticket.add_argument("message", help="Message to send")
     p_ticket.add_argument("--chat-message", help="The chat message this ticket answers, e.g. 'swarm <room> <event_id>'; it rides back on the cook's next report")
     p_ticket.add_argument("--kitchen", help="Target kitchen")
+    priority = p_ticket.add_mutually_exclusive_group(required=True)
+    priority.add_argument("--priority", metavar="REF", help="The Swarm priority this ticket works; it rides in the ticket and the cook's report echoes it")
+    priority.add_argument("--dangerously-skip-priority", action="store_true", help="Send a ticket that works no Swarm priority")
 
     p_wait = sub.add_parser("wait", help="Record a chat message waiting on someone outside the kitchen; 'wait done <id>' clears it")
     p_wait.add_argument("source", help="Chat source, e.g. swarm, or 'done' to clear")

@@ -66,10 +66,10 @@ The sous can turn that into a flow like this:
 ```bash
 kitchen hire eng --backend claude --role eng
 kitchen hire reviewer --backend codex --role reviewer
-kitchen ticket eng "Implement the agreed import feature and verify it end to end."
+kitchen ticket eng --priority <ref> "Implement the agreed import feature and verify it end to end."
 
 # eng's response arrives automatically in the sous's context
-kitchen ticket reviewer "Review the import implementation. Do not edit; report findings."
+kitchen ticket reviewer --priority <ref> "Review the import implementation. Do not edit; report findings."
 ```
 
 You continue talking to the sous while both cook sessions remain visible in tmux. The supplied workflow reuses cooks when their context is valuable, routes findings back to the implementer, and requires evidence before declaring the work done.
@@ -224,9 +224,9 @@ The sous runs these commands under the hood. You can also use them directly from
 | `kitchen open [name] [project]` | Open a kitchen; an explicit name creates a worktree. |
 | `kitchen hire <cook> [options]` | Spawn a cook and wait until its interactive prompt is ready. |
 | `kitchen roles` | List the packaged cook roles. |
-| `kitchen ticket <cook> "message" [--chat-message "<source> <chat> <id>"]` | Deliver a verified message to a cook. `--chat-message` names the chat message the ticket answers; it rides back on the cook's next report as `chat_message`. |
+| `kitchen ticket <cook> "message" (--priority <ref> \| --dangerously-skip-priority) [--chat-message "<source> <chat> <id>"]` | Deliver a verified message to a cook. `--priority` names the Swarm priority the ticket works; it is appended to the message as `[priority: <ref>]` and the cook's report echoes it. `--chat-message` names the chat message the ticket answers; it rides back on the cook's next report as `chat_message`. |
 | `kitchen wait <source> <chat> <id> [note] --on <who>` / `kitchen wait done <id>` | Record, or clear, a chat message waiting on someone outside the kitchen. While anything is open (these, or a cook's `--chat-message`), every notification kitchen delivers to the sous starts with a ♨️/🍗 digest, oldest first. |
-| `kitchen ticket sous --kitchen <kitchen> "message"` | From a sous, deliver a ticket to another kitchen's sous over its channel socket; exits non-zero if that sous is not listening. |
+| `kitchen ticket sous --kitchen <kitchen> "message" (--priority <ref> \| --dangerously-skip-priority)` | From a sous, deliver a ticket to another kitchen's sous over its channel socket; exits non-zero if that sous is not listening. |
 | `kitchen peek <cook> [--full]` | Capture the cook's current pane or full scrollback. |
 | `kitchen brigade [kitchen]` | Show live cook status and known context usage. |
 | `kitchen clock-out <cook>` | Hard-kill a cook and remove its managed state. |
