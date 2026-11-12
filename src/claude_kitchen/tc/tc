@@ -155,7 +155,8 @@ tc_prune_targets() { # tc_prune_targets <repo-or-tag>
     fi
     if [ -z "$why" ]; then
       printf '%s %s %s\n' "${TC_DRYRUN:+would }prune" "$(du -sh "$dir/target" | cut -f1)" "$dir/target"
-      [ -n "${TC_DRYRUN:-}" ] || rm -rf -- "$dir/target"
+      [ -n "${TC_DRYRUN:-}" ] || rm -rf -- "$dir/target" 2>/dev/null ||
+        printf 'incomplete %s (files not ours, e.g. root-owned from a docker build)\n' "$dir/target"
     else
       printf 'skip %s (%s)\n' "$dir" "$why"
     fi
