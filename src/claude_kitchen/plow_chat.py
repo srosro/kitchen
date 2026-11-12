@@ -332,8 +332,8 @@ class Bridge:
         lines = {}
         for m in reversed(r.json()["data"]):
             who = "you" if m["sender"]["type"] == "agent" and m["sender"]["relationship"] == "self" else sender_name(m["sender"])
-            if who and m["body"].strip():
-                lines[m["uid"]] = f"{who}: {m['body']}"
+            if who and (m["body"].strip() or m["attachments"]):
+                lines[m["uid"]] = f"{who}: {m['body'].strip() or '(a file)'}"
         return lines
 
     async def held(self, text: str, chat: str | None = None, handles: list[str] = ()) -> str | None:
