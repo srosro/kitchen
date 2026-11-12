@@ -31,13 +31,9 @@ class FakePlow:
         self.inbound_files = {}  # attachment uid -> bytes a member sent; absent answers 404
         self.files_host = None  # serve attachment URLs from this host, as absolute URLs
         self.files_auth = {}  # attachment uid -> Authorization header its download carried
-        self.started = []  # (members, body, idempotency_key) of each chat the agent started
-        self.answer = None  # (handle, body) answering a started chat before the agent reads it back
         self._uids = itertools.count(1)
         self.app = Starlette(routes=[
             Route("/v1/ws/ticket", self._ticket, methods=["POST"]),
-            Route("/v1/agents/me", self._me),
-            Route("/v1/chats", self._start, methods=["POST"]),
             Route("/v1/chats/{chat}/messages", self._messages, methods=["GET", "POST"]),
             Route("/v1/chats/{chat}/attachments", self._attachments, methods=["POST"]),
             Route("/provider/{uid}", self._upload, methods=["PUT"]),
@@ -92,27 +88,6 @@ class FakePlow:
         if not self._authorized(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         return JSONResponse({"ticket": f"wst_{next(self._uids)}"}, status_code=201)
-
-    async def _me(self, request):
-        if not self._authorized(request):
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-        return JSONResponse({"line": {"uid": "ln_self"}, "chats": []})
-
-    async def _start(self, request):
-        """Start a chat with its first message, adopting the thread its members already have."""
-        if not self._authorized(request):
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-        sent = await request.json()
-        if sent["line_uid"] != "ln_self" or not sent["members"]:
-            return JSONResponse({"error": {"code": "invalid_request"}}, status_code=400)
-        members = sorted(sent["members"])
-        known = [chat for chat, (seen, _, _) in enumerate(self.started) if sorted(seen) == members]
-        self.started.append((sent["members"], sent["body"], sent["idempotency_key"]))
-        chat = f"cht_started{known[0] if known else len(self.started) - 1}"
-        await self._broadcast(self._message(chat, sent["body"]))  # Plow echoes the first message too
-        if self.answer:
-            await self.inbound(chat, *self.answer)
-        return JSONResponse({"uid": chat, "created": not known}, status_code=201)
 
     async def _messages(self, request):
         if not self._authorized(request):
