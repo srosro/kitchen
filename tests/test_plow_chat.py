@@ -472,6 +472,17 @@ def test_start_chat_sends_the_first_message_and_hears_the_answer_in_the_new_chat
     run_bridge(scenario)
 
 
+def test_a_chat_started_while_the_socket_is_down_is_caught_up_on_reconnect(monkeypatch):
+    async def scenario(fake, bridge, delivered):
+        monkeypatch.setattr(plow_chat, "RECONNECT_DELAY", 0.5)
+        await fake.drop_sockets()
+        chat = (await bridge.start_chat([TEAMMATE], "hi Alex")).removeprefix("started ")
+        fake.add(chat, TEAMMATE, "hey Cedar")  # nobody hears the echo or the answer live
+        await eventually(lambda: delivered)
+        assert delivered == [("hey Cedar", {"from": "Alex", "chat": chat})]
+    run_bridge(scenario)
+
+
 @pytest.mark.parametrize("handles, text, error", [
     ([TEAMMATE], "  ", ValueError),
     ([], "hello", RuntimeError),
