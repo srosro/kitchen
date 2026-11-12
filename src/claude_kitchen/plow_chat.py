@@ -155,6 +155,7 @@ class Bridge:
     burst: list = field(init=False, default_factory=list)  # one speaker's texts not yet handed over
     due: float = 0.0  # loop time the burst closes at
     handing: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)  # the socket and a send both take and flush
+    starting: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)  # parallel start_chats share the daily cap
 
     def __post_init__(self):
         self.taken = json.loads(self.cursor.read_text()) if self.cursor.exists() else {}
@@ -300,7 +301,11 @@ class Bridge:
     async def start_chat(self, handles: list[str], text: str) -> str:
         """Start a chat on this line with `handles` by sending `text`; Plow seats
         the line's owner too, and adopts the thread if those people already have one."""
-        if not text.strip():
+        async with self.starting:
+            return await self._start_chat(handles, text.strip())
+
+    async def _start_chat(self, handles: list[str], text: str) -> str:
+        if not text:
             raise ValueError("first message is empty; not sent")
         directory = self.cursor.parent
         r = await self.client.get("/v1/chats")
@@ -332,7 +337,7 @@ class Bridge:
                 data = r.json()["data"]  # newest first; an answer may already sit above ours
                 ours = next(i for i, m in enumerate(data)
                             if m["sender"]["type"] == "agent" and m["sender"]["relationship"] == "self"
-                            and m["body"] == text.strip())
+                            and m["body"] == text)
                 self.taken[chat["uid"]] = [m["uid"] for m in data[ours:]]
                 atomic_write_json(self.cursor, self.taken)
         await self.catch_up(chat["uid"])  # an answer above ours that a reconnect's catch-up missed

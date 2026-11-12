@@ -516,3 +516,16 @@ def test_start_chat_reaches_allowlisted_handles_never_marks_chats_trusted_and_ca
         assert [line.split()[2:] for line in log] == [["created", allowed[0]], ["adopted", allowed[0]],
                                                       ["created", allowed[1]]]
     run_bridge(scenario, cursor=cursor)
+
+
+def test_parallel_start_chats_share_the_daily_cap(monkeypatch):
+    monkeypatch.setattr(plow_chat, "NEW_CHATS_PER_DAY", 1)
+    cursor = Path(tempfile.mkdtemp()) / "last_seen.json"
+    (cursor.parent / plow_chat.START_CHAT_ALLOW).write_text("+15550000101\n+15550000102\n")
+
+    async def scenario(fake, bridge, delivered):
+        results = await asyncio.gather(*(bridge.start_chat([h], "welcome") for h in ["+15550000101", "+15550000102"]),
+                                       return_exceptions=True)
+        assert len(fake.started) == 1
+        assert sum(isinstance(r, ValueError) for r in results) == 1
+    run_bridge(scenario, cursor=cursor)
