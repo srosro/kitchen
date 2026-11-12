@@ -4,6 +4,7 @@
 #   tc new <repo> <host>         connect to next free workspace (0..9)
 #   tc setup <repo> <host> [url] provision <repo>0..<repo>9
 #   tc claim <repo> <branch> [N] claim+branch a free local slot, or exact slot N
+#   tc prune-targets <repo>      delete target/ in idle local slots (TC_DRYRUN=1 lists)
 set -euo pipefail
 
 # Resolve this script's real dir (follow symlink) to find lib/fleet.sh.
@@ -34,7 +35,7 @@ _safe_branch() {
 }
 
 usage() {
-  sed -n '3,6p' "$_src" | sed 's/^#  *//' >&2
+  sed -n '3,7p' "$_src" | sed 's/^#  *//' >&2
   exit 2
 }
 
@@ -135,6 +136,34 @@ tc_claim() { # tc_claim <repo-or-tag> <branch> [exact-slot]
   return 1
 }
 
+# Delete the Rust build dir (target/) in each local <repo> slot that is idle: not
+# busy (pick.sh's _tcp_busy, the same test tc claim uses), not claimed, and with
+# nothing touched for 24h outside target/ or in target/'s first two levels. The slot's claim lock is held while deleting, so tc claim
+# can't hand the slot out mid-delete. A rebuild regenerates target/. TC_DRYRUN=1
+# only lists.
+tc_prune_targets() { # tc_prune_targets <repo-or-tag>
+  local repo dir lock why
+  _safe_name "$1"; repo=$(fleet_repo "$1")
+  . "$TC_ROOT/lib/pick.sh"; . "$TC_ROOT/lib/claim.sh"
+  for dir in "$HOME/Hacking/$repo"[0-9]; do
+    [ -d "$dir/target" ] || continue
+    lock=$(claim_lock_path "$dir")
+    if ! claim_slot "$lock"; then why=claimed
+    elif _tcp_busy "$dir"; then why=busy
+    elif [ -n "$(find "$dir" -path "$dir/target" -prune -o -mmin -1440 -print -quit; find "$dir/target" -maxdepth 2 -mmin -1440 -print -quit)" ]; then why="touched within 24h"
+    else why=
+    fi
+    if [ -z "$why" ]; then
+      printf '%s %s %s\n' "${TC_DRYRUN:+would }prune" "$(du -sh "$dir/target" | cut -f1)" "$dir/target"
+      [ -n "${TC_DRYRUN:-}" ] || rm -rf -- "$dir/target" 2>/dev/null ||
+        printf 'incomplete %s (files not ours, e.g. root-owned from a docker build)\n' "$dir/target"
+    else
+      printf 'skip %s (%s)\n' "$dir" "$why"
+    fi
+    [ "$why" = claimed ] || release_slot "$lock"
+  done
+}
+
 # Provision snippet: repo via $TC_REPO env, url via stdin (kept out of argv).
 # Clones ~/Hacking/<repo>0..<repo>9 idempotently. With no url, origin resolves
 # from <repo>0, falling back to a legacy bare ~/Hacking/<repo> checkout (which
@@ -199,6 +228,7 @@ case $1 in
   new)   shift; [ $# -eq 2 ] || usage; connect_new "$1" "$2" ;;
   setup) shift; { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; tc_setup "$@" ;;
   claim) shift; { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; tc_claim "$@" ;;
+  prune-targets) shift; [ $# -eq 1 ] || usage; tc_prune_targets "$1" ;;
   *)     [ $# -eq 3 ] || usage
          case $2 in [0-9]) ;; *) usage ;; esac  # slot N is a single digit 0-9
          connect_dir "$1" "$2" "$3" ;;

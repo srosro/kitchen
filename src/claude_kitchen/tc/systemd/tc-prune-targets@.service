@@ -1,0 +1,6 @@
+[Unit]
+Description=Delete target/ in idle ~/Hacking/%i slots
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/tc prune-targets %i
