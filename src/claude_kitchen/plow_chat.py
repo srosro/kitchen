@@ -8,6 +8,10 @@ Once `trusted-chats` exists, only the chats it lists carry authority: any other 
 arrive marked `trusted="false"`, as context the sous may answer but never act on.
 `start_chat` reaches only people already in one of the line's chats or listed in
 `start-chat-allow`, and opens at most `NEW_CHATS_PER_DAY` new chats a day, each logged.
+Every send that reaches anyone but the line's owner first goes past a fresh reviewer
+model, which reads the live thread (and, once `messages-host` names the latch host
+holding the owner's Messages, the owner's other recent threads with the same people)
+and holds a text that contradicts them, makes the owner look out of the loop, or isn't needed.
 """
 import asyncio
 import json
@@ -15,7 +19,7 @@ import mimetypes
 import sys
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from itertools import takewhile
 from pathlib import Path
 
@@ -31,7 +35,31 @@ CREDENTIALS = "plow-credentials"  # written mode 600 by `latch agents new --own 
 TRUSTED_CHATS = "trusted-chats"  # one chat uid per line; read at each hand-over, so edits need no restart
 START_CHAT_ALLOW = "start-chat-allow"  # one handle per line, beyond those already in the line's chats
 STARTED_CHATS = "started-chats.log"  # one line per chat start_chat sends: time, chat, created, handles
+MESSAGES_HOST = "messages-host"  # the latch host holding the owner's Messages, read by the pre-send review
 NEW_CHATS_PER_DAY = 5
+REVIEW_DAYS = 3  # how far back the review reads the owner's other threads
+REVIEW_MODEL = "sonnet"
+REVIEW = """An AI agent working for {owner} is about to send the iMessage below to people other than \
+{owner}: {people}. You are the second pair of eyes. Someone who gets a wrong, redundant or \
+out-of-step text from {owner}'s agent concludes that {owner} is disorganized.
+
+Hold it if any of these is true:
+- It contradicts, or has been overtaken by, anything said in this thread or in {owner}'s other \
+recent threads with them. The newest texts count most.
+- It would make {owner} look out of the loop, or show agents talking past each other or past {owner}.
+- It repeats what someone already told them, or answers something nobody asked.
+- It isn't needed: {owner} is handling it, or saying nothing is better. When in doubt, hold.
+
+This thread, oldest first ("you" is the agent):
+{thread}
+
+{owner}'s other threads with them over the last {days} days, oldest first:
+{other}
+
+The draft:
+{text}
+
+Answer on one line: SEND, or HOLD: followed by one sentence saying why."""
 RECONNECT_DELAY = 5
 PAGE = 50
 # One speaker's back-to-back texts are one tag. iMessage sends a link as its
@@ -130,6 +158,42 @@ def attachable(path: str) -> Path:
     return file
 
 
+async def run(*args: str, stdin: str = "") -> str:
+    """The stdout of a command, failing loudly with its tail if it fails."""
+    proc = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.PIPE,
+                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    out, err = await proc.communicate(stdin.encode())
+    if proc.returncode:
+        raise RuntimeError(f"{args[0]} {args[1]} failed with exit {proc.returncode}: "
+                           f"{(err or out).decode()[-300:]}; not sent")
+    return out.decode()
+
+
+async def ask_reviewer(prompt: str) -> str:
+    """A fresh model's answer to `prompt`, with no tools, settings or memory of its own."""
+    return await run("claude", "-p", "--safe-mode", "--tools", "", "--no-session-persistence",
+                     "--model", REVIEW_MODEL, stdin=prompt)
+
+
+async def owner_threads(host: str, handles: set[str], owner: str) -> str:
+    """The owner's own Messages threads with any of `handles` from the last
+    REVIEW_DAYS, read through latch, as `name: text` lines."""
+    cutoff = datetime.now().astimezone() - timedelta(days=REVIEW_DAYS)
+    chats = json.loads(await run("latch", "messages", "chats", "--host", host, "--limit", "200"))["chats"]
+    threads = []
+    for chat in chats:
+        if (datetime.fromisoformat(chat["last_message_at"]) < cutoff
+                or not handles & {p["handle"].casefold() for p in chat["participants"]}):
+            continue
+        thread = json.loads(await run("latch", "messages", "thread", "--host", host,
+                                      "--chat-id", str(chat["id"]), "--limit", "50"))
+        lines = [f"{owner if m['from']['me'] else m['from']['name'] or m['from']['handle']}: {m['text']}"
+                 for m in thread["messages"] if m["text"] and datetime.fromisoformat(m["date"]) >= cutoff]
+        names = ", ".join(p["name"] or p["handle"] for p in chat["participants"])
+        threads.append(f"[{owner}, {names}]\n" + "\n".join(lines))
+    return "\n\n".join(threads) or "(none)"
+
+
 def sent(r: httpx.Response, what: str) -> str:
     """Report a message send, failing unless Plow will deliver it. A held send
     answers 200 and is never delivered."""
@@ -151,6 +215,7 @@ class Bridge:
     # high-water mark: a text sent earlier can land later and sort below one
     # already taken.
     cursor: Path
+    reviewer: callable = ask_reviewer  # async (prompt) -> answer, the pre-send review's model
     taken: dict = field(init=False)
     burst: list = field(init=False, default_factory=list)  # one speaker's texts not yet handed over
     due: float = 0.0  # loop time the burst closes at
@@ -260,10 +325,55 @@ class Bridge:
         await self.flush()
         return f"not sent: {len(news)} newer message(s) in this chat reach you next; read them, then answer again"
 
+    async def thread(self, chat: str) -> dict:
+        """`chat`'s latest texts, oldest first, as uid -> `name: text` ("you" for this line)."""
+        r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": PAGE})
+        r.raise_for_status()
+        lines = {}
+        for m in reversed(r.json()["data"]):
+            who = "you" if m["sender"]["type"] == "agent" and m["sender"]["relationship"] == "self" else sender_name(m["sender"])
+            if who and (m["body"].strip() or m["attachments"]):
+                lines[m["uid"]] = f"{who}: {m['body'].strip() or '(a file)'}"
+        return lines
+
+    async def held(self, text: str, chat: str | None = None, handles: list[str] = ()) -> str | None:
+        """Why a reviewer holds `text`, bound for `chat` or the chat with
+        `handles` (an existing one's history included), or None to send it.
+        Only a text the owner alone would read goes unreviewed. The thread is
+        read fresh, so a text the sous hasn't been shown yet still counts, and
+        read again after the review, so one that lands meanwhile stops the send."""
+        r = await self.client.get("/v1/chats")
+        r.raise_for_status()
+        chats = r.json()["data"]
+        others = {c["uid"]: {p["provider_key"]: p["display_name"] for p in c["participants"]
+                             if p["type"] == "member" and p["role"] != "owner"} for c in chats}
+        owner = next((p["display_name"] for c in chats for p in c["participants"]
+                      if p["type"] == "member" and p["role"] == "owner"), "the head chef")
+        chat = chat or next((uid for uid, people in others.items() if set(people) == set(handles)), None)
+        people = {h: h for h in handles} | others.get(chat, {})
+        if not people:
+            return None
+        thread = await self.thread(chat) if chat else {}
+        host = self.cursor.parent / MESSAGES_HOST
+        other = (await owner_threads(listed(host).pop(), {h.casefold() for h in people}, owner)
+                 if host.exists() else "(not available)")
+        answer = (await self.reviewer(REVIEW.format(
+            owner=owner, people=", ".join(people.values()), thread="\n".join(thread.values()) or "(new thread)",
+            other=other, days=REVIEW_DAYS, text=text))).strip()
+        verdict, _, why = (answer.splitlines()[0] if answer else "").partition(":")
+        if verdict.strip("*. ") == "HOLD":
+            return f"not sent: a reviewer held it ({why.strip()}). Stay quiet, or bring the head chef the draft and the reason"
+        if verdict.strip("*. ") != "SEND":
+            raise RuntimeError(f"the pre-send reviewer answered neither SEND nor HOLD: {answer[:200]!r}; not sent")
+        if chat and (newer := [line for uid, line in (await self.thread(chat)).items()
+                               if uid not in thread and not line.startswith("you: ")]):
+            return f"not sent: {len(newer)} newer message(s) landed while it was reviewed; read them, then answer again"
+        return None
+
     async def reply(self, chat: str, text: str) -> str:
         if not text.strip():
             raise ValueError("reply text is empty; not sent")
-        if refusal := await self.unread(chat):
+        if refusal := await self.held(text, chat) or await self.unread(chat):  # the review is slow; read last
             return refusal
         return sent(await self.client.post(f"/v1/chats/{chat}/messages", json={"body": text}), "reply")
 
@@ -292,7 +402,8 @@ class Bridge:
             raise ValueError(f"{len(paths)} files given; a message takes 1 to {MAX_ATTACHMENTS}; nothing sent")
         files = [attachable(path) for path in paths]  # all of them before Plow hears of any
         uids = [await self.upload(chat, file) for file in files]
-        if refusal := await self.unread(chat):  # after the uploads, which can take a while
+        if refusal := await self.held(caption or f"(files: {', '.join(file.name for file in files)})", chat) \
+                or await self.unread(chat):  # after the uploads and the review, which can take a while
             return refusal
         return sent(await self.client.post(f"/v1/chats/{chat}/messages", json={
             "attachment_uids": uids, "body": caption,
@@ -318,6 +429,8 @@ class Bridge:
         log_file = directory / STARTED_CHATS
         if new_chats_today(log_file) >= NEW_CHATS_PER_DAY:
             raise ValueError(f"already started {NEW_CHATS_PER_DAY} new chats today; not sent")
+        if refusal := await self.held(text, handles=handles):
+            return refusal
         r = await self.client.get("/v1/agents/me")
         r.raise_for_status()
         r = await self.client.post("/v1/chats", json={

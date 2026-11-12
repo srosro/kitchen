@@ -33,7 +33,7 @@ class FakePlow:
         self.files_auth = {}  # attachment uid -> Authorization header its download carried
         self.started = []  # (members, body, idempotency_key) of each chat the agent started
         self.answer = None  # (handle, body) answering a started chat before the agent reads it back
-        self.members = {"cht_home": ["+15550000001", "+15550000002"]}  # chat -> member handles GET /v1/chats lists
+        self.members = {"cht_home": ["+15550000001", "+15550000002"], "cht_solo": ["+15550000001"]}  # chat -> member handles GET /v1/chats lists
         self.start_bodies = []  # each raw POST /v1/chats body
         self._uids = itertools.count(1)
         self.app = Starlette(routes=[
@@ -106,7 +106,8 @@ class FakePlow:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         if request.method == "GET":
             return JSONResponse({"data": [
-                {"uid": chat, "participants": [{"type": "member", "provider_key": h} for h in handles]}
+                {"uid": chat, "participants": [{"type": "member", "provider_key": h, "display_name": NAMES.get(h, h),
+                                                "role": "owner" if h == "+15550000001" else "member"} for h in handles]}
                 for chat, handles in self.members.items()]})
         sent = await request.json()
         self.start_bodies.append(sent)
