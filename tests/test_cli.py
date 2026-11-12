@@ -2735,7 +2735,11 @@ class TestTicketSous:
         monkeypatch.setattr(sys, "argv", ["kitchen", "ticket", "sous", "check the deploy", *priority, *flags])
         main()
 
-    def receive(self, kitchens, monkeypatch, **kw):
+    @pytest.mark.parametrize("priority, summary", [
+        (("--priority", "!prio:s $row"), "check the deploy [priority: !prio:s $row]"),
+        (("--dangerously-skip-priority",), "check the deploy"),
+    ], ids=["priority", "skip"])
+    def test_delivers_on_the_target_socket_labelled_with_the_senders_kitchen(self, kitchens, monkeypatch, priority, summary):
         received = []
         with socket.socket(socket.AF_UNIX) as srv:
             srv.bind(str(kitchens / "kitchen.sock"))
@@ -2748,30 +2752,20 @@ class TestTicketSous:
 
             listener = threading.Thread(target=accept)
             listener.start()
-            self.ticket(monkeypatch, "--kitchen", "target-main", **kw)
+            with patch("claude_kitchen.cli.send_keys") as paste:
+                self.ticket(monkeypatch, "--kitchen", "target-main", priority=priority)
             listener.join(timeout=2)
-        return received[0]
 
-    @pytest.mark.parametrize("priority, summary", [
-        (("--priority", "!prio:s $row"), "check the deploy [priority: !prio:s $row]"),
-        (("--dangerously-skip-priority",), "check the deploy"),
-    ], ids=["priority", "skip"])
-    def test_ticket_carries_its_priority_ref(self, kitchens, monkeypatch, priority, summary):
-        assert self.receive(kitchens, monkeypatch, priority=priority)["summary"] == summary
+        assert received[0]["cook"] == "sender-main"
+        assert received[0]["summary"] == summary
+        paste.assert_not_called()  # the socket, never a pasted keystroke
+        assert not (kitchens / "cooks").exists()
 
     @pytest.mark.parametrize("priority", [(), ("--priority", "p", "--dangerously-skip-priority")], ids=["neither", "both"])
     def test_ticket_without_exactly_one_priority_flag_is_refused(self, kitchens, monkeypatch, priority):
         with pytest.raises(SystemExit) as exit_:
             self.ticket(monkeypatch, "--kitchen", "target-main", priority=priority)
         assert exit_.value.code == 2
-
-    def test_delivers_on_the_target_socket_labelled_with_the_senders_kitchen(self, kitchens, monkeypatch):
-        with patch("claude_kitchen.cli.send_keys") as paste:
-            received = self.receive(kitchens, monkeypatch)
-
-        assert received["cook"] == "sender-main"
-        paste.assert_not_called()  # the socket, never a pasted keystroke
-        assert not (kitchens / "cooks").exists()
 
     @pytest.mark.parametrize("stale", [False, True], ids=["no-socket", "stale-socket"])
     def test_dead_target_exits_non_zero_and_writes_no_status(self, kitchens, monkeypatch, capsys, stale):
