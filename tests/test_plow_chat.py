@@ -1,5 +1,6 @@
 """Tests for the plow-chat channel server, against a fake Plow API."""
 import asyncio
+import re
 import tempfile
 from pathlib import Path
 
@@ -455,4 +456,89 @@ def test_only_named_tools_reach_the_bridge():
         with pytest.raises(ValueError, match="unknown tool run"):
             await call(bridge, "run", {})
         assert (await call(bridge, "reply", {"chat": HOME, "text": "hi"})).startswith("sent ")
+    run_bridge(scenario)
+
+
+def test_start_chat_sends_the_first_message_and_hears_the_answer_in_the_new_chat():
+    async def scenario(fake, bridge, delivered):
+        started = await call(bridge, "start_chat", {"handles": [TEAMMATE], "text": "hi Alex, it's Cedar"})
+        again = await call(bridge, "start_chat", {"handles": [TEAMMATE], "text": "one more thing"})
+        chat = started.removeprefix("started ")
+        assert again == f"sent in existing chat {chat}"
+        assert [(m, b) for m, b, _ in fake.started] == [([TEAMMATE], "hi Alex, it's Cedar"), ([TEAMMATE], "one more thing")]
+        assert fake.started[0][2] != fake.started[1][2]  # a fresh key per send, so Plow sends the second
+        await fake.inbound(chat, TEAMMATE, "hey Cedar")
+        await eventually(lambda: delivered)
+        assert delivered == [("hey Cedar", {"from": "Alex", "chat": chat})]
+    run_bridge(scenario)
+
+
+def test_an_answer_to_a_chat_started_while_the_socket_is_down_is_caught_up_on_reconnect(monkeypatch):
+    async def scenario(fake, bridge, delivered):
+        monkeypatch.setattr(plow_chat, "RECONNECT_DELAY", 0.5)
+        await fake.drop_sockets()  # nobody hears the echo or the answer live
+        fake.answer = (TEAMMATE, "hey Cedar")  # in before the bridge reads the new chat back
+        chat = (await bridge.start_chat([TEAMMATE], "hi Alex")).removeprefix("started ")
+        fake.add(chat, TEAMMATE, "and later")
+        await eventually(lambda: delivered)
+        assert delivered == [("hey Cedar\n\nand later", {"from": "Alex", "chat": chat})]
+    run_bridge(scenario)
+
+
+@pytest.mark.parametrize("handles, text, error", [
+    ([TEAMMATE], "  ", "empty"),
+    ([], "hello", "Plow refused"),
+    ([TEAMMATE, STRANGER], "hello", STRANGER),
+], ids=["empty-text", "plow-refuses", "stranger"])
+def test_start_chat_fails_loudly(handles, text, error):
+    async def scenario(fake, bridge, delivered):
+        with pytest.raises((ValueError, RuntimeError), match=re.escape(error)):
+            await bridge.start_chat(handles, text)
+        assert fake.started == []
+    run_bridge(scenario)
+
+
+def test_start_chat_reaches_allowlisted_handles_never_marks_chats_trusted_and_caps_new_chats(monkeypatch):
+    monkeypatch.setattr(plow_chat, "NEW_CHATS_PER_DAY", 2)
+    cursor = Path(tempfile.mkdtemp()) / "last_seen.json"
+    allowed = ["+15550000101", "+15550000102", "+15550000103"]
+    (cursor.parent / plow_chat.START_CHAT_ALLOW).write_text("\n".join(allowed) + "  # new hires\n")
+
+    async def scenario(fake, bridge, delivered):
+        await bridge.start_chat([allowed[0]], "welcome")
+        await bridge.start_chat([allowed[0]], "and again")  # the same chat adopted: not a new one
+        await bridge.start_chat([allowed[1]], "welcome")
+        with pytest.raises(ValueError, match="already started 2 new chats today"):
+            await bridge.start_chat([allowed[2]], "welcome")
+        assert [m for m, _, _ in fake.started] == [[allowed[0]], [allowed[0]], [allowed[1]]]
+        assert not any("trusted" in body for body in fake.start_bodies)  # Plow would honor it from us
+        log = (cursor.parent / plow_chat.STARTED_CHATS).read_text().splitlines()
+        assert [line.split()[2:] for line in log] == [["created", allowed[0]], ["adopted", allowed[0]],
+                                                      ["created", allowed[1]]]
+    run_bridge(scenario, cursor=cursor)
+
+
+def test_parallel_start_chats_share_the_daily_cap(monkeypatch):
+    monkeypatch.setattr(plow_chat, "NEW_CHATS_PER_DAY", 1)
+    cursor = Path(tempfile.mkdtemp()) / "last_seen.json"
+    (cursor.parent / plow_chat.START_CHAT_ALLOW).write_text("+15550000101\n+15550000102\n")
+
+    async def scenario(fake, bridge, delivered):
+        results = await asyncio.gather(*(bridge.start_chat([h], "welcome") for h in ["+15550000101", "+15550000102"]),
+                                       return_exceptions=True)
+        assert len(fake.started) == 1
+        assert sum(isinstance(r, ValueError) for r in results) == 1
+    run_bridge(scenario, cursor=cursor)
+
+
+def test_an_answer_to_a_new_chat_whose_first_read_fails_is_caught_up_on_reconnect(monkeypatch):
+    async def scenario(fake, bridge, delivered):
+        monkeypatch.setattr(plow_chat, "RECONNECT_DELAY", 0.5)
+        await fake.drop_sockets()
+        fake.answer = (TEAMMATE, "hey Cedar")
+        fake.flaky.add("cht_started0")  # Plow sends, then the bridge's first read of the chat fails
+        with pytest.raises(httpx.HTTPStatusError):
+            await bridge.start_chat([TEAMMATE], "hi Alex")
+        await eventually(lambda: delivered)
+        assert delivered == [("hey Cedar", {"from": "Alex", "chat": "cht_started0"})]
     run_bridge(scenario)
