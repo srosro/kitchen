@@ -427,7 +427,7 @@ def read_credentials(path: Path) -> dict:
     """PLOW_API_BASE and PLOW_AGENT_TOKEN from `plow-credentials`: the bare token
     `latch agents new --own --token-file` writes, or the KEY=value lines older latch wrote."""
     text = path.read_text().strip()
-    return read_env(path) if "=" in text else {"PLOW_API_BASE": "https://api.plow.co", "PLOW_AGENT_TOKEN": text}
+    return read_env(path) if "PLOW_AGENT_TOKEN=" in text else {"PLOW_API_BASE": "https://api.plow.co", "PLOW_AGENT_TOKEN": text}
 
 
 async def run_server(kitchen: str):
