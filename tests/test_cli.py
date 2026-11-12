@@ -666,6 +666,7 @@ class TestStatusPreservationAcrossNonStopWriters:
         args.cook = "eng"
         args.message = "next task"
         args.chat_message = None
+        args.priority = None
         cmd_ticket(args)
 
         data = json.loads((tmp_path / "cooks" / "eng.json").read_text())
@@ -686,7 +687,7 @@ class TestStatusPreservationAcrossNonStopWriters:
 
         from claude_kitchen.cli import cmd_ticket
         with patch("claude_kitchen.cli.send_keys", side_effect=turn_runs):
-            cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="quick task", chat_message=None))
+            cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="quick task", chat_message=None, priority=None))
         assert json.loads((tmp_path / "cooks" / "eng.json").read_text())["status"] == "idle"
 
     @patch("claude_kitchen.cli.state_dir")
@@ -708,7 +709,7 @@ class TestStatusPreservationAcrossNonStopWriters:
         from claude_kitchen.cli import cmd_ticket
         # The cook's turn finishes while the ticket is still being sent.
         with patch("claude_kitchen.cli.send_keys", side_effect=report):
-            cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message="swarm !r:s $ev"))
+            cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message="swarm !r:s $ev", priority=None))
         report()
         assert [p.get("chat_message") for p in pushes] == ["swarm !r:s $ev", None]
 
@@ -721,7 +722,7 @@ class TestStatusPreservationAcrossNonStopWriters:
         write_status(tmp_path, "eng", {"status": "working", "agent": "eng", "backend": "claude"})
         from claude_kitchen.cli import cmd_ticket
         with pytest.raises(SystemExit, match="mid-turn"):
-            cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message="swarm !r:s $ev"))
+            cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message="swarm !r:s $ev", priority=None))
         assert not mock_keys.called
         assert "chat_message" not in read_status(tmp_path, "eng")
 
@@ -2730,11 +2731,15 @@ class TestTicketSous:
             base.mkdir(parents=True)
             yield base
 
-    def ticket(self, monkeypatch, *flags):
-        monkeypatch.setattr(sys, "argv", ["kitchen", "ticket", "sous", "check the deploy", *flags])
+    def ticket(self, monkeypatch, *flags, priority=("--priority", "!prio:s $row")):
+        monkeypatch.setattr(sys, "argv", ["kitchen", "ticket", "sous", "check the deploy", *priority, *flags])
         main()
 
-    def test_delivers_on_the_target_socket_labelled_with_the_senders_kitchen(self, kitchens, monkeypatch):
+    @pytest.mark.parametrize("priority, summary", [
+        (("--priority", "!prio:s $row"), "check the deploy [priority: !prio:s $row]"),
+        (("--dangerously-skip-priority",), "check the deploy"),
+    ], ids=["priority", "skip"])
+    def test_delivers_on_the_target_socket_labelled_with_the_senders_kitchen(self, kitchens, monkeypatch, priority, summary):
         received = []
         with socket.socket(socket.AF_UNIX) as srv:
             srv.bind(str(kitchens / "kitchen.sock"))
@@ -2748,13 +2753,19 @@ class TestTicketSous:
             listener = threading.Thread(target=accept)
             listener.start()
             with patch("claude_kitchen.cli.send_keys") as paste:
-                self.ticket(monkeypatch, "--kitchen", "target-main")
+                self.ticket(monkeypatch, "--kitchen", "target-main", priority=priority)
             listener.join(timeout=2)
 
         assert received[0]["cook"] == "sender-main"
-        assert received[0]["summary"] == "check the deploy"
+        assert received[0]["summary"] == summary
         paste.assert_not_called()  # the socket, never a pasted keystroke
         assert not (kitchens / "cooks").exists()
+
+    @pytest.mark.parametrize("priority", [(), ("--priority", "p", "--dangerously-skip-priority")], ids=["neither", "both"])
+    def test_ticket_without_exactly_one_priority_flag_is_refused(self, kitchens, monkeypatch, priority):
+        with pytest.raises(SystemExit) as exit_:
+            self.ticket(monkeypatch, "--kitchen", "target-main", priority=priority)
+        assert exit_.value.code == 2
 
     @pytest.mark.parametrize("stale", [False, True], ids=["no-socket", "stale-socket"])
     def test_dead_target_exits_non_zero_and_writes_no_status(self, kitchens, monkeypatch, capsys, stale):
