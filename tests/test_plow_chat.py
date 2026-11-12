@@ -1,7 +1,9 @@
 """Tests for the plow-chat channel server, against a fake Plow API."""
 import asyncio
+import json
 import re
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -31,6 +33,10 @@ async def eventually(predicate, timeout=5):
             await asyncio.sleep(0.01)
 
 
+async def approve(prompt):
+    return "SEND"
+
+
 def run_bridge(scenario, fake=None, cursor=None):
     """Run `scenario(fake, bridge, delivered)` with the bridge's socket
     supervisor live against `fake` (a fresh one by default). Pass the same
@@ -46,7 +52,7 @@ def run_bridge(scenario, fake=None, cursor=None):
             delivered.append((content, meta))
 
         async with httpx.AsyncClient(base_url=base_url, headers={"Authorization": f"Bearer {TOKEN}"}) as client:
-            bridge = Bridge(client, deliver, cursor)
+            bridge = Bridge(client, deliver, cursor, reviewer=approve)
             supervisor = asyncio.create_task(bridge.run())
             await eventually(lambda: fake.sockets)
             try:
@@ -541,4 +547,90 @@ def test_an_answer_to_a_new_chat_whose_first_read_fails_is_caught_up_on_reconnec
             await bridge.start_chat([TEAMMATE], "hi Alex")
         await eventually(lambda: delivered)
         assert delivered == [("hey Cedar", {"from": "Alex", "chat": "cht_started0"})]
+    run_bridge(scenario)
+
+
+def reviewing(answer, prompts):
+    """A reviewer that records each prompt and answers `answer`."""
+    async def reviewer(prompt):
+        prompts.append(prompt)
+        return answer
+    return reviewer
+
+
+@pytest.mark.parametrize("chat, answer, outcome", [
+    ("cht_solo", "HOLD: never asked", "sent"),
+    (HOME, "SEND", "sent"),
+    (HOME, "**SEND.**", "sent"),
+    (HOME, "SEND: nothing contradicts it", "sent"),
+    (HOME, "HOLD: Jordan just said Tuesday doesn't work", "held"),
+    (HOME, "Looks fine to me", "error"),
+], ids=["owner-only-unreviewed", "send", "send-decorated", "send-with-reason", "hold", "no-verdict"])
+def test_a_text_anyone_but_the_owner_reads_goes_out_only_past_the_reviewer(chat, answer, outcome):
+    """The reviewer reads the thread fresh from Plow, so the owner's newest
+    text counts even when the sous was handed it mid-turn and never read it."""
+    prompts = []
+
+    async def scenario(fake, bridge, delivered):
+        bridge.reviewer = reviewing(answer, prompts)
+        await fake.inbound(chat, OWNER, "Tuesday doesn't work for me")
+        await eventually(lambda: delivered)
+        if outcome == "error":
+            with pytest.raises(RuntimeError, match="neither SEND nor HOLD"):
+                await bridge.reply(chat, "I'll keep Tuesday's logistics straight")
+        else:
+            result = await bridge.reply(chat, "I'll keep Tuesday's logistics straight")
+            assert result.startswith("not sent: a reviewer held it (Jordan just said") if outcome == "held" else result.startswith("sent")
+        assert fake.sent == ([(chat, "I'll keep Tuesday's logistics straight")] if outcome == "sent" else [])
+        if chat == HOME:
+            assert "Jordan: Tuesday doesn't work for me" in prompts[0]
+            assert "to people other than Jordan: Alex." in prompts[0]
+        else:
+            assert prompts == []
+    run_bridge(scenario)
+
+
+def test_start_chat_and_send_file_are_reviewed_too(shot):
+    prompts = []
+
+    async def scenario(fake, bridge, delivered):
+        bridge.reviewer = reviewing("HOLD: Alex is in the room", prompts)
+        assert (await bridge.start_chat([TEAMMATE], "hi Alex")).startswith("not sent: a reviewer held it")
+        assert (await bridge.send_file(HOME, [str(shot)], "the build")).startswith("not sent: a reviewer held it")
+        assert fake.started == [] and fake.sent == []
+        assert ["hi Alex" in prompts[0], "the build" in prompts[1]] == [True, True]
+    run_bridge(scenario)
+
+
+def test_the_review_reads_the_owners_other_recent_threads_with_the_same_people(monkeypatch):
+    """With `messages-host` set, the reviewer also sees the owner's own recent
+    Messages threads with the recipients, through latch; older texts and other
+    people's threads stay out."""
+    now = datetime.now().astimezone()
+    recent, old = now.isoformat(), (now - timedelta(days=plow_chat.REVIEW_DAYS + 1)).isoformat()
+    chats = {"chats": [
+        {"id": 1, "last_message_at": recent, "participants": [{"handle": TEAMMATE, "name": "Alex"}]},
+        {"id": 2, "last_message_at": recent, "participants": [{"handle": STRANGER, "name": None}]},
+        {"id": 3, "last_message_at": old, "participants": [{"handle": TEAMMATE, "name": "Alex"}]},
+    ]}
+    thread = {"messages": [
+        {"date": old, "from": {"me": True, "name": None, "handle": None}, "text": "Tuesday works"},
+        {"date": recent, "from": {"me": True, "name": None, "handle": None}, "text": "Shoot, Tuesday's out"},
+        {"date": recent, "from": {"me": False, "name": "Alex", "handle": TEAMMATE}, "text": "no worries"},
+    ]}
+    calls, prompts = [], []
+
+    async def latch(*args, stdin=""):
+        calls.append(args)
+        return json.dumps(chats if args[2] == "chats" else thread)
+    monkeypatch.setattr(plow_chat, "run", latch)
+
+    async def scenario(fake, bridge, delivered):
+        (bridge.cursor.parent / plow_chat.MESSAGES_HOST).write_text("mac\n")
+        bridge.reviewer = reviewing("SEND", prompts)
+        assert (await bridge.reply(HOME, "see you Tuesday")).startswith("sent")
+        assert [c[c.index("--chat-id") + 1] for c in calls if "--chat-id" in c] == ["1"]
+        assert all(c[c.index("--host") + 1] == "mac" for c in calls)
+        assert "Jordan: Shoot, Tuesday's out\nAlex: no worries" in prompts[0]
+        assert "Tuesday works" not in prompts[0]
     run_bridge(scenario)
