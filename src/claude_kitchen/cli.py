@@ -746,7 +746,7 @@ def cmd_approve_host(args):
     env = Path.home() / ".config" / "kitchen" / "operator.env"
     customers = set(operator_setting(env, "CUSTOMER_AGENTS").split())
     home = Path(os.environ.get("SWARM_HOME") or Path.home() / ".swarm")
-    print(json.dumps(approve_host(args.account, args.host, customers, operator_setting(env, "APPROVER_SENDER"), home)))
+    print(json.dumps(approve_host(args.account, args.host, customers, operator_setting(env, "APPROVER_SENDER").split()[0], home)))
 
 
 def cmd_brigade(kitchen: str = None):
