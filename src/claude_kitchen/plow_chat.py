@@ -27,7 +27,7 @@ from mcp.types import Tool
 from claude_kitchen.channel import push, reply_server
 from claude_kitchen.state import atomic_write_json, plow_chat_dir, read_env, state_dir, with_digest
 
-CREDENTIALS = "plow-credentials"  # written mode 600 by `latch agents new --own --credential-file`
+CREDENTIALS = "plow-credentials"  # written mode 600 by `latch agents new --own --token-file`
 TRUSTED_CHATS = "trusted-chats"  # one chat uid per line; read at each hand-over, so edits need no restart
 START_CHAT_ALLOW = "start-chat-allow"  # one handle per line, beyond those already in the line's chats
 STARTED_CHATS = "started-chats.log"  # one line per chat start_chat sends: time, chat, created, handles
@@ -423,9 +423,16 @@ async def call(bridge: Bridge, name: str, arguments: dict) -> str:
     return await getattr(bridge, name)(**arguments)
 
 
+def read_credentials(path: Path) -> dict:
+    """PLOW_API_BASE and PLOW_AGENT_TOKEN from `plow-credentials`: the bare token
+    `latch agents new --own --token-file` writes, or the KEY=value lines older latch wrote."""
+    text = path.read_text().strip()
+    return read_env(path) if "=" in text else {"PLOW_API_BASE": "https://api.plow.co", "PLOW_AGENT_TOKEN": text}
+
+
 async def run_server(kitchen: str):
     directory = plow_chat_dir(kitchen)
-    credentials = read_env(directory / CREDENTIALS)  # PLOW_API_BASE, PLOW_AGENT_TOKEN
+    credentials = read_credentials(directory / CREDENTIALS)
     bridge = None  # bound once the HTTP client and stdio streams are open
     server, init_options = reply_server("plow-chat", "Plow chat (iMessage)",
                                         lambda name, arguments: call(bridge, name, arguments), SEND_FILE, START_CHAT)
