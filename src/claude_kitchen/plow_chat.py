@@ -2,7 +2,7 @@
 
 Holds the Plow chat API socket for the line's agent credential, pushes each
 member's text and attachments into the sous as a `<channel source="plow-chat">` tag, and gives
-the sous `reply` and `send_file` tools. Plow shows the credential only the chats the line's
+the sous `reply`, `send_file` and `start_chat` tools. Plow shows the credential only the chats the line's
 account owns, so every participant it delivers — a person or a peer agent's line — is served.
 Once `trusted-chats` exists, only the chats it lists carry authority: any other chat's texts
 arrive marked `trusted="false"`, as context the sous may answer but never act on.
@@ -11,6 +11,7 @@ import asyncio
 import json
 import mimetypes
 import sys
+import uuid
 from dataclasses import dataclass, field
 from itertools import takewhile
 from pathlib import Path
@@ -279,6 +280,22 @@ class Bridge:
             "attachment_uids": uids, "body": caption,
         }), "file")
 
+    async def start_chat(self, handles: list[str], text: str) -> str:
+        """Start a chat on this line with `handles` by sending `text`; Plow seats
+        the line's owner too, and adopts the thread if those people already have one."""
+        if not text.strip():
+            raise ValueError("first message is empty; not sent")
+        r = await self.client.get("/v1/agents/me")
+        r.raise_for_status()
+        r = await self.client.post("/v1/chats", json={
+            "line_uid": r.json()["line"]["uid"], "members": handles, "body": text,
+            "idempotency_key": str(uuid.uuid4()),
+        })
+        if r.is_error:
+            raise RuntimeError(f"Plow refused the new chat with HTTP {r.status_code}: {r.text}")
+        chat = r.json()
+        return f"started {chat['uid']}" if chat["created"] else f"sent in existing chat {chat['uid']}"
+
     async def run(self):
         """Hold the socket forever: a fresh ticket per connect, catch up every
         known chat once it is open, take each message frame as it lands, and
@@ -329,9 +346,27 @@ SEND_FILE = Tool(
 )
 
 
+START_CHAT = Tool(
+    name="start_chat",
+    description=(
+        "Start a new Plow chat (iMessage) by sending its first message to 1 or more people, "
+        "named by E.164 phone number or iMessage email; the head chef is added to it too. "
+        "Returns the new chat's id, the `chat` to pass to `reply` and `send_file` afterwards."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "handles": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+            "text": {"type": "string"},
+        },
+        "required": ["handles", "text"],
+    },
+)
+
+
 async def call(bridge: Bridge, name: str, arguments: dict) -> str:
     """Run the Bridge method a tool names, with its arguments as keywords."""
-    if name not in ("reply", SEND_FILE.name):
+    if name not in ("reply", SEND_FILE.name, START_CHAT.name):
         raise ValueError(f"unknown tool {name}")
     return await getattr(bridge, name)(**arguments)
 
@@ -341,7 +376,7 @@ async def run_server(kitchen: str):
     credentials = read_env(directory / CREDENTIALS)  # PLOW_API_BASE, PLOW_AGENT_TOKEN
     bridge = None  # bound once the HTTP client and stdio streams are open
     server, init_options = reply_server("plow-chat", "Plow chat (iMessage)",
-                                        lambda name, arguments: call(bridge, name, arguments), SEND_FILE)
+                                        lambda name, arguments: call(bridge, name, arguments), SEND_FILE, START_CHAT)
 
     headers = {"Authorization": f"Bearer {credentials['PLOW_AGENT_TOKEN']}"}
     async with httpx.AsyncClient(base_url=credentials["PLOW_API_BASE"], headers=headers, timeout=30) as client, \
