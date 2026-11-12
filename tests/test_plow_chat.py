@@ -529,3 +529,16 @@ def test_parallel_start_chats_share_the_daily_cap(monkeypatch):
         assert len(fake.started) == 1
         assert sum(isinstance(r, ValueError) for r in results) == 1
     run_bridge(scenario, cursor=cursor)
+
+
+def test_an_answer_to_a_new_chat_whose_first_read_fails_is_caught_up_on_reconnect(monkeypatch):
+    async def scenario(fake, bridge, delivered):
+        monkeypatch.setattr(plow_chat, "RECONNECT_DELAY", 0.5)
+        await fake.drop_sockets()
+        fake.answer = (TEAMMATE, "hey Cedar")
+        fake.flaky.add("cht_started0")  # Plow sends, then the bridge's first read of the chat fails
+        with pytest.raises(httpx.HTTPStatusError):
+            await bridge.start_chat([TEAMMATE], "hi Alex")
+        await eventually(lambda: delivered)
+        assert delivered == [("hey Cedar", {"from": "Alex", "chat": "cht_started0"})]
+    run_bridge(scenario)

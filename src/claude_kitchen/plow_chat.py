@@ -331,7 +331,10 @@ class Bridge:
             f.write(f"{datetime.now().isoformat(timespec='seconds')} {chat['uid']} "
                     f"{'created' if chat['created'] else 'adopted'} {' '.join(handles)}\n")
         async with self.handing:  # a reconnect catches up only known chats; ours and older is history
-            if chat["uid"] not in self.taken:
+            if chat["created"]:  # no history, so all a reconnect can find in it is an answer
+                self.taken.setdefault(chat["uid"], [])
+                atomic_write_json(self.cursor, self.taken)
+            elif chat["uid"] not in self.taken:
                 r = await self.client.get(f"/v1/chats/{chat['uid']}/messages", params={"limit": PAGE})
                 r.raise_for_status()
                 data = r.json()["data"]  # newest first; an answer may already sit above ours
