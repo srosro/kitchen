@@ -1,5 +1,6 @@
 """Tests for the plow-chat channel server, against a fake Plow API."""
 import asyncio
+import re
 import tempfile
 from pathlib import Path
 
@@ -485,12 +486,33 @@ def test_an_answer_to_a_chat_started_while_the_socket_is_down_is_caught_up_on_re
 
 
 @pytest.mark.parametrize("handles, text, error", [
-    ([TEAMMATE], "  ", ValueError),
-    ([], "hello", RuntimeError),
-], ids=["empty-text", "plow-refuses"])
+    ([TEAMMATE], "  ", "empty"),
+    ([], "hello", "Plow refused"),
+    ([TEAMMATE, STRANGER], "hello", STRANGER),
+], ids=["empty-text", "plow-refuses", "stranger"])
 def test_start_chat_fails_loudly(handles, text, error):
     async def scenario(fake, bridge, delivered):
-        with pytest.raises(error):
+        with pytest.raises((ValueError, RuntimeError), match=re.escape(error)):
             await bridge.start_chat(handles, text)
         assert fake.started == []
     run_bridge(scenario)
+
+
+def test_start_chat_reaches_allowlisted_handles_never_marks_chats_trusted_and_caps_new_chats(monkeypatch):
+    monkeypatch.setattr(plow_chat, "NEW_CHATS_PER_DAY", 2)
+    cursor = Path(tempfile.mkdtemp()) / "last_seen.json"
+    allowed = ["+15550000101", "+15550000102", "+15550000103"]
+    (cursor.parent / plow_chat.START_CHAT_ALLOW).write_text("\n".join(allowed) + "  # new hires\n")
+
+    async def scenario(fake, bridge, delivered):
+        await bridge.start_chat([allowed[0]], "welcome")
+        await bridge.start_chat([allowed[0]], "and again")  # the same chat adopted: not a new one
+        await bridge.start_chat([allowed[1]], "welcome")
+        with pytest.raises(ValueError, match="already started 2 new chats today"):
+            await bridge.start_chat([allowed[2]], "welcome")
+        assert [m for m, _, _ in fake.started] == [[allowed[0]], [allowed[0]], [allowed[1]]]
+        assert not any("trusted" in body for body in fake.start_bodies)  # Plow would honor it from us
+        log = (cursor.parent / plow_chat.STARTED_CHATS).read_text().splitlines()
+        assert [line.split()[2:] for line in log] == [["created", allowed[0]], ["adopted", allowed[0]],
+                                                      ["created", allowed[1]]]
+    run_bridge(scenario, cursor=cursor)

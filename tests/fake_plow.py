@@ -33,11 +33,13 @@ class FakePlow:
         self.files_auth = {}  # attachment uid -> Authorization header its download carried
         self.started = []  # (members, body, idempotency_key) of each chat the agent started
         self.answer = None  # (handle, body) answering a started chat before the agent reads it back
+        self.members = {"cht_home": ["+15550000001", "+15550000002"]}  # chat -> member handles GET /v1/chats lists
+        self.start_bodies = []  # each raw POST /v1/chats body
         self._uids = itertools.count(1)
         self.app = Starlette(routes=[
             Route("/v1/ws/ticket", self._ticket, methods=["POST"]),
             Route("/v1/agents/me", self._me),
-            Route("/v1/chats", self._start, methods=["POST"]),
+            Route("/v1/chats", self._start, methods=["GET", "POST"]),
             Route("/v1/chats/{chat}/messages", self._messages, methods=["GET", "POST"]),
             Route("/v1/chats/{chat}/attachments", self._attachments, methods=["POST"]),
             Route("/provider/{uid}", self._upload, methods=["PUT"]),
@@ -102,7 +104,12 @@ class FakePlow:
         """Start a chat with its first message, adopting the thread its members already have."""
         if not self._authorized(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
+        if request.method == "GET":
+            return JSONResponse({"data": [
+                {"uid": chat, "participants": [{"type": "member", "provider_key": h} for h in handles]}
+                for chat, handles in self.members.items()]})
         sent = await request.json()
+        self.start_bodies.append(sent)
         if sent["line_uid"] != "ln_self" or not sent["members"]:
             return JSONResponse({"error": {"code": "invalid_request"}}, status_code=400)
         members = sorted(sent["members"])

@@ -6,6 +6,8 @@ the sous `reply`, `send_file` and `start_chat` tools. Plow shows the credential 
 account owns, so every participant it delivers — a person or a peer agent's line — is served.
 Once `trusted-chats` exists, only the chats it lists carry authority: any other chat's texts
 arrive marked `trusted="false"`, as context the sous may answer but never act on.
+`start_chat` reaches only people already in one of the line's chats or listed in
+`start-chat-allow`, and opens at most `NEW_CHATS_PER_DAY` new chats a day, each logged.
 """
 import asyncio
 import json
@@ -13,6 +15,7 @@ import mimetypes
 import sys
 import uuid
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from itertools import takewhile
 from pathlib import Path
 
@@ -26,6 +29,9 @@ from claude_kitchen.state import atomic_write_json, plow_chat_dir, read_env, sta
 
 CREDENTIALS = "plow-credentials"  # written mode 600 by `latch agents new --own --credential-file`
 TRUSTED_CHATS = "trusted-chats"  # one chat uid per line; read at each hand-over, so edits need no restart
+START_CHAT_ALLOW = "start-chat-allow"  # one handle per line, beyond those already in the line's chats
+STARTED_CHATS = "started-chats.log"  # one line per chat start_chat sends: time, chat, created, handles
+NEW_CHATS_PER_DAY = 5
 RECONNECT_DELAY = 5
 PAGE = 50
 # One speaker's back-to-back texts are one tag. iMessage sends a link as its
@@ -85,12 +91,23 @@ def sender_name(sender: dict) -> str | None:
     return None
 
 
+def listed(file: Path) -> set[str]:
+    """The entries of a one-per-line kitchen file, `#` comments and blanks dropped."""
+    return {line.split("#")[0].strip() for line in file.read_text().splitlines()} - {""}
+
+
 def untrusted(directory: Path, chat: str) -> bool:
     """Whether `chat` lacks authority: true once `trusted-chats` exists and doesn't list it."""
     file = directory / TRUSTED_CHATS
-    if not file.exists():
-        return False
-    return chat not in {line.split("#")[0].strip() for line in file.read_text().splitlines()}
+    return file.exists() and chat not in listed(file)
+
+
+def new_chats_today(log_file: Path) -> int:
+    if not log_file.exists():
+        return 0
+    today = date.today().isoformat()
+    return sum(1 for line in log_file.read_text().splitlines()
+               if line.startswith(today) and line.split()[2] == "created")
 
 
 def content_type_of(file: Path) -> str:
@@ -285,6 +302,17 @@ class Bridge:
         the line's owner too, and adopts the thread if those people already have one."""
         if not text.strip():
             raise ValueError("first message is empty; not sent")
+        directory = self.cursor.parent
+        r = await self.client.get("/v1/chats")
+        r.raise_for_status()
+        known = {p["provider_key"].casefold() for c in r.json()["data"] for p in c["participants"] if p["type"] == "member"}
+        if (allow := directory / START_CHAT_ALLOW).exists():
+            known |= {handle.casefold() for handle in listed(allow)}
+        if strangers := [h for h in handles if h.casefold() not in known]:
+            raise ValueError(f"{', '.join(strangers)} not in any of this line's chats or {START_CHAT_ALLOW}; not sent")
+        log_file = directory / STARTED_CHATS
+        if new_chats_today(log_file) >= NEW_CHATS_PER_DAY:
+            raise ValueError(f"already started {NEW_CHATS_PER_DAY} new chats today; not sent")
         r = await self.client.get("/v1/agents/me")
         r.raise_for_status()
         r = await self.client.post("/v1/chats", json={
@@ -294,6 +322,9 @@ class Bridge:
         if r.is_error:
             raise RuntimeError(f"Plow refused the new chat with HTTP {r.status_code}: {r.text}")
         chat = r.json()
+        with log_file.open("a") as f:
+            f.write(f"{datetime.now().isoformat(timespec='seconds')} {chat['uid']} "
+                    f"{'created' if chat['created'] else 'adopted'} {' '.join(handles)}\n")
         async with self.handing:  # a reconnect catches up only known chats; ours and older is history
             if chat["uid"] not in self.taken:
                 r = await self.client.get(f"/v1/chats/{chat['uid']}/messages", params={"limit": PAGE})
@@ -362,6 +393,8 @@ START_CHAT = Tool(
     description=(
         "Start a new Plow chat (iMessage) by sending its first message to 1 or more people, "
         "named by E.164 phone number or iMessage email; the head chef is added to it too. "
+        "Only people already in one of this line's chats, or allowlisted by the head chef, "
+        f"can be reached, and at most {NEW_CHATS_PER_DAY} new chats a day. "
         "Returns the new chat's id, the `chat` to pass to `reply` and `send_file` afterwards."
     ),
     inputSchema={
