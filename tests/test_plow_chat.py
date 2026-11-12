@@ -8,8 +8,7 @@ import httpx
 import pytest
 
 from claude_kitchen import plow_chat
-from claude_kitchen.plow_chat import CREDENTIALS, Bridge, call, content_type_of
-from claude_kitchen.state import read_env
+from claude_kitchen.plow_chat import CREDENTIALS, Bridge, call, content_type_of, read_credentials
 from tests.fake_plow import SIGNATURE, TOKEN, FakePlow
 
 OWNER, TEAMMATE, STRANGER = "+15550000001", "+15550000002", "+15550000099"
@@ -290,10 +289,13 @@ def test_an_attachment_missing_a_field_never_holds_up_delivery(field, content, s
     run_bridge(scenario)
 
 
-def test_reads_the_credential_file_latch_agents_new_writes(tmp_path):
-    (tmp_path / "plow-credentials").write_text(
-        f"PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN={TOKEN}\n# plow-agent-uid: 73f5\n")
-    assert read_env(tmp_path / CREDENTIALS) == {"PLOW_API_BASE": "https://api.plow.co", "PLOW_AGENT_TOKEN": TOKEN}
+@pytest.mark.parametrize("written", [
+    f"{TOKEN}\n",  # latch agents new --own --token-file
+    f"PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN={TOKEN}\n# plow-agent-uid: 73f5\n",  # older --credential-file
+])
+def test_reads_the_credential_file_latch_agents_new_writes(tmp_path, written):
+    (tmp_path / CREDENTIALS).write_text(written)
+    assert read_credentials(tmp_path / CREDENTIALS) == {"PLOW_API_BASE": "https://api.plow.co", "PLOW_AGENT_TOKEN": TOKEN}
 
 
 @pytest.fixture
