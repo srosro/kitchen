@@ -304,6 +304,7 @@ class Bridge:
                             and m["body"] == text.strip())
                 self.taken[chat["uid"]] = [m["uid"] for m in data[ours:]]
                 atomic_write_json(self.cursor, self.taken)
+        await self.catch_up(chat["uid"])  # an answer above ours that a reconnect's catch-up missed
         return f"started {chat['uid']}" if chat["created"] else f"sent in existing chat {chat['uid']}"
 
     async def run(self):
