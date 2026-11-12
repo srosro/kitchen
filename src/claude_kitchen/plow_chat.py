@@ -294,11 +294,15 @@ class Bridge:
         if r.is_error:
             raise RuntimeError(f"Plow refused the new chat with HTTP {r.status_code}: {r.text}")
         chat = r.json()
-        async with self.handing:  # a reconnect catches up only known chats; what's there now is history
+        async with self.handing:  # a reconnect catches up only known chats; ours and older is history
             if chat["uid"] not in self.taken:
                 r = await self.client.get(f"/v1/chats/{chat['uid']}/messages", params={"limit": PAGE})
                 r.raise_for_status()
-                self.taken[chat["uid"]] = [m["uid"] for m in r.json()["data"]]
+                data = r.json()["data"]  # newest first; an answer may already sit above ours
+                ours = next(i for i, m in enumerate(data)
+                            if m["sender"]["type"] == "agent" and m["sender"]["relationship"] == "self"
+                            and m["body"] == text.strip())
+                self.taken[chat["uid"]] = [m["uid"] for m in data[ours:]]
                 atomic_write_json(self.cursor, self.taken)
         return f"started {chat['uid']}" if chat["created"] else f"sent in existing chat {chat['uid']}"
 

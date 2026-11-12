@@ -32,6 +32,7 @@ class FakePlow:
         self.files_host = None  # serve attachment URLs from this host, as absolute URLs
         self.files_auth = {}  # attachment uid -> Authorization header its download carried
         self.started = []  # (members, body, idempotency_key) of each chat the agent started
+        self.answer = None  # (handle, body) answering a started chat before the agent reads it back
         self._uids = itertools.count(1)
         self.app = Starlette(routes=[
             Route("/v1/ws/ticket", self._ticket, methods=["POST"]),
@@ -109,6 +110,8 @@ class FakePlow:
         self.started.append((sent["members"], sent["body"], sent["idempotency_key"]))
         chat = f"cht_started{known[0] if known else len(self.started) - 1}"
         await self._broadcast(self._message(chat, sent["body"]))  # Plow echoes the first message too
+        if self.answer:
+            await self.inbound(chat, *self.answer)
         return JSONResponse({"uid": chat, "created": not known}, status_code=201)
 
     async def _messages(self, request):
