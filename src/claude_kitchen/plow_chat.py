@@ -325,40 +325,50 @@ class Bridge:
         await self.flush()
         return f"not sent: {len(news)} newer message(s) in this chat reach you next; read them, then answer again"
 
+    async def thread(self, chat: str) -> dict:
+        """`chat`'s latest texts, oldest first, as uid -> `name: text` ("you" for this line)."""
+        r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": PAGE})
+        r.raise_for_status()
+        lines = {}
+        for m in reversed(r.json()["data"]):
+            who = "you" if m["sender"]["type"] == "agent" and m["sender"]["relationship"] == "self" else sender_name(m["sender"])
+            if who and m["body"].strip():
+                lines[m["uid"]] = f"{who}: {m['body']}"
+        return lines
+
     async def held(self, text: str, chat: str | None = None, handles: list[str] = ()) -> str | None:
-        """Why a reviewer holds `text`, bound for `chat` or a new chat with
-        `handles`, or None to send it. Only a text the owner alone would read
-        goes unreviewed. The thread is read fresh, so a text the sous hasn't
-        been shown yet still counts."""
+        """Why a reviewer holds `text`, bound for `chat` or the chat with
+        `handles` (an existing one's history included), or None to send it.
+        Only a text the owner alone would read goes unreviewed. The thread is
+        read fresh, so a text the sous hasn't been shown yet still counts, and
+        read again after the review, so one that lands meanwhile stops the send."""
         r = await self.client.get("/v1/chats")
         r.raise_for_status()
         chats = r.json()["data"]
-        members = [p for c in chats for p in c["participants"] if p["type"] == "member"]
-        owner = next((p["display_name"] for p in members if p["role"] == "owner"), "the head chef")
-        people = {h: h for h in handles} | {p["provider_key"]: p["display_name"] for c in chats if c["uid"] == chat
-                                             for p in c["participants"] if p["type"] == "member" and p["role"] != "owner"}
+        others = {c["uid"]: {p["provider_key"]: p["display_name"] for p in c["participants"]
+                             if p["type"] == "member" and p["role"] != "owner"} for c in chats}
+        owner = next((p["display_name"] for c in chats for p in c["participants"]
+                      if p["type"] == "member" and p["role"] == "owner"), "the head chef")
+        chat = chat or next((uid for uid, people in others.items() if set(people) == set(handles)), None)
+        people = {h: h for h in handles} | others.get(chat, {})
         if not people:
             return None
-        thread = []
-        if chat:
-            r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": PAGE})
-            r.raise_for_status()
-            for m in reversed(r.json()["data"]):
-                who = "you" if m["sender"]["type"] == "agent" and m["sender"]["relationship"] == "self" else sender_name(m["sender"])
-                if who and m["body"].strip():
-                    thread.append(f"{who}: {m['body']}")
+        thread = await self.thread(chat) if chat else {}
         host = self.cursor.parent / MESSAGES_HOST
         other = (await owner_threads(listed(host).pop(), {h.casefold() for h in people}, owner)
                  if host.exists() else "(not available)")
         answer = (await self.reviewer(REVIEW.format(
-            owner=owner, people=", ".join(people.values()), thread="\n".join(thread) or "(new thread)",
+            owner=owner, people=", ".join(people.values()), thread="\n".join(thread.values()) or "(new thread)",
             other=other, days=REVIEW_DAYS, text=text))).strip()
         verdict, _, why = (answer.splitlines()[0] if answer else "").partition(":")
-        if verdict.strip("*. ") == "SEND":
-            return None
         if verdict.strip("*. ") == "HOLD":
             return f"not sent: a reviewer held it ({why.strip()}). Stay quiet, or bring the head chef the draft and the reason"
-        raise RuntimeError(f"the pre-send reviewer answered neither SEND nor HOLD: {answer[:200]!r}; not sent")
+        if verdict.strip("*. ") != "SEND":
+            raise RuntimeError(f"the pre-send reviewer answered neither SEND nor HOLD: {answer[:200]!r}; not sent")
+        if chat and (newer := [line for uid, line in (await self.thread(chat)).items()
+                               if uid not in thread and not line.startswith("you: ")]):
+            return f"not sent: {len(newer)} newer message(s) landed while it was reviewed; read them, then answer again"
+        return None
 
     async def reply(self, chat: str, text: str) -> str:
         if not text.strip():

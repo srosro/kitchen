@@ -595,10 +595,13 @@ def test_start_chat_and_send_file_are_reviewed_too(shot):
 
     async def scenario(fake, bridge, delivered):
         bridge.reviewer = reviewing("HOLD: Alex is in the room", prompts)
+        await fake.inbound(HOME, OWNER, "Tuesday's out")
+        await eventually(lambda: delivered)
         assert (await bridge.start_chat([TEAMMATE], "hi Alex")).startswith("not sent: a reviewer held it")
         assert (await bridge.send_file(HOME, [str(shot)], "the build")).startswith("not sent: a reviewer held it")
         assert fake.started == [] and fake.sent == []
         assert ["hi Alex" in prompts[0], "the build" in prompts[1]] == [True, True]
+        assert "Jordan: Tuesday's out" in prompts[0]  # start_chat reviews against the chat Plow will adopt
     run_bridge(scenario)
 
 
@@ -640,9 +643,9 @@ def test_a_text_landing_while_the_reviewer_thinks_stops_the_send():
     async def scenario(fake, bridge, delivered):
         async def slow_reviewer(prompt):
             await fake.inbound(HOME, TEAMMATE, "actually, skip Tuesday")
-            await eventually(lambda: bridge.burst)
+            await eventually(lambda: delivered)  # handed over already, so only a fresh read catches it
             return "SEND"
         bridge.reviewer = slow_reviewer
-        assert (await bridge.reply(HOME, "see you Tuesday")).startswith("not sent: 1 newer message")
+        assert (await bridge.reply(HOME, "see you Tuesday")).startswith("not sent: 1 newer message(s) landed")
         assert fake.sent == []
     run_bridge(scenario)
