@@ -363,7 +363,7 @@ class Bridge:
     async def reply(self, chat: str, text: str) -> str:
         if not text.strip():
             raise ValueError("reply text is empty; not sent")
-        if refusal := await self.unread(chat) or await self.held(text, chat):
+        if refusal := await self.held(text, chat) or await self.unread(chat):  # the review is slow; read last
             return refusal
         return sent(await self.client.post(f"/v1/chats/{chat}/messages", json={"body": text}), "reply")
 
@@ -392,8 +392,8 @@ class Bridge:
             raise ValueError(f"{len(paths)} files given; a message takes 1 to {MAX_ATTACHMENTS}; nothing sent")
         files = [attachable(path) for path in paths]  # all of them before Plow hears of any
         uids = [await self.upload(chat, file) for file in files]
-        if refusal := await self.unread(chat) or await self.held(  # after the uploads, which can take a while
-                caption or f"(files: {', '.join(file.name for file in files)})", chat):
+        if refusal := await self.held(caption or f"(files: {', '.join(file.name for file in files)})", chat) \
+                or await self.unread(chat):  # after the uploads and the review, which can take a while
             return refusal
         return sent(await self.client.post(f"/v1/chats/{chat}/messages", json={
             "attachment_uids": uids, "body": caption,

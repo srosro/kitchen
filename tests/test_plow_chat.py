@@ -634,3 +634,15 @@ def test_the_review_reads_the_owners_other_recent_threads_with_the_same_people(m
         assert "Jordan: Shoot, Tuesday's out\nAlex: no worries" in prompts[0]
         assert "Tuesday works" not in prompts[0]
     run_bridge(scenario)
+
+
+def test_a_text_landing_while_the_reviewer_thinks_stops_the_send():
+    async def scenario(fake, bridge, delivered):
+        async def slow_reviewer(prompt):
+            await fake.inbound(HOME, TEAMMATE, "actually, skip Tuesday")
+            await eventually(lambda: bridge.burst)
+            return "SEND"
+        bridge.reviewer = slow_reviewer
+        assert (await bridge.reply(HOME, "see you Tuesday")).startswith("not sent: 1 newer message")
+        assert fake.sent == []
+    run_bridge(scenario)
