@@ -576,3 +576,19 @@ def test_a_refused_tapback_never_holds_up_delivery_or_a_reply():
         await eventually(lambda: len(delivered) == 2)
         assert [c for c, _ in delivered] == ["hello", "marker"] and fake.reactions == []
     run_bridge(scenario)
+
+
+def test_eyes_left_by_an_earlier_run_clear_on_the_next_send(tmp_path):
+    fake, cursor = FakePlow(), tmp_path / "last_seen.json"
+
+    async def before_restart(fake, bridge, delivered):
+        await fake.inbound(HOME, OWNER, "taken, then the sous restarts")
+        await eventually(lambda: fake.reactions)
+
+    async def after_restart(fake, bridge, delivered):
+        await call(bridge, "reply", {"chat": HOME, "text": "back"})
+        uid = fake.reactions[0][0]
+        assert fake.reactions == [(uid, "add", "👀"), (uid, "remove", "👀")]
+
+    run_bridge(before_restart, fake, cursor)
+    run_bridge(after_restart, fake, cursor)

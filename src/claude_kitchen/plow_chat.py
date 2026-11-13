@@ -158,7 +158,6 @@ class Bridge:
     due: float = 0.0  # loop time the burst closes at
     handing: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)  # the socket and a send both take and flush
     starting: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)  # parallel start_chats share the daily cap
-    seen: dict = field(init=False, default_factory=dict)  # chat -> uids carrying our 👀, awaiting an answer
 
     def __post_init__(self):
         self.taken = json.loads(self.cursor.read_text()) if self.cursor.exists() else {}
@@ -238,13 +237,17 @@ class Bridge:
         except httpx.HTTPError as e:
             return log(f"{operation} {SEEN} on {uid} failed: {type(e).__name__}")
         if r.is_error:
-            return log(f"{operation} {SEEN} on {uid}: HTTP {r.status_code}")
-        if operation == "add":
-            self.seen.setdefault(chat, []).append(uid)
+            log(f"{operation} {SEEN} on {uid}: HTTP {r.status_code}")
 
     async def answered(self, chat: str):
-        for uid in self.seen.pop(chat, []):
-            await self.react(chat, uid, "remove")
+        """Clear our 👀 from `chat`'s latest texts. Read from Plow, so one a
+        restart or a failed removal left behind clears on the next send."""
+        r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": PAGE})
+        if r.is_error:
+            return log(f"HTTP {r.status_code} reading chat {chat}; its {SEEN} stays")
+        for m in r.json()["data"]:
+            if any(x["custom_emoji"] == SEEN and x["actor"].get("relationship") == "self" for x in m.get("reactions", [])):
+                await self.react(chat, m["uid"], "remove")
 
     async def catch_up(self, chat: str):
         """Take what reached `chat` while the socket was down: the newest

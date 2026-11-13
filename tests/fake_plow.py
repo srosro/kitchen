@@ -152,8 +152,12 @@ class FakePlow:
         if self.reaction_status != 200:
             return JSONResponse({"error": {"code": "invalid_request"}}, status_code=self.reaction_status)
         body = await request.json()
-        self.reactions.append((request.path_params["uid"], body["operation"], body["custom_emoji"]))
-        return JSONResponse({"uid": request.path_params["uid"]})
+        uid = request.path_params["uid"]
+        self.reactions.append((uid, body["operation"], body["custom_emoji"]))
+        message = next(m for m in self.history[request.path_params["chat"]] if m["uid"] == uid)
+        message["reactions"] = [{"custom_emoji": body["custom_emoji"], "actor": {"type": "agent", "relationship": "self"}}] \
+            if body["operation"] == "add" else []
+        return JSONResponse(message)
 
     async def _attachments(self, request):
         if not self._authorized(request):
