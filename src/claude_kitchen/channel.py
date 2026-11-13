@@ -75,10 +75,10 @@ def _refuse_if_deaf(capabilities):
         )
 
 
-def reply_server(name: str, medium: str, call, *tools: Tool):
-    """A chat channel's MCP server and init options: a `reply` tool plus
-    `tools`, each run by `call(tool_name, arguments) -> str`, and the channel
-    capability."""
+def reply_server(name: str, medium: str, call, *tools: Tool, reply_properties: dict = {}):
+    """A chat channel's MCP server and init options: a `reply` tool (with any
+    `reply_properties` beyond chat and text) plus `tools`, each run by
+    `call(tool_name, arguments) -> str`, and the channel capability."""
     server = Server(name)
     reply = Tool(
         name="reply",
@@ -86,7 +86,7 @@ def reply_server(name: str, medium: str, call, *tools: Tool):
                      f"<channel source=\"{name}\"> tag you are answering."),
         inputSchema={
             "type": "object",
-            "properties": {"chat": {"type": "string"}, "text": {"type": "string"}},
+            "properties": {"chat": {"type": "string"}, "text": {"type": "string"}, **reply_properties},
             "required": ["chat", "text"],
         },
     )
