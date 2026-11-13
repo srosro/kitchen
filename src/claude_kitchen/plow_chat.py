@@ -242,9 +242,11 @@ class Bridge:
     async def answered(self, chat: str):
         """Clear our 👀 from `chat`'s latest texts. Read from Plow, so one a
         restart or a failed removal left behind clears on the next send."""
-        r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": PAGE})
-        if r.is_error:
-            return log(f"HTTP {r.status_code} reading chat {chat}; its {SEEN} stays")
+        try:  # the send already went out: nothing here may fail it
+            r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": PAGE})
+            r.raise_for_status()
+        except httpx.HTTPError as e:
+            return log(f"reading chat {chat} failed ({type(e).__name__}); its {SEEN} stays")
         for m in r.json()["data"]:
             if any(x["custom_emoji"] == SEEN and x["actor"].get("relationship") == "self" for x in m.get("reactions", [])):
                 await self.react(chat, m["uid"], "remove")

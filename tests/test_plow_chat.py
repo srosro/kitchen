@@ -592,3 +592,22 @@ def test_eyes_left_by_an_earlier_run_clear_on_the_next_send(tmp_path):
 
     run_bridge(before_restart, fake, cursor)
     run_bridge(after_restart, fake, cursor)
+
+
+def test_a_reply_that_went_out_reports_sent_even_if_clearing_eyes_fails():
+    async def scenario(fake, bridge, delivered):
+        await fake.inbound(HOME, OWNER, "hello")
+        await eventually(lambda: fake.reactions)
+        send = bridge.client.post
+
+        async def gone(*args, **kwargs):
+            raise httpx.ConnectError("gone")
+
+        async def post_then_drop(url, **kwargs):  # the send lands, then the network goes
+            r = await send(url, **kwargs)
+            bridge.client.get = gone
+            return r
+        bridge.client.post = post_then_drop
+        assert (await call(bridge, "reply", {"chat": HOME, "text": "hi"})).startswith("sent ")
+        assert fake.sent == [(HOME, "hi")]
+    run_bridge(scenario)
