@@ -138,10 +138,11 @@ tc_claim() { # tc_claim <repo-or-tag> <branch> [exact-slot]
 
 # Route a slot's Rust builds through ~/.cargo/bin/sccache, so a pruned target/ rebuilds
 # from one compile cache shared by every slot. The config is untracked and git-excluded;
-# a repo that ships its own .cargo/config.toml is left alone. Adding it rebuilds nothing.
+# a slot with any .cargo of its own (a config, legacy or not, or a symlink) is left alone.
+# Adding it rebuilds nothing.
 _tc_sccache() { # _tc_sccache <slot-dir>
   local d=$1 wrapper=$HOME/.cargo/bin/sccache exclude
-  { [ -f "$d/Cargo.toml" ] && [ -x "$wrapper" ] && [ ! -e "$d/.cargo/config.toml" ]; } || return 0
+  { [ -f "$d/Cargo.toml" ] && [ -x "$wrapper" ] && [ ! -e "$d/.cargo" ] && [ ! -L "$d/.cargo" ]; } || return 0
   printf '%s %s\n' "${TC_DRYRUN:+would }sccache" "$d"
   [ -z "${TC_DRYRUN:-}" ] || return 0
   mkdir -p "$d/.cargo"
