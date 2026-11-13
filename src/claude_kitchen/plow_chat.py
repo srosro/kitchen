@@ -225,8 +225,9 @@ class Bridge:
         del uids[:-2 * PAGE]
         atomic_write_json(self.cursor, self.taken)
         burst, self.burst = self.burst, []
-        if sender and first["sender"]["type"] == "member" and (texts or files):  # recorded first, so a slow tapback can't replay it
-            await self.react(first["chat_uid"], burst[-1]["uid"], "add")
+        said = [m for m in burst if m["body"].strip() or m["attachments"]]  # not a tapback of theirs
+        if sender and first["sender"]["type"] == "member" and said:  # recorded first, so a slow tapback can't replay it
+            await self.react(first["chat_uid"], said[-1]["uid"], "add")
 
     async def react(self, chat: str, uid: str, operation: str):
         """Add or remove our 👀 on a message. Plow reacts only in iMessage

@@ -552,8 +552,9 @@ def test_a_persons_text_gets_eyes_until_a_send_in_its_chat_goes_out():
         await eventually(lambda: delivered)
         await fake.inbound(HOME, OWNER, "first")
         texted = await fake.inbound(HOME, OWNER, "second")
+        await fake.inbound(HOME, OWNER, "")  # their tapback, closing the same burst
         await eventually(lambda: fake.reactions)
-        assert len(delivered) == 2 and fake.reactions == [(texted["uid"], "add", "👀")]  # the burst's last text only
+        assert len(delivered) == 2 and fake.reactions == [(texted["uid"], "add", "👀")]  # the burst's last text, not its tapback
         fake.hold = True
         with pytest.raises(RuntimeError, match="held"):
             await call(bridge, "reply", {"chat": HOME, "text": "never delivered"})
