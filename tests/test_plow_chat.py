@@ -544,3 +544,71 @@ def test_an_answer_to_a_new_chat_whose_first_read_fails_is_caught_up_on_reconnec
         await eventually(lambda: delivered)
         assert delivered == [("hey Cedar", {"from": "Alex", "chat": "cht_started0"})]
     run_bridge(scenario)
+
+
+def test_a_persons_text_gets_eyes_until_a_send_in_its_chat_goes_out():
+    async def scenario(fake, bridge, delivered):
+        await fake.inbound(HOME, SPRUCE, "peer agents get no tapback")
+        await eventually(lambda: delivered)
+        await fake.inbound(HOME, OWNER, "first")
+        texted = await fake.inbound(HOME, OWNER, "second")
+        await fake.inbound(HOME, OWNER, "")  # their tapback, closing the same burst
+        await eventually(lambda: fake.reactions)
+        assert len(delivered) == 2 and fake.reactions == [(texted["uid"], "add", "👀")]  # the burst's last text, not its tapback
+        fake.hold = True
+        with pytest.raises(RuntimeError, match="held"):
+            await call(bridge, "reply", {"chat": HOME, "text": "never delivered"})
+        assert len(fake.reactions) == 1  # still owed an answer
+        fake.hold = False
+        await call(bridge, "reply", {"chat": HOME, "text": "done"})
+        assert fake.reactions[1:] == [(texted["uid"], "remove", "👀")]
+    run_bridge(scenario)
+
+
+def test_a_refused_tapback_never_holds_up_delivery_or_a_reply():
+    async def scenario(fake, bridge, delivered):
+        fake.reaction_status = 400  # a chat Plow can't tapback in
+        await fake.inbound(HOME, OWNER, "hello")
+        await eventually(lambda: delivered)
+        assert (await call(bridge, "reply", {"chat": HOME, "text": "hi"})).startswith("sent ")
+        await fake.drop_sockets()  # nor does a catch-up hand it over again
+        await eventually(lambda: fake.sockets)
+        await fake.inbound(HOME, OWNER, "marker")
+        await eventually(lambda: len(delivered) == 2)
+        assert [c for c, _ in delivered] == ["hello", "marker"] and fake.reactions == []
+    run_bridge(scenario)
+
+
+def test_eyes_left_by_an_earlier_run_clear_on_the_next_send(tmp_path):
+    fake, cursor = FakePlow(), tmp_path / "last_seen.json"
+
+    async def before_restart(fake, bridge, delivered):
+        await fake.inbound(HOME, OWNER, "taken, then the sous restarts")
+        await eventually(lambda: fake.reactions)
+
+    async def after_restart(fake, bridge, delivered):
+        await call(bridge, "reply", {"chat": HOME, "text": "back"})
+        uid = fake.reactions[0][0]
+        assert fake.reactions == [(uid, "add", "👀"), (uid, "remove", "👀")]
+
+    run_bridge(before_restart, fake, cursor)
+    run_bridge(after_restart, fake, cursor)
+
+
+def test_a_reply_that_went_out_reports_sent_even_if_clearing_eyes_fails():
+    async def scenario(fake, bridge, delivered):
+        await fake.inbound(HOME, OWNER, "hello")
+        await eventually(lambda: fake.reactions)
+        send = bridge.client.post
+
+        async def gone(*args, **kwargs):
+            raise httpx.ConnectError("gone")
+
+        async def post_then_drop(url, **kwargs):  # the send lands, then the network goes
+            r = await send(url, **kwargs)
+            bridge.client.get = gone
+            return r
+        bridge.client.post = post_then_drop
+        assert (await call(bridge, "reply", {"chat": HOME, "text": "hi"})).startswith("sent ")
+        assert fake.sent == [(HOME, "hi")]
+    run_bridge(scenario)

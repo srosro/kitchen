@@ -8,6 +8,7 @@ Once `trusted-chats` exists, only the chats it lists carry authority: any other 
 arrive marked `trusted="false"`, as context the sous may answer but never act on.
 `start_chat` reaches only people already in one of the line's chats or listed in
 `start-chat-allow`, and opens at most `NEW_CHATS_PER_DAY` new chats a day, each logged.
+A person's text gets a 👀 tapback once handed over, cleared once a send in its chat goes out.
 """
 import asyncio
 import json
@@ -32,6 +33,7 @@ TRUSTED_CHATS = "trusted-chats"  # one chat uid per line; read at each hand-over
 START_CHAT_ALLOW = "start-chat-allow"  # one handle per line, beyond those already in the line's chats
 STARTED_CHATS = "started-chats.log"  # one line per chat start_chat sends: time, chat, created, handles
 NEW_CHATS_PER_DAY = 5
+SEEN = "👀"
 RECONNECT_DELAY = 5
 PAGE = 50
 # One speaker's back-to-back texts are one tag. iMessage sends a link as its
@@ -222,7 +224,33 @@ class Bridge:
         uids += [m["uid"] for m in self.burst]  # after delivery, so a crash mid-send can't suppress it
         del uids[:-2 * PAGE]
         atomic_write_json(self.cursor, self.taken)
-        self.burst = []
+        burst, self.burst = self.burst, []
+        said = [m for m in burst if m["body"].strip() or m["attachments"]]  # not a tapback of theirs
+        if sender and first["sender"]["type"] == "member" and said:  # recorded first, so a slow tapback can't replay it
+            await self.react(first["chat_uid"], said[-1]["uid"], "add")
+
+    async def react(self, chat: str, uid: str, operation: str):
+        """Add or remove our 👀 on a message. Plow reacts only in iMessage
+        chats, so a refusal is logged and never stops a delivery or a send."""
+        try:
+            r = await self.client.post(f"/v1/chats/{chat}/messages/{uid}/reactions",
+                                       json={"operation": operation, "type": "custom", "custom_emoji": SEEN})
+        except httpx.HTTPError as e:
+            return log(f"{operation} {SEEN} on {uid} failed: {type(e).__name__}")
+        if r.is_error:
+            log(f"{operation} {SEEN} on {uid}: HTTP {r.status_code}")
+
+    async def answered(self, chat: str):
+        """Clear our 👀 from `chat`'s latest texts. Read from Plow, so one a
+        restart or a failed removal left behind clears on the next send."""
+        try:  # the send already went out: nothing here may fail it
+            r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": PAGE})
+            r.raise_for_status()
+        except httpx.HTTPError as e:
+            return log(f"reading chat {chat} failed ({type(e).__name__}); its {SEEN} stays")
+        for m in r.json()["data"]:
+            if any(x["custom_emoji"] == SEEN and x["actor"].get("relationship") == "self" for x in m.get("reactions", [])):
+                await self.react(chat, m["uid"], "remove")
 
     async def catch_up(self, chat: str):
         """Take what reached `chat` while the socket was down: the newest
@@ -420,7 +448,10 @@ async def call(bridge: Bridge, name: str, arguments: dict) -> str:
     """Run the Bridge method a tool names, with its arguments as keywords."""
     if name not in ("reply", SEND_FILE.name, START_CHAT.name):
         raise ValueError(f"unknown tool {name}")
-    return await getattr(bridge, name)(**arguments)
+    result = await getattr(bridge, name)(**arguments)
+    if result.startswith("sent ") and "chat" in arguments:
+        await bridge.answered(arguments["chat"])
+    return result
 
 
 def read_credentials(path: Path) -> dict:

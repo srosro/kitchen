@@ -35,12 +35,15 @@ class FakePlow:
         self.answer = None  # (handle, body) answering a started chat before the agent reads it back
         self.members = {"cht_home": ["+15550000001", "+15550000002"]}  # chat -> member handles GET /v1/chats lists
         self.start_bodies = []  # each raw POST /v1/chats body
+        self.reactions = []  # (message uid, operation, emoji) of each tapback the agent applied
+        self.reaction_status = 200  # what the reactions route answers; Plow refuses non-iMessage chats with 400
         self._uids = itertools.count(1)
         self.app = Starlette(routes=[
             Route("/v1/ws/ticket", self._ticket, methods=["POST"]),
             Route("/v1/agents/me", self._me),
             Route("/v1/chats", self._start, methods=["GET", "POST"]),
             Route("/v1/chats/{chat}/messages", self._messages, methods=["GET", "POST"]),
+            Route("/v1/chats/{chat}/messages/{uid}/reactions", self._react, methods=["POST"]),
             Route("/v1/chats/{chat}/attachments", self._attachments, methods=["POST"]),
             Route("/provider/{uid}", self._upload, methods=["PUT"]),
             Route("/v1/chats/{chat}/attachments/{uid}/content", self._content),
@@ -142,6 +145,19 @@ class FakePlow:
             return JSONResponse(message, status_code=201)
         limit = int(request.query_params.get("limit", 20))
         return JSONResponse({"data": self.history[chat][::-1][:limit]})  # newest first, as Plow orders
+
+    async def _react(self, request):
+        if not self._authorized(request):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        if self.reaction_status != 200:
+            return JSONResponse({"error": {"code": "invalid_request"}}, status_code=self.reaction_status)
+        body = await request.json()
+        uid = request.path_params["uid"]
+        self.reactions.append((uid, body["operation"], body["custom_emoji"]))
+        message = next(m for m in self.history[request.path_params["chat"]] if m["uid"] == uid)
+        message["reactions"] = [{"custom_emoji": body["custom_emoji"], "actor": {"type": "agent", "relationship": "self"}}] \
+            if body["operation"] == "add" else []
+        return JSONResponse(message)
 
     async def _attachments(self, request):
         if not self._authorized(request):
