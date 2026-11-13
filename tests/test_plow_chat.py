@@ -544,3 +544,35 @@ def test_an_answer_to_a_new_chat_whose_first_read_fails_is_caught_up_on_reconnec
         await eventually(lambda: delivered)
         assert delivered == [("hey Cedar", {"from": "Alex", "chat": "cht_started0"})]
     run_bridge(scenario)
+
+
+def test_a_persons_text_gets_eyes_until_a_send_in_its_chat_goes_out():
+    async def scenario(fake, bridge, delivered):
+        await fake.inbound(HOME, SPRUCE, "peer agents get no tapback")
+        await eventually(lambda: delivered)
+        await fake.inbound(HOME, OWNER, "first")
+        texted = await fake.inbound(HOME, OWNER, "second")
+        await eventually(lambda: fake.reactions)
+        assert len(delivered) == 2 and fake.reactions == [(texted["uid"], "add", "👀")]  # the burst's last text only
+        fake.hold = True
+        with pytest.raises(RuntimeError, match="held"):
+            await call(bridge, "reply", {"chat": HOME, "text": "never delivered"})
+        assert len(fake.reactions) == 1  # still owed an answer
+        fake.hold = False
+        await call(bridge, "reply", {"chat": HOME, "text": "done"})
+        assert fake.reactions[1:] == [(texted["uid"], "remove", "👀")]
+    run_bridge(scenario)
+
+
+def test_a_refused_tapback_never_holds_up_delivery_or_a_reply():
+    async def scenario(fake, bridge, delivered):
+        fake.reaction_status = 400  # a chat Plow can't tapback in
+        await fake.inbound(HOME, OWNER, "hello")
+        await eventually(lambda: delivered)
+        assert (await call(bridge, "reply", {"chat": HOME, "text": "hi"})).startswith("sent ")
+        await fake.drop_sockets()  # nor does a catch-up hand it over again
+        await eventually(lambda: fake.sockets)
+        await fake.inbound(HOME, OWNER, "marker")
+        await eventually(lambda: len(delivered) == 2)
+        assert [c for c, _ in delivered] == ["hello", "marker"] and fake.reactions == []
+    run_bridge(scenario)
