@@ -29,13 +29,14 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool
 
 from claude_kitchen.channel import push, reply_server
-from claude_kitchen.state import atomic_write_json, plow_chat_dir, read_env, state_dir, with_digest
+from claude_kitchen.state import atomic_write_json, plow_chat_dir, read_env, state_dir, swarm_accounts, with_digest
 
 CREDENTIALS = "plow-credentials"  # written mode 600 by `latch agents new --own --credential-file`
 TRUSTED_CHATS = "trusted-chats"  # one chat uid per line; read at each hand-over, so edits need no restart
 START_CHAT_ALLOW = "start-chat-allow"  # one handle per line, beyond those already in the line's chats
 STARTED_CHATS = "started-chats.log"  # one line per chat start_chat sends: time, chat, created, handles
 MESSAGES_HOST = "messages-host"  # the latch host holding the owner's Messages, read by the pre-send review
+ASK_GATE_TO = "ask-gate-to"  # the owner's Swarm id: a new ask to the owner alone first passes `swarm ask-gate`
 NEW_CHATS_PER_DAY = 5
 REVIEW_DAYS = 3  # how far back the review reads the owner's other threads
 REVIEW_MODEL = "sonnet"
@@ -169,6 +170,22 @@ async def run(*args: str, stdin: str = "") -> str:
     return out.decode()
 
 
+async def swarm_ask_gate(to: str, account: str, priority: str) -> str | None:
+    """None when Swarm lets `account` ask `to` on `priority` now; else why it
+    waits: `to`'s delegate hasn't pointed the priority at them, and the
+    hold hasn't timed out."""
+    proc = await asyncio.create_subprocess_exec("swarm", "ask-gate", "--to", to, "--priority", priority,
+                                                "--account", account, stdout=asyncio.subprocess.PIPE,
+                                                stderr=asyncio.subprocess.PIPE)
+    out, err = await proc.communicate()
+    if proc.returncode == 0:
+        return None
+    if proc.returncode == 6:
+        held = json.loads(err)["error"]
+        return f"not sent: {held['message']} {held['note']} Delegates: {json.dumps(held['cards'])}"
+    raise RuntimeError(f"swarm ask-gate failed with exit {proc.returncode}: {(err or out).decode()[-300:]}; not sent")
+
+
 async def ask_reviewer(prompt: str) -> str:
     """A fresh model's answer to `prompt`, with no tools, settings or memory of its own."""
     return await run("claude", "-p", "--safe-mode", "--tools", "", "--no-session-persistence",
@@ -216,6 +233,7 @@ class Bridge:
     # already taken.
     cursor: Path
     reviewer: callable = ask_reviewer  # async (prompt) -> answer, the pre-send review's model
+    ask_gate: callable = None  # async (priority) -> refusal or None; set when `ask-gate-to` names the owner
     taken: dict = field(init=False)
     burst: list = field(init=False, default_factory=list)  # one speaker's texts not yet handed over
     due: float = 0.0  # loop time the burst closes at
@@ -336,7 +354,8 @@ class Bridge:
                 lines[m["uid"]] = f"{who}: {m['body'].strip() or '(a file)'}"
         return lines
 
-    async def held(self, text: str, chat: str | None = None, handles: list[str] = ()) -> str | None:
+    async def held(self, text: str, chat: str | None = None, handles: list[str] = (),
+                   priority: str = "", skip: bool = False) -> str | None:
         """Why a reviewer holds `text`, bound for `chat` or the chat with
         `handles` (an existing one's history included), or None to send it.
         Only a text the owner alone would read goes unreviewed. The thread is
@@ -352,7 +371,7 @@ class Bridge:
         chat = chat or next((uid for uid, people in others.items() if set(people) == set(handles)), None)
         people = {h: h for h in handles} | others.get(chat, {})
         if not people:
-            return None
+            return await self.gated(chat, priority, skip)
         thread = await self.thread(chat) if chat else {}
         host = self.cursor.parent / MESSAGES_HOST
         other = (await owner_threads(listed(host).pop(), {h.casefold() for h in people}, owner)
@@ -370,10 +389,27 @@ class Bridge:
             return f"not sent: {len(newer)} newer message(s) landed while it was reviewed; read them, then answer again"
         return None
 
-    async def reply(self, chat: str, text: str) -> str:
+    async def gated(self, chat: str, priority: str, skip: bool) -> str | None:
+        """A new ask to the owner alone waits for their delegate (`swarm
+        ask-gate`); a text answering the owner's latest one never does."""
+        if not self.ask_gate:
+            return None
+        lines = list((await self.thread(chat)).values())
+        if lines and not lines[-1].startswith("you: "):
+            return None
+        if skip:
+            log(f"ask-gate skipped on {chat} (dangerously_skip_attaching_a_priority)")
+            return None
+        if not priority:
+            return "not sent: a new ask to the head chef names the priority it serves (`priority`)"
+        return await self.ask_gate(priority)
+
+    async def reply(self, chat: str, text: str, priority: str = "",
+                    dangerously_skip_attaching_a_priority: bool = False) -> str:
         if not text.strip():
             raise ValueError("reply text is empty; not sent")
-        if refusal := await self.held(text, chat) or await self.unread(chat):  # the review is slow; read last
+        if refusal := await self.held(text, chat, priority=priority, skip=dangerously_skip_attaching_a_priority) \
+                or await self.unread(chat):  # the review is slow; read last
             return refusal
         return sent(await self.client.post(f"/v1/chats/{chat}/messages", json={"body": text}), "reply")
 
@@ -396,13 +432,15 @@ class Bridge:
             raise RuntimeError(f"uploading {file.name} failed with HTTP {r.status_code}; nothing sent")
         return attachment["uid"]
 
-    async def send_file(self, chat: str, paths: list[str], caption: str = "") -> str:
+    async def send_file(self, chat: str, paths: list[str], caption: str = "", priority: str = "",
+                        dangerously_skip_attaching_a_priority: bool = False) -> str:
         """Send local files on `chat` as one message, or nothing if any fails."""
         if not 1 <= len(paths) <= MAX_ATTACHMENTS:
             raise ValueError(f"{len(paths)} files given; a message takes 1 to {MAX_ATTACHMENTS}; nothing sent")
         files = [attachable(path) for path in paths]  # all of them before Plow hears of any
         uids = [await self.upload(chat, file) for file in files]
-        if refusal := await self.held(caption or f"(files: {', '.join(file.name for file in files)})", chat) \
+        if refusal := await self.held(caption or f"(files: {', '.join(file.name for file in files)})", chat,
+                                      priority=priority, skip=dangerously_skip_attaching_a_priority) \
                 or await self.unread(chat):  # after the uploads and the review, which can take a while
             return refusal
         return sent(await self.client.post(f"/v1/chats/{chat}/messages", json={
@@ -489,6 +527,14 @@ class Bridge:
             await asyncio.sleep(RECONNECT_DELAY)
 
 
+# A new ask to the head chef alone names its priority, so `swarm ask-gate` can
+# hold it until their delegate lets it through.
+GATE_PROPERTIES = {
+    "priority": {"type": "string", "description": "the ref of the Swarm priority a new ask to the head chef serves"},
+    "dangerously_skip_attaching_a_priority": {"type": "boolean", "description": "send a new ask to the head chef with no priority; logged"},
+}
+
+
 SEND_FILE = Tool(
     name="send_file",
     description=(
@@ -503,6 +549,7 @@ SEND_FILE = Tool(
             "chat": {"type": "string"},
             "paths": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": MAX_ATTACHMENTS},
             "caption": {"type": "string"},
+            **GATE_PROPERTIES,
         },
         "required": ["chat", "paths"],
     },
@@ -541,12 +588,16 @@ async def run_server(kitchen: str):
     credentials = read_env(directory / CREDENTIALS)  # PLOW_API_BASE, PLOW_AGENT_TOKEN
     bridge = None  # bound once the HTTP client and stdio streams are open
     server, init_options = reply_server("plow-chat", "Plow chat (iMessage)",
-                                        lambda name, arguments: call(bridge, name, arguments), SEND_FILE, START_CHAT)
+                                        lambda name, arguments: call(bridge, name, arguments), SEND_FILE, START_CHAT,
+                                        reply_properties=GATE_PROPERTIES)
 
     headers = {"Authorization": f"Bearer {credentials['PLOW_AGENT_TOKEN']}"}
     async with httpx.AsyncClient(base_url=credentials["PLOW_API_BASE"], headers=headers, timeout=30) as client, \
             stdio_server() as (read_stream, write_stream):
         bridge = Bridge(client, lambda content, meta: push(write_stream, with_digest(state_dir(kitchen), content), meta), directory / "last_seen.json")
+        if (gate := directory / ASK_GATE_TO).exists():
+            to, account = listed(gate).pop(), swarm_accounts(kitchen)[0]["user_id"]
+            bridge.ask_gate = lambda priority: swarm_ask_gate(to, account, priority)
         supervisor = asyncio.create_task(bridge.run())
         try:
             await server.run(read_stream, write_stream, init_options)
