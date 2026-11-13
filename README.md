@@ -168,13 +168,13 @@ Collapses the `ssh -t <host> 'tmux new -A -s …'` + `cd ~/Hacking/<repo>` ritua
 tc <repo> <N> <host>        # attach/create slot N:  ~/Hacking/<repo><N>  → <tag><N>-<host>
 tc new <repo> <host>        # next FREE workspace (on main + clean + not busy), scanning <repo>0..9
 tc claim <repo> <branch> [N]  # headless: claim a free local slot, or exact slot N; checkout -b <branch>
-tc prune-targets <repo>       # delete target/ in idle local slots (not busy, not claimed, untouched 24h); TC_DRYRUN=1 lists
+tc prune-targets <repo>       # delete target/ in idle local slots (not busy, not claimed, untouched 24h) and route their builds through sccache; TC_DRYRUN=1 lists
 tc setup <repo> <host> [url]  # clone <repo>0..<repo>9 on <host> (idempotent)
 ```
 
 `kitchen setup` links `tc` into `~/.local/bin`. It needs a host table at `~/.config/kitchen/fleet-hosts` (override with `KITCHEN_FLEET_HOSTS`), one `<host> <user> [alias]` row per line; host-dependent `tc` commands (connect, `new`, `setup`) and the fleet helpers fail loudly without it; `tc claim` is local and still works. `tests/shell/fixtures/fleet-hosts` shows the shape; the optional alias gives a host one short name (a row `laptop-pro alice lp` lets `tc my-app 5 lp` reach it). Short repo tags come from an optional `~/.config/kitchen/fleet-repos` (`<tag> <repo-dir>` rows; override with `KITCHEN_FLEET_REPOS`); without it a repo is named by its dir. Running `tc … <thishost>` runs tmux locally instead of SSH-to-self. `tc setup` resolves the git URL from `<repo>0`'s `origin` — falling back to a legacy bare `~/Hacking/<repo>` checkout — or takes an explicit `[url]`. A legacy bare checkout is otherwise ignored: `tc` no longer attaches to it, scans it, or clones it, so fleets migrate organically to the numbered slots.
 
-A daily prune keeps Rust slots from filling the disk: `ln -sf "$PWD"/src/claude_kitchen/tc/systemd/tc-prune-targets@.{service,timer} ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now tc-prune-targets@<repo>.timer` (04:30 daily).
+A daily prune keeps Rust slots from filling the disk: `ln -sf "$PWD"/src/claude_kitchen/tc/systemd/tc-prune-targets@.{service,timer} ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now tc-prune-targets@<repo>.timer` (04:30 daily). With `sccache` in `~/.cargo/bin`, the same run gives every free slot a git-excluded `.cargo/config.toml` that routes builds through it, so a pruned slot rebuilds its dependencies from a cache shared by all slots.
 
 A remote host needs `tmux` resolvable from a **non-login** shell — `ssh host cmd` gets a bare PATH, so a Homebrew or `~/.local/bin` tmux is invisible unless `~/.zshenv` adds its dir. Linux hosts get this free (`/usr/bin/tmux`); macOS ones may not.
 
