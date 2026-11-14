@@ -426,7 +426,7 @@ class Bridge:
             return None
         r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": PAGE})
         r.raise_for_status()
-        theirs = [m["created_at"] for m in r.json()["data"] if m["sender"].get("relationship") != "self"]
+        theirs = [m["created_at"] for m in r.json()["data"] if m["sender"]["type"] == "member"]
         if theirs and datetime.now(timezone.utc) - datetime.fromisoformat(max(theirs)) < timedelta(hours=ANSWER_HOURS):
             return None
         if skip:
