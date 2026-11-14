@@ -45,6 +45,13 @@ def is_public(url: str) -> bool | None:
     return None
 
 
+def public_account(user_id: str) -> str:
+    """The public account the bridge made for `user_id`, in full: swarm refuses a
+    bare name held on more than one server here."""
+    name, server = user_id.removeprefix("@").split(":", 1)
+    return f"@{name}-public:{server}"
+
+
 def launch_argv(launch: dict, persona: str) -> list[str]:
     """swarm's `cd '<dir>' && claude …` as argv, plus the persona."""
     claude = launch["command"].split(" && ", 1)[1]
@@ -71,7 +78,7 @@ def run(kitchen: str):
     """The persona window's loop: wait for the switch, serve, stop when it is switched off."""
     account = swarm_account(kitchen)
     url = card_url(account)
-    public = account["user_id"].removeprefix("@").split(":")[0] + "-public"
+    public = public_account(account["user_id"])
     while True:
         while is_public(url) is not True:
             time.sleep(POLL)
