@@ -12,11 +12,13 @@ Every send that reaches anyone but the line's owner first goes past a fresh revi
 model, which reads the live thread (and, once `messages-host` names the latch host
 holding the owner's Messages, the owner's other recent threads with the same people)
 and holds a text that contradicts them, makes the owner look out of the loop, or isn't needed.
-A person's text gets a 👀 tapback once handed over, cleared once a send in its chat goes out.
+A person's text addressed to the agent (in a 1:1, or naming it in a group) gets a 👀 tapback
+once handed over, cleared once a send in its chat goes out.
 """
 import asyncio
 import json
 import mimetypes
+import re
 import sys
 import uuid
 from dataclasses import dataclass, field
@@ -310,8 +312,24 @@ class Bridge:
         atomic_write_json(self.cursor, self.taken)
         burst, self.burst = self.burst, []
         said = [m for m in burst if m["body"].strip() or m["attachments"]]  # not a tapback of theirs
-        if sender and first["sender"]["type"] == "member" and said:  # recorded first, so a slow tapback can't replay it
-            await self.react(first["chat_uid"], said[-1]["uid"], "add")
+        if sender and first["sender"]["type"] == "member" and said and await self.addressed(first["chat_uid"], said):
+            await self.react(first["chat_uid"], said[-1]["uid"], "add")  # recorded first, so a slow tapback can't replay it
+
+    async def addressed(self, chat: str, said: list[dict]) -> bool:
+        """Whether `said` is the agent's to answer: its chat seats only one
+        person, or a text names the line or @-mentions it. A group text that
+        doesn't may never get an answer, so it gets no 👀 to clear."""
+        try:
+            r = await self.client.get("/v1/agents/me")
+            r.raise_for_status()
+        except httpx.HTTPError as e:
+            log(f"reading the line failed ({type(e).__name__}); no {SEEN}")
+            return False
+        me = r.json()
+        named = re.compile(rf"\b{re.escape(me['line']['display_name'])}\b", re.IGNORECASE)
+        if any(named.search(m["body"]) or any(x["is_me"] for x in m["mentions"]) for m in said):
+            return True
+        return sum(p["type"] == "member" for c in me["chats"] if c["uid"] == chat for p in c["participants"]) == 1
 
     async def react(self, chat: str, uid: str, operation: str):
         """Add or remove our 👀 on a message. Plow reacts only in iMessage

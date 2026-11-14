@@ -51,7 +51,7 @@ class FakePlow:
             WebSocketRoute("/v1/ws", self._ws),
         ])
 
-    def _message(self, chat, body, handle=None, late=False, files=()):
+    def _message(self, chat, body, handle=None, late=False, files=(), mentions=()):
         if isinstance(handle, dict):
             sender = handle  # a peer agent's line or a Plow system note
         elif handle:
@@ -67,18 +67,18 @@ class FakePlow:
             host = f"http://{self.files_host}:{self.port}" if self.files_host else ""
             attachments.append({"uid": uid, "filename": name, "status": "received", "url": host + path})
         message = {"uid": f"msg_{next(self._uids)}", "chat_uid": chat, "body": body, "sender": sender,
-                   "attachments": attachments, "created_at": datetime.now(timezone.utc).isoformat()}
+                   "attachments": attachments, "mentions": list(mentions), "created_at": datetime.now(timezone.utc).isoformat()}
         # A late text was sent before the newest one, so Plow sorts it below it.
         self.history[chat].insert(len(self.history[chat]) - late, message)
         return message
 
-    def add(self, chat, handle, body, late=False, files=()):
+    def add(self, chat, handle, body, late=False, files=(), mentions=()):
         """A member's text, with any (name, bytes) files, lands while no socket hears it."""
-        return self._message(chat, body, handle, late, files)
+        return self._message(chat, body, handle, late, files, mentions)
 
-    async def inbound(self, chat, handle, body, late=False, files=()):
+    async def inbound(self, chat, handle, body, late=False, files=(), mentions=()):
         """A member texts the line, and every open socket hears it."""
-        message = self.add(chat, handle, body, late, files)
+        message = self.add(chat, handle, body, late, files, mentions)
         await self._broadcast(message)
         return message
 
@@ -102,17 +102,19 @@ class FakePlow:
     async def _me(self, request):
         if not self._authorized(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        return JSONResponse({"line": {"uid": "ln_self"}, "chats": []})
+        return JSONResponse({"line": {"uid": "ln_self", "display_name": "Cedar"}, "chats": self._chats()})
+
+    def _chats(self):
+        return [{"uid": chat, "participants": [{"type": "member", "provider_key": h, "display_name": NAMES.get(h, h),
+                                                "role": "owner" if h == "+15550000001" else "member"} for h in handles]}
+                for chat, handles in self.members.items()]
 
     async def _start(self, request):
         """Start a chat with its first message, adopting the thread its members already have."""
         if not self._authorized(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         if request.method == "GET":
-            return JSONResponse({"data": [
-                {"uid": chat, "participants": [{"type": "member", "provider_key": h, "display_name": NAMES.get(h, h),
-                                                "role": "owner" if h == "+15550000001" else "member"} for h in handles]}
-                for chat, handles in self.members.items()]})
+            return JSONResponse({"data": self._chats()})
         sent = await request.json()
         self.start_bodies.append(sent)
         if sent["line_uid"] != "ln_self" or not sent["members"]:
