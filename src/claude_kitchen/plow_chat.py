@@ -327,7 +327,7 @@ class Bridge:
             return False
         me = r.json()
         named = re.compile(rf"\b{re.escape(me['line']['display_name'])}\b", re.IGNORECASE)
-        if any(named.search(m["body"]) or any(x["is_me"] for x in m["mentions"]) for m in said):
+        if any(named.search(m["body"]) or any(x["is_me"] for x in m["mentions"] or []) for m in said):
             return True
         return sum(p["relationship"] != "self" for c in me["chats"] if c["uid"] == chat for p in c["participants"]) == 1
 

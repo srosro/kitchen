@@ -68,7 +68,7 @@ class FakePlow:
             host = f"http://{self.files_host}:{self.port}" if self.files_host else ""
             attachments.append({"uid": uid, "filename": name, "status": "received", "url": host + path})
         message = {"uid": f"msg_{next(self._uids)}", "chat_uid": chat, "body": body, "sender": sender,
-                   "attachments": attachments, "mentions": list(mentions), "created_at": datetime.now(timezone.utc).isoformat()}
+                   "attachments": attachments, "mentions": list(mentions) or None, "created_at": datetime.now(timezone.utc).isoformat()}
         # A late text was sent before the newest one, so Plow sorts it below it.
         self.history[chat].insert(len(self.history[chat]) - late, message)
         return message
