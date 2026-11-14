@@ -713,7 +713,9 @@ def test_a_persons_text_gets_eyes_until_a_send_in_its_chat_goes_out():
     (HOME, "can you book it?", [{"handle": "+15550000003", "is_me": True, "range": [0, 5]}], True),
     (HOME, "can you book it?", [], False),
     (HOME, "ask cedarwood", [], False),
-], ids=["one-on-one", "group-naming-it", "group-mentioning-it", "group-not-naming-it", "name-inside-a-word"])
+    ("cht_agents", "can you book it?", [], False),
+], ids=["one-on-one", "group-naming-it", "group-mentioning-it", "group-not-naming-it", "name-inside-a-word",
+        "one-person-and-a-peer-agent"])
 def test_eyes_go_only_on_texts_addressed_to_the_agent(chat, text, mentions, eyes):
     async def scenario(fake, bridge, delivered):
         texted = await fake.inbound(chat, OWNER, text, mentions=mentions)

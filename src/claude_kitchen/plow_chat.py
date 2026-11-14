@@ -316,8 +316,8 @@ class Bridge:
             await self.react(first["chat_uid"], said[-1]["uid"], "add")  # recorded first, so a slow tapback can't replay it
 
     async def addressed(self, chat: str, said: list[dict]) -> bool:
-        """Whether `said` is the agent's to answer: its chat seats only one
-        person, or a text names the line or @-mentions it. A group text that
+        """Whether `said` is the agent's to answer: its chat seats no one but
+        the sender and this line, or a text names the line or @-mentions it. A group text that
         doesn't may never get an answer, so it gets no 👀 to clear."""
         try:
             r = await self.client.get("/v1/agents/me")
@@ -329,7 +329,7 @@ class Bridge:
         named = re.compile(rf"\b{re.escape(me['line']['display_name'])}\b", re.IGNORECASE)
         if any(named.search(m["body"]) or any(x["is_me"] for x in m["mentions"]) for m in said):
             return True
-        return sum(p["type"] == "member" for c in me["chats"] if c["uid"] == chat for p in c["participants"]) == 1
+        return sum(p["relationship"] != "self" for c in me["chats"] if c["uid"] == chat for p in c["participants"]) == 1
 
     async def react(self, chat: str, uid: str, operation: str):
         """Add or remove our 👀 on a message. Plow reacts only in iMessage
