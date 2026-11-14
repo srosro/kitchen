@@ -688,7 +688,7 @@ def test_a_text_landing_while_the_reviewer_thinks_stops_the_send():
     run_bridge(scenario)
 
 
-def test_a_persons_text_gets_eyes_until_a_send_in_its_chat_goes_out():
+def test_a_persons_text_gets_eyes_until_a_send_or_no_reply_in_its_chat():
     async def scenario(fake, bridge, delivered):
         await fake.inbound(SOLO, SPRUCE, "peer agents get no tapback")
         await eventually(lambda: delivered)
@@ -704,6 +704,11 @@ def test_a_persons_text_gets_eyes_until_a_send_in_its_chat_goes_out():
         fake.hold = False
         await call(bridge, "reply", {"chat": SOLO, "text": "done"})
         assert fake.reactions[1:] == [(texted["uid"], "remove", "👀")]
+        unanswered = await fake.inbound(SOLO, OWNER, "thanks!")
+        await eventually(lambda: len(fake.reactions) == 3)
+        assert await call(bridge, "no_reply", {"chat": SOLO}) == "👀 cleared; nothing sent"
+        assert fake.reactions[2:] == [(unanswered["uid"], "add", "👀"), (unanswered["uid"], "remove", "👀")]
+        assert fake.sent == [(SOLO, "done")]
     run_bridge(scenario)
 
 

@@ -13,7 +13,7 @@ model, which reads the live thread (and, once `messages-host` names the latch ho
 holding the owner's Messages, the owner's other recent threads with the same people)
 and holds a text that contradicts them, makes the owner look out of the loop, or isn't needed.
 A person's text addressed to the agent (in a 1:1, or naming it in a group) gets a 👀 tapback
-once handed over, cleared once a send in its chat goes out.
+once handed over, cleared once a send in its chat goes out or the sous calls `no_reply`.
 """
 import asyncio
 import json
@@ -626,8 +626,22 @@ START_CHAT = Tool(
 )
 
 
+NO_REPLY = Tool(
+    name="no_reply",
+    description=(
+        "Clear your 👀 from a Plow chat's texts without sending anything, once you've read "
+        "them and decided not to answer; pass the `chat` attribute of the <channel "
+        "source=\"plow-chat\"> tag. Any send in that chat clears it too."
+    ),
+    inputSchema={"type": "object", "properties": {"chat": {"type": "string"}}, "required": ["chat"]},
+)
+
+
 async def call(bridge: Bridge, name: str, arguments: dict) -> str:
     """Run the Bridge method a tool names, with its arguments as keywords."""
+    if name == NO_REPLY.name:
+        await bridge.answered(arguments["chat"])
+        return f"{SEEN} cleared; nothing sent"
     if name not in ("reply", SEND_FILE.name, START_CHAT.name):
         raise ValueError(f"unknown tool {name}")
     result = await getattr(bridge, name)(**arguments)
@@ -648,7 +662,7 @@ async def run_server(kitchen: str):
     credentials = read_credentials(directory / CREDENTIALS)
     bridge = None  # bound once the HTTP client and stdio streams are open
     server, init_options = reply_server("plow-chat", "Plow chat (iMessage)",
-                                        lambda name, arguments: call(bridge, name, arguments), SEND_FILE, START_CHAT,
+                                        lambda name, arguments: call(bridge, name, arguments), SEND_FILE, START_CHAT, NO_REPLY,
                                         reply_properties=GATE_PROPERTIES)
 
     headers = {"Authorization": f"Bearer {credentials['PLOW_AGENT_TOKEN']}"}

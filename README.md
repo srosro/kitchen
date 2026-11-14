@@ -320,7 +320,7 @@ latch agents new --own --name widget-boss --line ln_... \
 
 Then restart the sous so it loads the channel: it can run `kitchen restart sous` itself, which relaunches it on the same session in its tmux pane (or `/exit`, then `kitchen open --resume boss` from the project root). Text the line to check it. A new group needs no setup: add the line's number to it.
 
-A person's text addressed to the agent — in a chat with only one person, or naming the line (or @-mentioning it) in a group — gets a 👀 tapback once it reaches the sous, and the next `reply` or `send_file` that goes out in that chat clears it. Plow tapbacks only iMessage chats; elsewhere the attempt is logged and skipped.
+A person's text addressed to the agent — in a chat with only one person, or naming the line (or @-mentioning it) in a group — gets a 👀 tapback once it reaches the sous, and the next `reply` or `send_file` that goes out in that chat clears it, as does `no_reply` when the sous reads it and decides not to answer. Plow tapbacks only iMessage chats; elsewhere the attempt is logged and skipped.
 
 ## Messaging the sous on Discord
 
