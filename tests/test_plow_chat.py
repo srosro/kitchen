@@ -593,16 +593,18 @@ def test_a_text_anyone_but_the_owner_reads_goes_out_only_past_the_reviewer(chat,
 
 
 @pytest.mark.parametrize("gate, answering, kwargs, outcome", [
-    (None, False, {}, "sent"),
-    ("held", True, {}, "sent"),
-    ("held", False, {"dangerously_skip_attaching_a_priority": True}, "sent"),
-    ("held", False, {}, "not sent: a new ask to the head chef names the priority"),
-    ("held", False, {"priority": "!room/p1"}, "not sent: held"),
-    (None, False, {"priority": "!room/p1"}, "sent"),
-], ids=["gate-off", "answers-the-owner", "skip-flag", "no-priority", "held", "let-through"])
+    (None, None, {}, "sent"),
+    ("held", "fresh", {}, "sent"),
+    ("held", "stale", {}, "not sent: a new ask to the head chef names the priority"),
+    ("held", None, {"dangerously_skip_attaching_a_priority": True}, "sent"),
+    ("held", None, {}, "not sent: a new ask to the head chef names the priority"),
+    ("held", None, {"priority": "!room/p1"}, "not sent: held"),
+    (None, None, {"priority": "!room/p1"}, "sent"),
+], ids=["gate-off", "answers-the-owner", "owner-quiet-for-hours", "skip-flag", "no-priority", "held", "let-through"])
 def test_a_new_ask_to_the_owner_alone_waits_for_the_ask_gate(gate, answering, kwargs, outcome):
-    """In the owner-only chat, a text that doesn't answer the owner's latest
-    one names its priority and goes out only when `swarm ask-gate` lets it."""
+    """In the owner-only chat, a text sent while the owner's latest one is
+    recent answers them, even after the agent's own "on it"; any other names
+    its priority and goes out only when `swarm ask-gate` lets it."""
     asked = []
 
     async def ask_gate(priority):
@@ -610,15 +612,17 @@ def test_a_new_ask_to_the_owner_alone_waits_for_the_ask_gate(gate, answering, kw
         return "not sent: held" if gate else None
 
     async def scenario(fake, bridge, delivered):
-        await bridge.reply("cht_solo", "earlier update")  # the agent spoke last, gate off
-        bridge.ask_gate = ask_gate if gate or kwargs.get("priority") else None
         if answering:
-            await fake.inbound("cht_solo", OWNER, "what's the status?")
+            text = await fake.inbound("cht_solo", OWNER, "what's the status?")
             await eventually(lambda: delivered)
+            if answering == "stale":
+                text["created_at"] = (datetime.now().astimezone() - timedelta(hours=plow_chat.ANSWER_HOURS + 1)).isoformat()
+        await bridge.reply("cht_solo", "on it")  # the agent spoke last, gate off
+        bridge.ask_gate = ask_gate if gate or kwargs.get("priority") else None
         result = await bridge.reply("cht_solo", "can I mint the invite?", **kwargs)
         assert result.startswith(outcome)
         assert (("cht_solo", "can I mint the invite?") in fake.sent) == (outcome == "sent")
-        assert asked == ([kwargs["priority"]] if kwargs.get("priority") and not answering else [])
+        assert asked == ([kwargs["priority"]] if kwargs.get("priority") else [])
     run_bridge(scenario)
 
 

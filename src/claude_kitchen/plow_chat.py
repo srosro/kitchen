@@ -20,7 +20,7 @@ import mimetypes
 import sys
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from itertools import takewhile
 from pathlib import Path
 
@@ -38,6 +38,7 @@ START_CHAT_ALLOW = "start-chat-allow"  # one handle per line, beyond those alrea
 STARTED_CHATS = "started-chats.log"  # one line per chat start_chat sends: time, chat, created, handles
 MESSAGES_HOST = "messages-host"  # the latch host holding the owner's Messages, read by the pre-send review
 ASK_GATE_TO = "ask-gate-to"  # the owner's Swarm id: a new ask to the owner alone first passes `swarm ask-gate`
+ANSWER_HOURS = 12  # within this long of the owner's latest text, a text to them answers it, not a new ask
 NEW_CHATS_PER_DAY = 5
 REVIEW_DAYS = 3  # how far back the review reads the owner's other threads
 REVIEW_MODEL = "sonnet"
@@ -419,11 +420,14 @@ class Bridge:
 
     async def gated(self, chat: str, priority: str, skip: bool) -> str | None:
         """A new ask to the owner alone waits for their delegate (`swarm
-        ask-gate`); a text answering the owner's latest one never does."""
+        ask-gate`); a text while the owner's latest one is recent answers
+        them, however many of the agent's own came after it."""
         if not self.ask_gate:
             return None
-        lines = list((await self.thread(chat)).values())
-        if lines and not lines[-1].startswith("you: "):
+        r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": PAGE})
+        r.raise_for_status()
+        theirs = [m["created_at"] for m in r.json()["data"] if m["sender"].get("relationship") != "self"]
+        if theirs and datetime.now(timezone.utc) - datetime.fromisoformat(max(theirs)) < timedelta(hours=ANSWER_HOURS):
             return None
         if skip:
             log(f"ask-gate skipped on {chat} (dangerously_skip_attaching_a_priority)")
