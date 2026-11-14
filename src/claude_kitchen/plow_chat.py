@@ -421,7 +421,7 @@ class Bridge:
     async def gated(self, chat: str, priority: str, skip: bool) -> str | None:
         """A new ask to the owner alone waits for their delegate (`swarm
         ask-gate`); a text while the owner's latest one is recent answers
-        them, however many of the agent's own came after it."""
+        them, even after the agent's own "on it"."""
         if not self.ask_gate:
             return None
         r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": PAGE})
