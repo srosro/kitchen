@@ -826,7 +826,11 @@ def cmd_consult_gate():
     """PreToolUse on Swarm `send`: exit 2 with the reason when the send is refused."""
     from claude_kitchen.plow_chat import swarm_send_refusal
     kitchen = os.environ.get("AGENT_KITCHEN", "")
-    if kitchen and (refusal := swarm_send_refusal(kitchen, json.load(sys.stdin)["tool_input"])):
+    try:
+        refusal = kitchen and swarm_send_refusal(kitchen, json.load(sys.stdin)["tool_input"])
+    except Exception as e:  # a gate that can't decide holds the send
+        refusal = f"not sent: the consult gate couldn't check this send ({e!r}); retry"
+    if refusal:
         print(refusal, file=sys.stderr)
         sys.exit(2)  # what blocks the tool call
 

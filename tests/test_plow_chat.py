@@ -5,6 +5,7 @@ import re
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import unquote
 
 import httpx
@@ -797,7 +798,7 @@ def test_a_swarm_send_to_the_owner_credits_the_agent_consulted(tmp_path, monkeyp
     def joined(account, path):
         room = unquote(path.split("/")[2])
         if room not in rooms:
-            raise OSError("403 not in the room")
+            raise HTTPError(path, 403, "not in the room", None, None)
         return {"joined": dict.fromkeys(rooms[room], {})}
     monkeypatch.setattr(plow_chat, "matrix_get", joined)
     (tmp_path / "cred.json").write_text(json.dumps({"user_id": "@cedar:x"}))

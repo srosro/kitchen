@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from itertools import takewhile
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import quote
 
 import httpx
@@ -195,7 +196,9 @@ def dm_with(kitchen: str, room: str, person: str) -> bool:
     for account in swarm_accounts(kitchen):
         try:
             members = matrix_get(account, f"/rooms/{quote(room, safe='')}/joined_members")["joined"]
-        except OSError:
+        except HTTPError as e:
+            if e.code != 403:  # anything but "not in this room" stops the send
+                raise
             continue
         return set(members) == {account["user_id"], person}
     return False
