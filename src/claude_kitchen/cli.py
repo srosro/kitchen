@@ -827,7 +827,8 @@ def cmd_consult_gate():
     from claude_kitchen.plow_chat import swarm_send_refusal
     kitchen = os.environ.get("AGENT_KITCHEN", "")
     try:
-        refusal = kitchen and swarm_send_refusal(kitchen, json.load(sys.stdin)["tool_input"])
+        refusal = kitchen and swarm_send_refusal(kitchen, os.environ.get("AGENT_NAME", ""),
+                                                 json.load(sys.stdin)["tool_input"])
     except Exception as e:  # a gate that can't decide holds the send
         refusal = f"not sent: the consult gate couldn't check this send ({e!r}); retry"
     if refusal:

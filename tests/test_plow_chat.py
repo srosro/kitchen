@@ -775,25 +775,30 @@ def test_a_reply_that_went_out_reports_sent_even_if_clearing_eyes_fails():
     run_bridge(scenario)
 
 
-@pytest.mark.parametrize("send, refused", [
-    ({"room": "#dev:x", "text": "merged"}, False),
-    ({"room": "@owner:x", "text": "merged"}, True),
-    ({"room": "#dev:x", "mentions": ["@owner:x"], "text": "merged"}, True),
-    ({"room": "#dev:x", "mentions": ["@owner:x"], "text": "merged\n\n— with maple"}, False),
-    ({"room": "@owner:x", "text": "merged\n\n— with cedar"}, True),
-    ({"room": "@owner:x", "text": "merged\n\n— with owner"}, True),
-    ({"room": "@owner:x", "text": "merged", "dangerously_skip_attaching_a_priority": True}, False),
-    ({"room": "!dmOwner", "text": "merged"}, True),
-    ({"room": "!dmOwner", "text": "merged\n\n— with maple"}, False),
-    ({"room": "!dmOther", "text": "merged"}, False),
-    ({"room": "!notIn", "text": "merged"}, False),
+@pytest.mark.parametrize("agent, send, refused", [
+    ("sous", {"room": "#dev:x", "text": "merged"}, False),
+    ("sous", {"room": "@owner:x", "text": "merged"}, True),
+    ("sous", {"room": "#dev:x", "mentions": ["@owner:x"], "text": "merged"}, True),
+    ("sous", {"room": "#dev:x", "mentions": ["@owner:x"], "text": "merged\n\n— with maple"}, False),
+    ("sous", {"room": "@owner:x", "text": "merged\n\n— with cedar"}, True),
+    ("sous", {"room": "@owner:x", "text": "merged\n\n— with owner"}, True),
+    ("sous", {"room": "@owner:x", "text": "merged", "dangerously_skip_attaching_a_priority": True}, False),
+    ("sous", {"room": "!dmOwner", "text": "merged"}, True),
+    ("sous", {"room": "!dmOwner", "text": "merged\n\n— with maple"}, False),
+    ("sous", {"room": "!dmOther", "text": "merged"}, False),
+    ("sous", {"room": "!notIn", "text": "merged"}, False),
+    ("dev", {"room": "!dmCook", "text": "merged"}, True),
+    ("dev", {"room": "@owner:x", "text": "merged\n\n— with dev"}, True),
+    ("dev", {"room": "@owner:x", "text": "merged\n\n— with cedar"}, False),
 ], ids=["not-to-the-owner", "dm", "mention", "credited", "credits-itself", "credits-the-owner", "skip-flag",
-        "dm-by-room-id", "dm-by-room-id-credited", "someone-elses-dm", "a-room-it-isnt-in"])
-def test_a_swarm_send_to_the_owner_credits_the_agent_consulted(tmp_path, monkeypatch, send, refused):
+        "dm-by-room-id", "dm-by-room-id-credited", "someone-elses-dm", "a-room-it-isnt-in",
+        "cooks-own-dm", "cook-credits-itself", "cook-credits-the-sous"])
+def test_a_swarm_send_to_the_owner_credits_the_agent_consulted(tmp_path, monkeypatch, agent, send, refused):
     """With `consult-gate` set, a Swarm send naming or DMing the owner ends
-    with the credit a plow-chat text carries, naming another agent."""
+    with the credit a plow-chat text carries, naming another agent than the
+    sender: the sous, or a cook hired with its own account."""
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    rooms = {"!dmOwner": ["@cedar:x", "@owner:x"], "!dmOther": ["@cedar:x", "@pat:x"]}
+    rooms = {"!dmOwner": ["@cedar:x", "@owner:x"], "!dmOther": ["@cedar:x", "@pat:x"], "!dmCook": ["@dev:x", "@owner:x"]}
 
     def joined(account, path):
         room = unquote(path.split("/")[2])
@@ -805,8 +810,14 @@ def test_a_swarm_send_to_the_owner_credits_the_agent_consulted(tmp_path, monkeyp
     swarm = plow_chat.state_dir("boss") / "swarm"
     swarm.mkdir(parents=True)
     (swarm / "credential.json").symlink_to(tmp_path / "cred.json")
+    cook = tmp_path / ".swarm/accounts/x/dev/credential.json"
+    cook.parent.mkdir(parents=True)
+    cook.write_text(json.dumps({"user_id": "@dev:x"}))
+    (plow_chat.state_dir("boss") / "cooks").mkdir()
+    (plow_chat.state_dir("boss") / "cooks" / "dev.mcp").write_text(json.dumps(
+        {"mcpServers": {"swarm": {"command": "swarm", "args": ["mcp", "claude", "--account", "@dev:x"]}}}))
     gate = plow_chat.plow_chat_dir("boss")
     gate.mkdir(parents=True)
-    assert plow_chat.swarm_send_refusal("boss", send) is None  # no gate, no refusal
+    assert plow_chat.swarm_send_refusal("boss", agent, send) is None  # no gate, no refusal
     (gate / plow_chat.CONSULT_GATE).write_text("@owner:x\n")
-    assert (plow_chat.swarm_send_refusal("boss", send) is not None) == refused
+    assert (plow_chat.swarm_send_refusal("boss", agent, send) is not None) == refused
