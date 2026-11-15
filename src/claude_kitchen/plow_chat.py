@@ -407,6 +407,8 @@ class Bridge:
         people = {h: h for h in handles} | others.get(chat, {})
         if not people:
             return self.gated(chat, priority, skip, consulted)
+        if consulted:
+            return "not sent: `consulted` credits a text to the head chef alone; drop it here"
         thread = await self.thread(chat) if chat else {}
         host = self.cursor.parent / MESSAGES_HOST
         other = (await owner_threads(listed(host).pop(), {h.casefold() for h in people}, owner)

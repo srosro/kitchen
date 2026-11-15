@@ -628,6 +628,7 @@ def test_start_chat_and_send_file_are_reviewed_too(shot):
         await eventually(lambda: delivered)
         assert (await bridge.start_chat([TEAMMATE], "hi Alex")).startswith("not sent: a reviewer held it")
         assert (await bridge.send_file(HOME, [str(shot)], "the build")).startswith("not sent: a reviewer held it")
+        assert (await bridge.reply(HOME, "the build", consulted="@cedar:x")).startswith("not sent: `consulted` credits")
         assert fake.started == [] and fake.sent == []
         assert ["hi Alex" in prompts[0], "the build" in prompts[1]] == [True, True]
         assert "Jordan: Tuesday's out" in prompts[0]  # start_chat reviews against the chat Plow will adopt
