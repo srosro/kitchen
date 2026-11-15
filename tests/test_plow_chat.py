@@ -5,6 +5,7 @@ import re
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import unquote
 
 import httpx
 import pytest
@@ -781,11 +782,24 @@ def test_a_reply_that_went_out_reports_sent_even_if_clearing_eyes_fails():
     ({"room": "@owner:x", "text": "merged\n\n— with cedar"}, True),
     ({"room": "@owner:x", "text": "merged\n\n— with owner"}, True),
     ({"room": "@owner:x", "text": "merged", "dangerously_skip_attaching_a_priority": True}, False),
-], ids=["not-to-the-owner", "dm", "mention", "credited", "credits-itself", "credits-the-owner", "skip-flag"])
+    ({"room": "!dmOwner", "text": "merged"}, True),
+    ({"room": "!dmOwner", "text": "merged\n\n— with maple"}, False),
+    ({"room": "!dmOther", "text": "merged"}, False),
+    ({"room": "!notIn", "text": "merged"}, False),
+], ids=["not-to-the-owner", "dm", "mention", "credited", "credits-itself", "credits-the-owner", "skip-flag",
+        "dm-by-room-id", "dm-by-room-id-credited", "someone-elses-dm", "a-room-it-isnt-in"])
 def test_a_swarm_send_to_the_owner_credits_the_agent_consulted(tmp_path, monkeypatch, send, refused):
     """With `consult-gate` set, a Swarm send naming or DMing the owner ends
     with the credit a plow-chat text carries, naming another agent."""
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    rooms = {"!dmOwner": ["@cedar:x", "@owner:x"], "!dmOther": ["@cedar:x", "@pat:x"]}
+
+    def joined(account, path):
+        room = unquote(path.split("/")[2])
+        if room not in rooms:
+            raise OSError("403 not in the room")
+        return {"joined": dict.fromkeys(rooms[room], {})}
+    monkeypatch.setattr(plow_chat, "matrix_get", joined)
     (tmp_path / "cred.json").write_text(json.dumps({"user_id": "@cedar:x"}))
     swarm = plow_chat.state_dir("boss") / "swarm"
     swarm.mkdir(parents=True)

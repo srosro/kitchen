@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from itertools import takewhile
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 import websockets
@@ -32,7 +33,8 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool
 
 from claude_kitchen.channel import push, reply_server
-from claude_kitchen.state import atomic_write_json, plow_chat_dir, read_env, state_dir, swarm_accounts, with_digest
+from claude_kitchen.state import (atomic_write_json, matrix_get, plow_chat_dir, read_env, state_dir, swarm_accounts,
+                                  with_digest)
 
 CREDENTIALS = "plow-credentials"  # written mode 600 by `latch agents new --own --token-file`
 TRUSTED_CHATS = "trusted-chats"  # one chat uid per line; read at each hand-over, so edits need no restart
@@ -187,6 +189,18 @@ def credited(text: str, consulted: str) -> str:
     return f"{text}\n\n— with {local(consulted)}" if consulted else text
 
 
+def dm_with(kitchen: str, room: str, person: str) -> bool:
+    """Whether `room`, by its `!…` id, is a DM between `person` and one of this
+    kitchen's accounts; False when none of them is in it."""
+    for account in swarm_accounts(kitchen):
+        try:
+            members = matrix_get(account, f"/rooms/{quote(room, safe='')}/joined_members")["joined"]
+        except OSError:
+            continue
+        return set(members) == {account["user_id"], person}
+    return False
+
+
 def swarm_send_refusal(kitchen: str, send: dict) -> str | None:
     """Why a Swarm `send` to the owner is refused on a line with `consult-gate`:
     it must end with the credit `credited` writes, naming an agent other than
@@ -194,8 +208,8 @@ def swarm_send_refusal(kitchen: str, send: dict) -> str | None:
     gate = plow_chat_dir(kitchen) / CONSULT_GATE
     if not gate.exists() or send.get("dangerously_skip_attaching_a_priority"):
         return None
-    owner = listed(gate).pop()
-    if owner not in (send.get("room"), *(send.get("mentions") or ())):
+    owner, room = listed(gate).pop(), send.get("room", "")
+    if owner not in (room, *(send.get("mentions") or ())) and not (room.startswith("!") and dm_with(kitchen, room, owner)):
         return None
     credit = CREDIT.search(send.get("text", ""))
     if credit and credit[1] not in {local(owner), *(local(a["user_id"]) for a in swarm_accounts(kitchen))}:

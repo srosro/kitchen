@@ -115,6 +115,13 @@ def mcp_servers(kitchen: str) -> dict:
     return servers
 
 
+def matrix_get(account: dict, path: str) -> dict:
+    """A Matrix client-server GET as `account`."""
+    url = f"{account['homeserver'].rstrip('/')}/_matrix/client/v3{path}"
+    with urlopen(Request(url, headers={"Authorization": f"Bearer {account['access_token']}"}), timeout=30) as r:
+        return json.load(r)
+
+
 # A room's name goes into the sous's prompt, and any member can publish an alias: only plain ones do.
 SWARM_ROOM = re.compile(r"#[A-Za-z0-9._=/+-]+:[A-Za-z0-9.-]+(:[0-9]+)?|![A-Za-z0-9._=/+-]+(:[A-Za-z0-9.-]+(:[0-9]+)?)?")
 
@@ -132,18 +139,13 @@ def swarm_rooms(account: dict) -> list[str]:
         return []
     rooms = row["rooms"]
 
-    def get(path: str) -> dict:
-        url = f"{account['homeserver'].rstrip('/')}/_matrix/client/v3{path}"
-        with urlopen(Request(url, headers={"Authorization": f"Bearer {account['access_token']}"}), timeout=30) as r:
-            return json.load(r)
-
     joinable = []
     for room in rooms:
         try:
             if not SWARM_ROOM.fullmatch(room):
                 raise ValueError("not a plain room name")
-            room_id = room if room.startswith("!") else get(f"/directory/room/{quote(room, safe='')}")["room_id"]
-            if get(f"/rooms/{quote(room_id, safe='')}/state/m.room.create").get("type") != "m.space":
+            room_id = room if room.startswith("!") else matrix_get(account, f"/directory/room/{quote(room, safe='')}")["room_id"]
+            if matrix_get(account, f"/rooms/{quote(room_id, safe='')}/state/m.room.create").get("type") != "m.space":
                 joinable.append(room)
         except (OSError, ValueError, KeyError, TypeError) as e:
             print(f"kitchen: swarm room {room!r} can't be looked up, so the sous won't join it ({e!r})", file=sys.stderr)
