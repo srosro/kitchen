@@ -822,6 +822,15 @@ def _hook_gate() -> tuple[str, str, Path] | None:
     return name, kitchen, Path(status)
 
 
+def cmd_consult_gate():
+    """PreToolUse on Swarm `send`: exit 2 with the reason when the send is refused."""
+    from claude_kitchen.plow_chat import swarm_send_refusal
+    kitchen = os.environ.get("AGENT_KITCHEN", "")
+    if kitchen and (refusal := swarm_send_refusal(kitchen, json.load(sys.stdin)["tool_input"])):
+        print(refusal, file=sys.stderr)
+        sys.exit(2)  # what blocks the tool call
+
+
 def cmd_hook(args):
     """Handle hook events from Claude Code or Antigravity (stdin), or Codex (--message arg).
     A bare session the head chef runs has no AGENT_NAME, so _hook_gate no-ops it."""
@@ -1125,6 +1134,7 @@ OWNED_HOOKS = (
     ("PreToolUse", "Bash", str(HOOKS / "roborev-pre-commit-context.py"), None),
     ("PreToolUse", "Bash", str(HOOKS / "roborev-pre-push-gate.py"), 660),
     ("PreToolUse", "Bash", str(HOOKS / "roborev-pre-checkout-gate.py"), None),
+    ("PreToolUse", "mcp__swarm__send", "kitchen consult-gate", None),
 )
 
 
@@ -1562,6 +1572,7 @@ def main():
     p_close.add_argument("--keep-worktree", action="store_true", help="Skip worktree removal entirely")
 
     sub.add_parser("hook", help="Claude Code hook handler (called by hooks, not directly)")
+    sub.add_parser("consult-gate", help="Refuse a Swarm send to the head chef that credits no agent (a hook)")
 
     p_hook_codex = sub.add_parser("hook-codex", help="Codex hook handler (called by notify, not directly)")
     p_hook_codex.add_argument("json_payload", nargs="?", default="{}", help="JSON from Codex")
@@ -1624,6 +1635,8 @@ def main():
         cmd_approve_host(args)
     elif args.command in ("hook", "hook-codex", "hook-agy"):
         cmd_hook(args)
+    elif args.command == "consult-gate":
+        cmd_consult_gate()
     elif args.command == "channel-server":
         from claude_kitchen.channel import main as channel_main
         channel_main(args.kitchen)

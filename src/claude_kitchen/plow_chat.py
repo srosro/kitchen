@@ -174,9 +174,34 @@ async def run(*args: str, stdin: str = "") -> str:
     return out.decode()
 
 
+def local(user_id: str) -> str:
+    """A Swarm user id's name: `@cedar:server` is `cedar`."""
+    return user_id[1:].split(":")[0]
+
+
+CREDIT = re.compile(r"\n— with (\S+)\s*$")  # the credit `credited` writes
+
+
 def credited(text: str, consulted: str) -> str:
     """`text` ending with who it was worked with: `@cedar:server` reads "— with cedar"."""
-    return f"{text}\n\n— with {consulted[1:].split(':')[0]}" if consulted else text
+    return f"{text}\n\n— with {local(consulted)}" if consulted else text
+
+
+def swarm_send_refusal(kitchen: str, send: dict) -> str | None:
+    """Why a Swarm `send` to the owner is refused on a line with `consult-gate`:
+    it must end with the credit `credited` writes, naming an agent other than
+    the owner or this kitchen's own; None to let it through."""
+    gate = plow_chat_dir(kitchen) / CONSULT_GATE
+    if not gate.exists() or send.get("dangerously_skip_attaching_a_priority"):
+        return None
+    owner = listed(gate).pop()
+    if owner not in (send.get("room"), *(send.get("mentions") or ())):
+        return None
+    credit = CREDIT.search(send.get("text", ""))
+    if credit and credit[1] not in {local(owner), *(local(a["user_id"]) for a in swarm_accounts(kitchen))}:
+        return None
+    return ("not sent: a message to the head chef ends \"— with <agent>\", naming the Swarm agent you "
+            "worked it with first, not yourself or them: work it with one, then send")
 
 
 async def ask_reviewer(prompt: str) -> str:

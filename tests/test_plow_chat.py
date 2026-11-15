@@ -771,3 +771,27 @@ def test_a_reply_that_went_out_reports_sent_even_if_clearing_eyes_fails():
         assert (await call(bridge, "reply", {"chat": SOLO, "text": "hi"})).startswith("sent ")
         assert fake.sent == [(SOLO, "hi")]
     run_bridge(scenario)
+
+
+@pytest.mark.parametrize("send, refused", [
+    ({"room": "#dev:x", "text": "merged"}, False),
+    ({"room": "@owner:x", "text": "merged"}, True),
+    ({"room": "#dev:x", "mentions": ["@owner:x"], "text": "merged"}, True),
+    ({"room": "#dev:x", "mentions": ["@owner:x"], "text": "merged\n\n— with maple"}, False),
+    ({"room": "@owner:x", "text": "merged\n\n— with cedar"}, True),
+    ({"room": "@owner:x", "text": "merged\n\n— with owner"}, True),
+    ({"room": "@owner:x", "text": "merged", "dangerously_skip_attaching_a_priority": True}, False),
+], ids=["not-to-the-owner", "dm", "mention", "credited", "credits-itself", "credits-the-owner", "skip-flag"])
+def test_a_swarm_send_to_the_owner_credits_the_agent_consulted(tmp_path, monkeypatch, send, refused):
+    """With `consult-gate` set, a Swarm send naming or DMing the owner ends
+    with the credit a plow-chat text carries, naming another agent."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    (tmp_path / "cred.json").write_text(json.dumps({"user_id": "@cedar:x"}))
+    swarm = plow_chat.state_dir("boss") / "swarm"
+    swarm.mkdir(parents=True)
+    (swarm / "credential.json").symlink_to(tmp_path / "cred.json")
+    gate = plow_chat.plow_chat_dir("boss")
+    gate.mkdir(parents=True)
+    assert plow_chat.swarm_send_refusal("boss", send) is None  # no gate, no refusal
+    (gate / plow_chat.CONSULT_GATE).write_text("@owner:x\n")
+    assert (plow_chat.swarm_send_refusal("boss", send) is not None) == refused
