@@ -22,7 +22,7 @@ import re
 import sys
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from itertools import takewhile
 from pathlib import Path
 
@@ -39,8 +39,7 @@ TRUSTED_CHATS = "trusted-chats"  # one chat uid per line; read at each hand-over
 START_CHAT_ALLOW = "start-chat-allow"  # one handle per line, beyond those already in the line's chats
 STARTED_CHATS = "started-chats.log"  # one line per chat start_chat sends: time, chat, created, handles
 MESSAGES_HOST = "messages-host"  # the latch host holding the owner's Messages, read by the pre-send review
-ASK_GATE_TO = "ask-gate-to"  # the owner's Swarm id: a new ask to the owner alone first passes `swarm ask-gate`
-ANSWER_HOURS = 12  # within this long of the owner's latest text, a text to them answers it, not a new ask
+CONSULT_GATE = "consult-gate"  # the owner's Swarm id: a text to the owner alone names the agent consulted first
 NEW_CHATS_PER_DAY = 5
 REVIEW_DAYS = 3  # how far back the review reads the owner's other threads
 REVIEW_MODEL = "sonnet"
@@ -175,20 +174,9 @@ async def run(*args: str, stdin: str = "") -> str:
     return out.decode()
 
 
-async def swarm_ask_gate(to: str, account: str, priority: str) -> str | None:
-    """None when Swarm lets `account` ask `to` on `priority` now; else why it
-    waits: `to`'s delegate hasn't pointed the priority at them, and the
-    hold hasn't timed out."""
-    proc = await asyncio.create_subprocess_exec("swarm", "ask-gate", "--to", to, "--priority", priority,
-                                                "--account", account, stdout=asyncio.subprocess.PIPE,
-                                                stderr=asyncio.subprocess.PIPE)
-    out, err = await proc.communicate()
-    if proc.returncode == 0:
-        return None
-    if proc.returncode == 6:
-        held = json.loads(err)["error"]
-        return f"not sent: {held['message']} {held['note']} Delegates: {json.dumps(held['cards'])}"
-    raise RuntimeError(f"swarm ask-gate failed with exit {proc.returncode}: {(err or out).decode()[-300:]}; not sent")
+def credited(text: str, consulted: str) -> str:
+    """`text` ending with who it was worked with: `@cedar:server` reads "— with cedar"."""
+    return f"{text}\n\n— with {consulted[1:].split(':')[0]}" if consulted else text
 
 
 async def ask_reviewer(prompt: str) -> str:
@@ -238,7 +226,7 @@ class Bridge:
     # already taken.
     cursor: Path
     reviewer: callable = ask_reviewer  # async (prompt) -> answer, the pre-send review's model
-    ask_gate: callable = None  # async (priority) -> refusal or None; set when `ask-gate-to` names the owner
+    consult: tuple = ()  # (this line's Swarm id, the owner's) when `consult-gate` names the owner
     taken: dict = field(init=False)
     burst: list = field(init=False, default_factory=list)  # one speaker's texts not yet handed over
     due: float = 0.0  # loop time the burst closes at
@@ -402,7 +390,7 @@ class Bridge:
         return lines
 
     async def held(self, text: str, chat: str | None = None, handles: list[str] = (),
-                   priority: str = "", skip: bool = False) -> str | None:
+                   priority: str = "", skip: bool = False, consulted: str = "") -> str | None:
         """Why a reviewer holds `text`, bound for `chat` or the chat with
         `handles` (an existing one's history included), or None to send it.
         Only a text the owner alone would read goes unreviewed. The thread is
@@ -418,7 +406,7 @@ class Bridge:
         chat = chat or next((uid for uid, people in others.items() if set(people) == set(handles)), None)
         people = {h: h for h in handles} | others.get(chat, {})
         if not people:
-            return await self.gated(chat, priority, skip)
+            return self.gated(chat, priority, skip, consulted)
         thread = await self.thread(chat) if chat else {}
         host = self.cursor.parent / MESSAGES_HOST
         other = (await owner_threads(listed(host).pop(), {h.casefold() for h in people}, owner)
@@ -436,32 +424,26 @@ class Bridge:
             return f"not sent: {len(newer)} newer message(s) landed while it was reviewed; read them, then answer again"
         return None
 
-    async def gated(self, chat: str, priority: str, skip: bool) -> str | None:
-        """A new ask to the owner alone waits for their delegate (`swarm
-        ask-gate`); a text while the owner's latest one is recent answers
-        them, even after the agent's own "on it"."""
-        if not self.ask_gate:
-            return None
-        r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": PAGE})
-        r.raise_for_status()
-        theirs = [m["created_at"] for m in r.json()["data"] if m["sender"]["type"] == "member"]
-        if theirs and datetime.now(timezone.utc) - datetime.fromisoformat(max(theirs)) < timedelta(hours=ANSWER_HOURS):
+    def gated(self, chat: str, priority: str, skip: bool, consulted: str) -> str | None:
+        """A text to the owner alone names the Swarm agent consulted first,
+        neither this line nor the owner."""
+        if not self.consult or consulted not in self.consult and re.fullmatch(r"@[^:\s]+:\S+", consulted):
             return None
         if skip:
-            log(f"ask-gate skipped on {chat} (dangerously_skip_attaching_a_priority)")
+            log(f"consult-gate skipped on {chat} for {priority or 'no priority'} (dangerously_skip_attaching_a_priority)")
             return None
-        if not priority:
-            return "not sent: a new ask to the head chef names the priority it serves (`priority`)"
-        return await self.ask_gate(priority)
+        return ("not sent: a text to the head chef names the Swarm agent you consulted first, by user id "
+                "(`consulted`), not yourself or the head chef: work it with them, then send")
 
-    async def reply(self, chat: str, text: str, priority: str = "",
+    async def reply(self, chat: str, text: str, priority: str = "", consulted: str = "",
                     dangerously_skip_attaching_a_priority: bool = False) -> str:
         if not text.strip():
             raise ValueError("reply text is empty; not sent")
-        if refusal := await self.held(text, chat, priority=priority, skip=dangerously_skip_attaching_a_priority) \
+        if refusal := await self.held(text, chat, priority=priority, skip=dangerously_skip_attaching_a_priority,
+                                      consulted=consulted) \
                 or await self.unread(chat):  # the review is slow; read last
             return refusal
-        return sent(await self.client.post(f"/v1/chats/{chat}/messages", json={"body": text}), "reply")
+        return sent(await self.client.post(f"/v1/chats/{chat}/messages", json={"body": credited(text, consulted)}), "reply")
 
     async def upload(self, chat: str, file: Path) -> str:
         """Declare `file` on `chat` and upload its bytes; returns its attachment uid."""
@@ -482,7 +464,7 @@ class Bridge:
             raise RuntimeError(f"uploading {file.name} failed with HTTP {r.status_code}; nothing sent")
         return attachment["uid"]
 
-    async def send_file(self, chat: str, paths: list[str], caption: str = "", priority: str = "",
+    async def send_file(self, chat: str, paths: list[str], caption: str = "", priority: str = "", consulted: str = "",
                         dangerously_skip_attaching_a_priority: bool = False) -> str:
         """Send local files on `chat` as one message, or nothing if any fails."""
         if not 1 <= len(paths) <= MAX_ATTACHMENTS:
@@ -490,11 +472,12 @@ class Bridge:
         files = [attachable(path) for path in paths]  # all of them before Plow hears of any
         uids = [await self.upload(chat, file) for file in files]
         if refusal := await self.held(caption or f"(files: {', '.join(file.name for file in files)})", chat,
-                                      priority=priority, skip=dangerously_skip_attaching_a_priority) \
+                                      priority=priority, skip=dangerously_skip_attaching_a_priority,
+                                      consulted=consulted) \
                 or await self.unread(chat):  # after the uploads and the review, which can take a while
             return refusal
         return sent(await self.client.post(f"/v1/chats/{chat}/messages", json={
-            "attachment_uids": uids, "body": caption,
+            "attachment_uids": uids, "body": credited(caption, consulted),
         }), "file")
 
     async def start_chat(self, handles: list[str], text: str) -> str:
@@ -577,11 +560,11 @@ class Bridge:
             await asyncio.sleep(RECONNECT_DELAY)
 
 
-# A new ask to the head chef alone names its priority, so `swarm ask-gate` can
-# hold it until their delegate lets it through.
 GATE_PROPERTIES = {
-    "priority": {"type": "string", "description": "the ref of the Swarm priority a new ask to the head chef serves"},
-    "dangerously_skip_attaching_a_priority": {"type": "boolean", "description": "send a new ask to the head chef with no priority; logged"},
+    "consulted": {"type": "string", "description": "a text to the head chef alone: the user id of the Swarm agent "
+                  "you worked it with first, to get it done yourself or sharpen the ask; credited at its end"},
+    "priority": {"type": "string", "description": "the ref of the Swarm priority it serves"},
+    "dangerously_skip_attaching_a_priority": {"type": "boolean", "description": "send to the head chef with no agent consulted; logged"},
 }
 
 
@@ -669,9 +652,8 @@ async def run_server(kitchen: str):
     async with httpx.AsyncClient(base_url=credentials["PLOW_API_BASE"], headers=headers, timeout=30) as client, \
             stdio_server() as (read_stream, write_stream):
         bridge = Bridge(client, lambda content, meta: push(write_stream, with_digest(state_dir(kitchen), content), meta), directory / "last_seen.json")
-        if (gate := directory / ASK_GATE_TO).exists():
-            to, account = listed(gate).pop(), swarm_accounts(kitchen)[0]["user_id"]
-            bridge.ask_gate = lambda priority: swarm_ask_gate(to, account, priority)
+        if (gate := directory / CONSULT_GATE).exists():
+            bridge.consult = (swarm_accounts(kitchen)[0]["user_id"], listed(gate).pop())
         supervisor = asyncio.create_task(bridge.run())
         try:
             await server.run(read_stream, write_stream, init_options)
