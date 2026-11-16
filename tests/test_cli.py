@@ -2849,3 +2849,23 @@ def test_install_claude_hooks_drops_a_duplicate_in_otherwise_canonical_settings(
     assert _install_claude_hooks(settings) == ["-roborev-pre-commit-context.py"]
     commands = [h["command"] for gs in json.loads(settings.read_text())["hooks"].values() for g in gs for h in g["hooks"]]
     assert len(commands) == len(OWNED_HOOKS)
+
+
+def test_confirm_dev_channels_answers_the_dialog_once_it_shows():
+    """A pane that shows Claude's dev-channels dialog gets one Enter, so `kitchen open` starts unattended."""
+    import time
+    from claude_kitchen.cli import confirm_dev_channels
+    d = tempfile.mkdtemp(prefix="ck", dir="/tmp")  # short: a tmux socket path must fit sun_path
+    sock, answer = f"{d}/s", Path(d) / "answer"
+    dialog = f"sleep 1; echo 'Loading development channels'; read line; echo answered > {answer}"
+    subprocess.run(["tmux", "-S", sock, "new-session", "-d", "-s", "t", "sh", "-c", dialog], check=True)
+    try:
+        pane = subprocess.run(["tmux", "-S", sock, "display", "-p", "-t", "t", "#{pane_id}"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+        confirm_dev_channels(sock, pane)
+        deadline = time.monotonic() + 10
+        while not answer.exists() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert answer.read_text().strip() == "answered"
+    finally:
+        subprocess.run(["tmux", "-S", sock, "kill-server"], check=False)

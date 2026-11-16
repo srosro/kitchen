@@ -438,8 +438,26 @@ def cmd_open(args):
                          "socket": os.environ.get("TMUX", "").split(",")[0],
                          "pane": os.environ.get("TMUX_PANE")}
     kitchen_file.write_text(json.dumps(kj) + "\n")
+    if kj["sous_launch"]["pane"]:
+        print(DEV_CHANNELS_NOTICE)
+        confirm_dev_channels(kj["sous_launch"]["socket"], kj["sous_launch"]["pane"])
     spawn_sous(name, base, sous_md.read_text(), project, slug=slug,
                resume_session_id=sous_session_id, model=args.model)
+
+
+DEV_CHANNELS_NOTICE = "Allowing development channels so Swarm messages can reach your agents."
+
+
+def confirm_dev_channels(socket: str, pane: str) -> None:
+    """In the background, give the dev-channels dialog the sous opens on in `pane`
+    its pre-selected option, a bare Enter, once it shows (up to 3 minutes)."""
+    t = shlex.join(["tmux", "-S", socket])
+    pane = shlex.quote(pane)
+    subprocess.Popen(["sh", "-c", f"for i in $(seq 180); do "
+                      f"{t} capture-pane -p -t {pane} | grep -q 'Loading development channels' "
+                      f"&& exec {t} send-keys -t {pane} Enter; sleep 1; done"],
+                     start_new_session=True, stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _seed_codex_home(base: Path, name: str, cwd: str) -> Path:
@@ -1448,19 +1466,15 @@ def cmd_restart(args):
     # so a swarm that fails fails this restart rather than leaving no sous.
     first_turn = f"{FIRST_TURN_ENV}={json.dumps(sous_first_turn(kitchen))}"
     # Wait out the old sous so open's live-sous check passes; a shell takes the
-    # pane back when the new sous exits, as it had before.
+    # pane back when the new sous exits, as it had before. The relaunched
+    # `kitchen open` confirms the dev-channels dialog itself.
     relaunch = (f"while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; "
                 f"{shlex.join(['env', first_turn, *launch['argv'], '--resume'])}; exec \"$SHELL\" -l")
     t = shlex.join(["tmux", "-S", launch["socket"]])
     pane = shlex.quote(launch["pane"])
-    # Then confirm the dev-channels dialog the new sous opens on; its
-    # pre-selected option takes a bare Enter.
     script = (f"sleep {RESTART_DELAY}; "
               f"{t} respawn-pane -k -t {pane} -c {shlex.quote(launch['cwd'])} "
-              f"-e {shlex.quote('PATH=' + os.environ['PATH'])} {shlex.quote(relaunch)}; "
-              f"for i in $(seq 180); do "
-              f"{t} capture-pane -p -t {pane} | grep -q 'Loading development channels' "
-              f"&& exec {t} send-keys -t {pane} Enter; sleep 1; done")
+              f"-e {shlex.quote('PATH=' + os.environ['PATH'])} {shlex.quote(relaunch)}")
     subprocess.Popen(["sh", "-c", script],
                      start_new_session=True, stdin=subprocess.DEVNULL,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
