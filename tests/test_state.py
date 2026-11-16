@@ -241,10 +241,17 @@ class TestNamespaced:
 
 
 class TestWikiAndNotesDirs:
-    def test_wiki_dir(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("rows, expected", [
+        (None, ".claude-kitchen/projects/acme-widget/wiki"),
+        ("# vault\nother-proj ~/elsewhere\n", ".claude-kitchen/projects/acme-widget/wiki"),
+        ("other-proj ~/elsewhere\nacme-widget ~/My Vault/projects/kitchen\n", "My Vault/projects/kitchen"),
+    ])
+    def test_wiki_dir(self, tmp_path, monkeypatch, rows, expected):
         monkeypatch.setenv("HOME", str(tmp_path))
-        d = wiki_dir("acme-widget")
-        assert d == tmp_path / ".claude-kitchen" / "projects" / "acme-widget" / "wiki"
+        if rows is not None:
+            (tmp_path / ".config" / "kitchen").mkdir(parents=True)
+            (tmp_path / ".config" / "kitchen" / "wikis").write_text(rows)
+        assert wiki_dir("acme-widget") == tmp_path / expected
 
     def test_notes_dir(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))

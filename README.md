@@ -302,7 +302,7 @@ The sous's own Stop hook does not notify its own socket, preventing an echo loop
     └── preferences.md        # durable working preferences
 ```
 
-`kitchen close` removes managed per-kitchen notes and cook state. The project wiki survives so later kitchens inherit the lessons and preferences.
+`kitchen close` removes managed per-kitchen notes and cook state. The project wiki survives so later kitchens inherit the lessons and preferences. To keep a project's wiki elsewhere (an Obsidian vault, say), add a `<slug> <path>` row to `~/.config/kitchen/wikis`.
 
 ## Texting the sous (plow-chat)
 

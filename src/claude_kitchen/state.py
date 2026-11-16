@@ -47,6 +47,13 @@ def state_dir(kitchen: str) -> Path:
 
 
 def wiki_dir(slug: str) -> Path:
+    """A project's wiki: the `<slug> <path>` row for it in the operator's
+    ~/.config/kitchen/wikis, else ~/.claude-kitchen/projects/<slug>/wiki."""
+    rows = Path.home() / ".config" / "kitchen" / "wikis"
+    if rows.exists():
+        for row in rows.read_text().splitlines():
+            if row.split()[:1] == [slug]:
+                return Path(row.split(maxsplit=1)[1]).expanduser()
     return state_root() / "projects" / slug / "wiki"
 
 
