@@ -439,8 +439,8 @@ def cmd_open(args):
                          "pane": os.environ.get("TMUX_PANE")}
     kitchen_file.write_text(json.dumps(kj) + "\n")
     if kj["sous_launch"]["pane"]:
-        print(DEV_CHANNELS_NOTICE)
         confirm_dev_channels(kj["sous_launch"]["socket"], kj["sous_launch"]["pane"])
+        print(DEV_CHANNELS_NOTICE)
     spawn_sous(name, base, sous_md.read_text(), project, slug=slug,
                resume_session_id=sous_session_id, model=args.model)
 
@@ -450,7 +450,11 @@ DEV_CHANNELS_NOTICE = "Allowing development channels so Swarm messages can reach
 
 def confirm_dev_channels(socket: str, pane: str) -> None:
     """In the background, give the dev-channels dialog the sous opens on in `pane`
-    its pre-selected option, a bare Enter, once it shows (up to 3 minutes)."""
+    its pre-selected option, a bare Enter, once it shows (up to 3 minutes).
+    The pane is blanked first: a dead sous can leave the dialog's text on
+    screen, and an Enter fired at that would land on whatever asks next."""
+    subprocess.run(["tmux", "-S", socket, "send-keys", "-R", "-t", pane, ";",
+                    "clear-history", "-t", pane], check=True)
     t = shlex.join(["tmux", "-S", socket])
     pane = shlex.quote(pane)
     subprocess.Popen(["sh", "-c", f"for i in $(seq 180); do "

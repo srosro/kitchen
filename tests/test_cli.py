@@ -2851,21 +2851,24 @@ def test_install_claude_hooks_drops_a_duplicate_in_otherwise_canonical_settings(
     assert len(commands) == len(OWNED_HOOKS)
 
 
-def test_confirm_dev_channels_answers_the_dialog_once_it_shows():
-    """A pane that shows Claude's dev-channels dialog gets one Enter, so `kitchen open` starts unattended."""
+def test_confirm_dev_channels_answers_only_the_new_dialog():
+    """A dead sous's leftover dialog text gets no Enter; the new dialog gets one, so `kitchen open` starts unattended."""
     import time
     from claude_kitchen.cli import confirm_dev_channels
     d = tempfile.mkdtemp(prefix="ck", dir="/tmp")  # short: a tmux socket path must fit sun_path
-    sock, answer = f"{d}/s", Path(d) / "answer"
-    dialog = f"sleep 1; echo 'Loading development channels'; read line; echo answered > {answer}"
-    subprocess.run(["tmux", "-S", sock, "new-session", "-d", "-s", "t", "sh", "-c", dialog], check=True)
+    sock, early, answer = f"{d}/s", Path(d) / "early", Path(d) / "answer"
+    pane_script = (f"echo 'Loading development channels'; read -t 2 x && touch {early}; "
+                   f"echo 'Loading development channels'; read line; echo answered > {answer}")
+    subprocess.run(["tmux", "-S", sock, "new-session", "-d", "-s", "t", "bash", "-c", pane_script], check=True)
     try:
         pane = subprocess.run(["tmux", "-S", sock, "display", "-p", "-t", "t", "#{pane_id}"],
                               capture_output=True, text=True, check=True).stdout.strip()
+        time.sleep(0.3)  # the leftover text is on screen before the watcher starts
         confirm_dev_channels(sock, pane)
         deadline = time.monotonic() + 10
         while not answer.exists() and time.monotonic() < deadline:
             time.sleep(0.1)
         assert answer.read_text().strip() == "answered"
+        assert not early.exists()
     finally:
         subprocess.run(["tmux", "-S", sock, "kill-server"], check=False)
