@@ -15,7 +15,7 @@ from unittest.mock import patch, MagicMock, call
 
 import pytest
 
-from claude_kitchen.cli import resolve_kitchen, resolve_project, cmd_brigade, cmd_hook, cmd_open, cmd_hire, cmd_close, cmd_clock_out, _codex_rollout, _sweep_cooks, cmd_sweep, main, _agy_summary
+from claude_kitchen.cli import resolve_kitchen, resolve_project, cmd_brigade, cmd_hook, cmd_open, cmd_hire, cmd_close, cmd_clock_out, _codex_rollout, _sweep_cooks, cmd_sweep, main, _agy_summary, SKIP_PRIORITY_WARNING
 from claude_kitchen.state import channel_socket, read_status, update_status, write_status
 from claude_kitchen.tmux import CK_PREFIX, PROBE_TIMEOUT, SESSION, PromptBlocked
 
@@ -749,7 +749,7 @@ class TestStatusPreservationAcrossNonStopWriters:
 
         from claude_kitchen.cli import cmd_ticket
         with patch("claude_kitchen.cli.send_keys", side_effect=turn_runs):
-            cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="quick task", chat_message=None, priority=None))
+            cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="quick task", chat_message=None, priority=None, dangerously_skip_priority=True))
         assert json.loads((tmp_path / "cooks" / "eng.json").read_text())["status"] == "idle"
 
     @patch("claude_kitchen.cli.state_dir")
@@ -771,7 +771,7 @@ class TestStatusPreservationAcrossNonStopWriters:
         from claude_kitchen.cli import cmd_ticket
         # The cook's turn finishes while the ticket is still being sent.
         with patch("claude_kitchen.cli.send_keys", side_effect=report):
-            cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message="swarm !r:s $ev", priority=None))
+            cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message="swarm !r:s $ev", priority=None, dangerously_skip_priority=True))
         report()
         assert [p.get("chat_message") for p in pushes] == ["swarm !r:s $ev", None]
 
@@ -784,7 +784,7 @@ class TestStatusPreservationAcrossNonStopWriters:
         write_status(tmp_path, "eng", {"status": "working", "agent": "eng", "backend": "claude"})
         from claude_kitchen.cli import cmd_ticket
         with pytest.raises(SystemExit, match="mid-turn"):
-            cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message="swarm !r:s $ev", priority=None))
+            cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message="swarm !r:s $ev", priority=None, dangerously_skip_priority=True))
         assert not mock_keys.called
         assert "chat_message" not in read_status(tmp_path, "eng")
 
@@ -2801,7 +2801,7 @@ class TestTicketSous:
         (("--priority", "!prio:s $row"), "check the deploy [priority: !prio:s $row]"),
         (("--dangerously-skip-priority",), "check the deploy"),
     ], ids=["priority", "skip"])
-    def test_delivers_on_the_target_socket_labelled_with_the_senders_kitchen(self, kitchens, monkeypatch, priority, summary):
+    def test_delivers_on_the_target_socket_labelled_with_the_senders_kitchen(self, kitchens, monkeypatch, capsys, priority, summary):
         received = []
         with socket.socket(socket.AF_UNIX) as srv:
             srv.bind(str(kitchens / "kitchen.sock"))
@@ -2822,6 +2822,7 @@ class TestTicketSous:
         assert received[0]["summary"] == summary
         paste.assert_not_called()  # the socket, never a pasted keystroke
         assert not (kitchens / "cooks").exists()
+        assert (SKIP_PRIORITY_WARNING in capsys.readouterr().err) == ("--dangerously-skip-priority" in priority)
 
     @pytest.mark.parametrize("priority", [(), ("--priority", "p", "--dangerously-skip-priority")], ids=["neither", "both"])
     def test_ticket_without_exactly_one_priority_flag_is_refused(self, kitchens, monkeypatch, priority):
