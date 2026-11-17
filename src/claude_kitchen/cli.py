@@ -811,7 +811,8 @@ def cmd_brigade(kitchen: str = None):
         # The sous has no window; it shows once its status file exists (a usage-limit pause).
         windows = ["sous"] * (base / "cooks" / "sous.json").exists() + list_windows(name)
 
-        print(f"kitchen: {name}")
+        week = _weekly_usage()
+        print(f"kitchen: {name}" + (f"  (Claude week {week['used_percentage']:.0f}%)" if week else ""))
 
         # One row per cook: <name>  <status>  <ctx>. Name column padded to
         # the longest name in this kitchen's listing; status padded to a
@@ -916,6 +917,8 @@ def cmd_hook(args):
         if channel == "swarm":
             _swarm_login_hook(kitchen, raw)
         _record_pause(base, name, event, payload)
+        if event == "Stop":
+            _warn_weekly_usage(base)
 
     if name == "sous":
         # Sous hook is otherwise a no-op — prevents echo loops where the sous's
@@ -1052,6 +1055,38 @@ def _record_pause(base: Path, agent: str, event: str, payload: dict):
         update_status(base, agent, agent=agent, status="paused", resets=said[1])
     elif event == "Stop" and (read_status(base, agent) or {}).get("status") == "paused":
         update_status(base, agent, status="idle")
+
+
+def _weekly_usage() -> dict | None:
+    """The plan's weekly window, `{used_percentage, resets_at}`, from what kitchen's
+    statusline keeps; None once it has reset or when nothing is kept."""
+    try:
+        week = json.loads((Path.home() / ".claude" / "usage" / "rate_limits.json").read_text()).get("seven_day")
+    except FileNotFoundError:
+        return None
+    return week if week and week["resets_at"] > datetime.now().timestamp() else None
+
+
+def _warn_weekly_usage(base: Path):
+    """Once the week's usage passes 80%, and again past 95%, ask the sous to tell
+    the owner: it can still speak, and holds the owner's channel. Once per window
+    and threshold for the whole account, whichever kitchen's turn sees it first."""
+    week = _weekly_usage()
+    pct = week["used_percentage"] if week else 0
+    threshold = next((t for t in (95, 80) if pct >= t), None)
+    if not threshold:
+        return
+    flag = state_root() / "usage-warned" / f"{week['resets_at']}-{threshold}"
+    flag.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        flag.open("x").close()
+    except FileExistsError:
+        return
+    resets = datetime.fromtimestamp(week["resets_at"]).astimezone().strftime("%a %b %-d, %-I:%M %p %Z")
+    from claude_kitchen.channel import send_to_socket
+    send_to_socket(channel_socket(base), {"cook": "kitchen", "summary": (
+        f"Claude weekly usage is at {pct:.0f}%; it resets {resets}. Tell your owner once, plainly, in their DM: "
+        f"your agents pause when it reaches 100% until then, unless they add usage credits.")})
 
 
 def _swarm_login_hook(kitchen: str, raw: str):
@@ -1452,71 +1487,46 @@ def cmd_setup(args):
               "If `kitchen open` shows channel errors, run `claude /login`.")
 
     # --- Statusline (advisory; kitchen works without it) ---
-    # Three states: (1) no/broken statusLine → install advice; (2) user has
-    # their own statusline, no kitchen segment → embed advice; (3) kitchen
-    # segment present (either directly as `kitchen statusline-segment` or
-    # referenced inside a wrapper script) → green.
+    # With no statusLine of the user's own, the sous runs kitchen's, which also
+    # keeps the plan's usage for the usage warnings. A statusline of their own
+    # is advised to embed the kitchen segment and that usage writer.
     import shlex
     statusline_pkg = _PKG_DIR / "statusline-command.sh"
-    statusline_install = Path.home() / ".claude" / "statusline-command.sh"
 
-    def _cmd_path_tokens(cmd: str) -> list[Path]:
-        return [Path(t).expanduser() for t in shlex.split(cmd)]
-
-    def _has_kitchen_segment(cmd: str) -> bool:
-        # Direct CLI invocation: `kitchen statusline-segment` anywhere.
+    def _mentions(cmd: str, needle: str) -> bool:
+        """`needle` in the command itself or in a script file it names."""
         tokens = shlex.split(cmd)
-        if "statusline-segment" in tokens:
+        if needle in tokens:
             return True
-        # Wrapper script whose text references the segment call.
-        for p in _cmd_path_tokens(cmd):
+        for p in (Path(t).expanduser() for t in tokens):
             if p.is_file():
                 try:
-                    if "statusline-segment" in p.read_text():
+                    if needle in p.read_text():
                         return True
                 except (OSError, UnicodeDecodeError):
                     continue
         return False
 
     cmd = ""
-    sl_file_resolves = False
     if claude_settings.exists():
         try:
-            sl = json.loads(claude_settings.read_text()).get("statusLine") or {}
-            cmd = sl.get("command", "")
-            sl_file_resolves = bool(cmd) and (
-                "statusline-segment" in shlex.split(cmd)
-                or any(p.exists() for p in _cmd_path_tokens(cmd))
-            )
+            cmd = (json.loads(claude_settings.read_text()).get("statusLine") or {}).get("command", "")
         except json.JSONDecodeError:
             pass
 
-    if cmd and sl_file_resolves and _has_kitchen_segment(cmd):
-        print("✅ Statusline configured (kitchen segment active)")
-    elif cmd and sl_file_resolves:
-        # Don't overwrite — advise embedding.
-        print("⚠️  Statusline configured, but no kitchen segment detected")
-        print(f'   Add `$(kitchen statusline-segment)` to your existing statusline')
-        print(f"   wherever you want cook/attach info to appear. Example line:")
-        print(f'     printf "%s  %s\\n" "<your existing output>" "$(kitchen statusline-segment)"')
-        print()
+    if not cmd:
+        print("✅ Statusline: the sous runs kitchen's own (context, model, branch, kitchen segment, usage)")
     else:
-        minimal = json.dumps(
-            {"type": "command", "command": "kitchen statusline-segment"},
-            indent=2,
-        )
-        richer = json.dumps(
-            {"type": "command", "command": str(statusline_install)},
-            indent=2,
-        )
-        print("⚠️  Statusline not configured (optional — kitchen works without it)")
-        print(f"   Option 1 (minimal): add to {claude_settings}:")
-        print(f'     "statusLine": {minimal}')
-        print(f"   Option 2 (richer — context/model/branch + kitchen segment):")
-        print(f"     Copy {statusline_pkg}")
-        print(f"     to   {statusline_install}  (chmod +x after copy)")
-        print(f"     then add to {claude_settings}:")
-        print(f'     "statusLine": {richer}')
+        if _mentions(cmd, "statusline-segment"):
+            print("✅ Statusline configured (kitchen segment active)")
+        else:
+            print("⚠️  Statusline configured, but no kitchen segment detected")
+            print(f'   Add `$(kitchen statusline-segment)` to your existing statusline')
+            print(f"   wherever you want cook/attach info to appear. Example line:")
+            print(f'     printf "%s  %s\\n" "<your existing output>" "$(kitchen statusline-segment)"')
+        if not _mentions(cmd, "rate_limits"):
+            print("⚠️  Your statusline doesn't keep the plan's usage, so kitchen can't warn at 80% and 95%")
+            print(f"   Copy the rate_limits writer from {statusline_pkg} into it.")
         print()
 
     # --- stray root-level .mcp.json (auto-remove; §Design.4 landmine) ---
