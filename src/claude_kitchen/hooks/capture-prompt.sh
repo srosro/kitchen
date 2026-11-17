@@ -6,7 +6,7 @@
 # are a no-op. Model has the message in context, so we don't parse stdin.
 set -euo pipefail
 cat >/dev/null 2>&1 || true   # drain stdin
-repo=$(sed -n 's/^AGENT_RULES_REPO=//p' "$HOME/.config/kitchen/operator.env" 2>/dev/null | tr -d "\"'") || true
+repo=$(sed -n 's/^AGENT_RULES_REPO=//p' "$HOME/.config/kitchen/operator.env" 2>/dev/null | tr -d "\"'" | tail -n1) || true
 rules="the operator's agent-rules repo"
 [ -z "$repo" ] || rules="the $repo repo"
 json=$(cat <<'JSON'
