@@ -153,7 +153,7 @@ class TestHook:
         monkeypatch.setenv("AGENT_KITCHEN", "risotto")
         monkeypatch.setenv("STATUS_DIR", str(kitchen))
         said = {"authentication_failed": "Login expired · Please run /login",
-                "rate_limit": "You've hit your weekly limit · resets Nov 19 at 8am (UTC)"}[error]
+                "rate_limit": "You've hit your weekly limit · resets Nov 20 at 2am (America/Los_Angeles)"}[error]
         payload = {"hook_event_name": event, "error": error, "session_id": "s1", "last_assistant_message": said}
         _stdin_payload(monkeypatch, **payload)
         cmd_hook(argparse.Namespace(command="hook"))
@@ -179,6 +179,22 @@ class TestHook:
             assert json.loads((tmp_path / "stdin").read_text()) == payload
         else:
             assert not (tmp_path / "argv").exists()
+
+    def test_a_usage_limit_shows_paused_until_its_reset_in_brigade_until_a_turn_ends_well(
+            self, monkeypatch, tmp_path, capsys):
+        """The sous's turn dies on the plan's usage limit (the line Claude prints): brigade
+        shows it paused with the reset time, and its next turn that ends well clears it."""
+        self._dead_login(monkeypatch, tmp_path, error="rate_limit")
+        base = tmp_path / ".claude-kitchen" / "risotto"
+        assert read_status(base, "sous")["resets"] == "Nov 20 at 2am (America/Los_Angeles)"
+        with patch("claude_kitchen.cli.list_kitchens", return_value=["risotto"]), \
+                patch("claude_kitchen.cli.list_windows", return_value=["sous"]):
+            cmd_brigade(kitchen=None)
+            assert "  sous  paused   —  resets Nov 20 at 2am (America/Los_Angeles)" in capsys.readouterr().out
+            _stdin_payload(monkeypatch, hook_event_name="Stop", session_id="s1")
+            cmd_hook(argparse.Namespace(command="hook"))
+            cmd_brigade(kitchen=None)
+            assert capsys.readouterr().out.splitlines()[1].split() == ["sous", "idle", "—"]
 
     def test_a_swarm_without_login_hook_stays_quiet(self, monkeypatch, tmp_path, capfd):
         """swarm 158 has no login-hook: it exits 2 with a usage error, which must not

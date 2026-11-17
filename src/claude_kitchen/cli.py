@@ -822,7 +822,8 @@ def cmd_brigade(kitchen: str = None):
             status = read_status(base, win) or {}
             s = status.get("status", "unknown")
             ctx = _format_tokens(status.get("tokens"))
-            print(f"  {win:<{name_w}}  {s:<7}  {ctx}")
+            resets = f"  resets {status['resets']}" if s == "paused" else ""
+            print(f"  {win:<{name_w}}  {s:<7}  {ctx}{resets}")
 
 
 def _archive_codex_thread(base: Path, cook: str):
@@ -913,6 +914,7 @@ def cmd_hook(args):
             _login_alert(kitchen, name, channel == "line")
         if channel == "swarm":
             _swarm_login_hook(kitchen, raw)
+        _record_pause(base, name, event, payload)
 
     if name == "sous":
         # Sous hook is otherwise a no-op — prevents echo loops where the sous's
@@ -1034,6 +1036,21 @@ def _login_channel(kitchen: str, event: str, error: str | None) -> str | None:
     if error == "authentication_failed" and (plow_chat_dir(kitchen) / "plow-credentials").exists():
         return "line"
     return "swarm"
+
+
+USAGE_LIMIT = re.compile(r"You've hit your .*limit · resets (.+)$")
+
+
+def _record_pause(base: Path, agent: str, event: str, payload: dict):
+    """A turn that died on the plan's usage limit leaves the agent `paused` with
+    Claude's reset time in `resets`, for brigade and whoever else reads its
+    status; the next turn that ends well sets it idle again (a cook's own Stop
+    write does that already, the sous has none)."""
+    said = USAGE_LIMIT.search(payload.get("last_assistant_message") or "")
+    if event == "StopFailure" and payload.get("error") == "rate_limit" and said:
+        update_status(base, agent, agent=agent, status="paused", resets=said[1])
+    elif event == "Stop" and (read_status(base, agent) or {}).get("status") == "paused":
+        update_status(base, agent, status="idle")
 
 
 def _swarm_login_hook(kitchen: str, raw: str):
