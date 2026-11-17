@@ -431,7 +431,7 @@ def test_each_account_gets_its_own_bound_server_and_a_join_only_where_swarm_wont
 
 
 @pytest.mark.parametrize("config, muted, off, on", [
-    (None, {}, None, None),                                          # no config receives every room
+    (None, {"!g": "#general:p"}, None, None),                        # no config leaves mutes alone
     ('receive = ["#design:p"]\n', {}, "#general:p", None),            # an unlisted named room is disconnected; the DM stays
     ('receive = ["#design:p"]\n', {"!g": "#general:p"}, None, None),  # a list already in force asks nothing
     ('receive = ["#design:p", "#general:p"]\n', {"!g": "#general:p"}, None, "#general:p"),  # a widened list unmutes

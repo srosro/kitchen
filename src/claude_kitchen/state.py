@@ -267,7 +267,7 @@ def receive_prompts(kitchen: str, link: Path) -> list[str]:
     left out, and an unmute of each it lists that swarm has muted. Swarm keeps a
     mute across restarts, so a list already in force asks nothing. Rooms without
     a name, its DMs, are always received, and a mention reaches it anywhere. No
-    config, or no `receive` in it, receives every room."""
+    config, or no `receive` in it, leaves the account's mutes as they are."""
     config = Path(json.loads((state_dir(kitchen) / "kitchen.json").read_text())["source"]) / ".kitchen" / "config.toml"
     receive = tomllib.loads(config.read_text()).get("receive") if config.exists() else None
     if receive is None:
