@@ -68,6 +68,16 @@ CLAUDE_MODELS = ("fable", "sonnet", "opus")
 CODEX_MODELS = {"astra": "gpt-6-astra"}
 
 
+STATUSLINE = Path(__file__).parent / "statusline-command.sh"
+
+
+def _user_statusline() -> dict | None:
+    try:
+        return json.loads((Path.home() / ".claude" / "settings.json").read_text()).get("statusLine")
+    except FileNotFoundError:
+        return None
+
+
 def spawn_sous(kitchen: str, state_dir: Path, sous_prompt: str,
                project: Path = None, slug: str = None,
                resume_session_id: str = None,
@@ -106,6 +116,8 @@ def spawn_sous(kitchen: str, state_dir: Path, sous_prompt: str,
     ]
     if model:
         claude_args.extend(["--model", model])
+    if not _user_statusline():  # the status line is what receives the plan's usage
+        claude_args.extend(["--settings", json.dumps({"statusLine": {"type": "command", "command": f"bash {shlex.quote(str(STATUSLINE))}"}})])
     if resume_session_id:
         claude_args.extend(["--resume", resume_session_id])
     claude_args.extend(["--append-system-prompt", sous_prompt])

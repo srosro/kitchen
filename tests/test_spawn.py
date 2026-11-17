@@ -325,6 +325,26 @@ class TestPromptSuggestionDisabled:
         )
 
 class TestSpawnSous:
+    @pytest.mark.parametrize("own", [None, {"type": "command", "command": "mine.sh"}])
+    @patch("claude_kitchen.spawn.os.chdir")
+    @patch("claude_kitchen.spawn.os.execvp")
+    def test_the_sous_runs_kitchens_statusline_unless_the_user_has_one(self, mock_exec, mock_chdir,
+                                                                        tmp_path, monkeypatch, own):
+        """The statusline is what receives the plan's usage: with none of the user's
+        own, the sous runs kitchen's, which keeps it; theirs stays theirs."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        if own:
+            (tmp_path / ".claude").mkdir()
+            (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"statusLine": own}))
+        spawn_sous("risotto", tmp_path, "prompt text", slug="gh-x-y")
+        argv = mock_exec.call_args.args[1]
+        settings = [json.loads(argv[i + 1]) for i, a in enumerate(argv) if a == "--settings"]
+        if own:
+            assert settings == []
+        else:
+            [line] = settings
+            assert line["statusLine"]["command"].endswith("statusline-command.sh")
+
     @patch("claude_kitchen.spawn.os.chdir")
     @patch("claude_kitchen.spawn.os.execvp")
     def test_chdir_to_project(self, mock_exec, mock_chdir, tmp_path, monkeypatch):

@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 # Reference statusline that combines Claude Code session info (context/model/
-# branch) with the kitchen segment from `kitchen statusline-segment`. Copy to
-# ~/.claude/statusline-command.sh and reference from settings.json.
+# branch) with the kitchen segment from `kitchen statusline-segment`. The sous
+# runs it when settings.json has no statusLine of its own; to keep yours, copy
+# the rate_limits writer below into it.
 input=$(cat)
+
+# Claude Code passes the plan's usage windows here after every reply: kept in
+# ~/.claude/usage/rate_limits.json, which kitchen's usage warnings read.
+rl=$(printf '%s' "$input" | jq -c 'select((.rate_limits|type)=="object") | {updated_at: (now|todateiso8601)} + (.rate_limits | {five_hour, seven_day} | with_entries(select(.value != null)))' 2>/dev/null)
+if [ -n "$rl" ] && [ "$rl" != "null" ]; then
+  dir="$HOME/.claude/usage"; mkdir -p "$dir"
+  tmp=$(mktemp "$dir/.rate_limits.XXXXXX") && printf '%s\n' "$rl" > "$tmp" && mv -f "$tmp" "$dir/rate_limits.json"
+fi
 
 # Context window percentage
 used=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
