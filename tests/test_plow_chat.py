@@ -627,14 +627,14 @@ def test_a_text_to_the_owner_alone_names_the_agent_consulted_first(gate, kwargs,
 
 @pytest.mark.parametrize("profiles, credit", [
     ({"old": None, "hq": "Aspen ⚉ Patrick's front desk"}, "Aspen ⚉ Patrick's front desk"),
-    ({"old": None, "hq": None}, "rmd931i4x5"),
-    ({"old": None, "hq": {}}, "rmd931i4x5"),
+    ({"old": None, "hq": None}, "abcdefghij"),
+    ({"old": None, "hq": {}}, "abcdefghij"),
 ], ids=["named-on-another-server", "unknown-everywhere", "no-display-name"])
 def test_a_credit_shows_the_consulted_agents_swarm_display_name(monkeypatch, profiles, credit):
     """The credit names the agent as Swarm shows it, from whichever of the
     line's servers knows it, and by its localpart when none names it."""
     def profile(account, path):
-        assert path == "/profile/%40rmd931i4x5%3Aplow.co"
+        assert path == "/profile/%40abcdefghij%3Aexample.com"
         found = profiles[account["user_id"]]
         if found is None:
             raise HTTPError(path, 404, "Profile not found", None, None)
@@ -645,7 +645,7 @@ def test_a_credit_shows_the_consulted_agents_swarm_display_name(monkeypatch, pro
         await fake.inbound("cht_solo", OWNER, "what's the status?")
         await eventually(lambda: delivered)
         bridge.name_of = lambda user_id: plow_chat.display_name([{"user_id": "old"}, {"user_id": "hq"}], user_id)
-        assert (await bridge.reply("cht_solo", "merged", consulted="@rmd931i4x5:plow.co")).startswith("sent")
+        assert (await bridge.reply("cht_solo", "merged", consulted="@abcdefghij:example.com")).startswith("sent")
         assert fake.sent[-1] == ("cht_solo", f"merged\n\n— with {credit}")
     run_bridge(scenario)
 
