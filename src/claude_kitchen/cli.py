@@ -220,11 +220,11 @@ def run_hook(hook_dir: Path, hook_name: str, name: str, cwd: Path = None, source
 
 
 def _sweep_cooks(base: Path, kitchen: str) -> list[str]:
-    """Delete cook JSON files whose tmux window no longer exists. Returns names swept."""
+    """Delete cook JSON files whose tmux window no longer exists (the sous's is kept). Returns names swept."""
     cooks_dir = base / "cooks"
     if not cooks_dir.is_dir():
         return []
-    live = set(list_windows(kitchen))
+    live = {"sous", *list_windows(kitchen)}  # the sous runs in the caller's terminal, not a window
     swept = []
     for f in cooks_dir.glob("*.json"):
         if f.stem not in live:
@@ -808,7 +808,8 @@ def cmd_brigade(kitchen: str = None):
 
     for name in kitchens:
         base = state_dir(name)
-        windows = list_windows(name)
+        # The sous has no window; it shows once its status file exists (a usage-limit pause).
+        windows = ["sous"] * (base / "cooks" / "sous.json").exists() + list_windows(name)
 
         print(f"kitchen: {name}")
 

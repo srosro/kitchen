@@ -183,12 +183,14 @@ class TestHook:
     def test_a_usage_limit_shows_paused_until_its_reset_in_brigade_until_a_turn_ends_well(
             self, monkeypatch, tmp_path, capsys):
         """The sous's turn dies on the plan's usage limit (the line Claude prints): brigade
-        shows it paused with the reset time, and its next turn that ends well clears it."""
+        shows it paused with the reset time (the sous has no window, and sweep keeps its record),
+        and its next turn that ends well clears it."""
         self._dead_login(monkeypatch, tmp_path, error="rate_limit")
         base = tmp_path / ".claude-kitchen" / "risotto"
         assert read_status(base, "sous")["resets"] == "Nov 20 at 2am (America/Los_Angeles)"
         with patch("claude_kitchen.cli.list_kitchens", return_value=["risotto"]), \
-                patch("claude_kitchen.cli.list_windows", return_value=["sous"]):
+                patch("claude_kitchen.cli.list_windows", return_value=[]):  # the sous has no window
+            assert _sweep_cooks(base, "risotto") == []
             cmd_brigade(kitchen=None)
             assert "  sous  paused   —  resets Nov 20 at 2am (America/Los_Angeles)" in capsys.readouterr().out
             _stdin_payload(monkeypatch, hook_event_name="Stop", session_id="s1")
