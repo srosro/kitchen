@@ -599,6 +599,21 @@ def test_a_text_anyone_but_the_owner_reads_goes_out_only_past_the_reviewer(chat,
     run_bridge(scenario)
 
 
+def test_the_reviewer_sees_which_file_was_sent_not_just_that_one_was():
+    """Plow sends a line's contact card as a bodiless file; the reviewer must
+    see its name, or it reads as the line having already answered with one."""
+    prompts = []
+
+    async def scenario(fake, bridge, delivered):
+        bridge.reviewer = reviewing("SEND", prompts)
+        await fake.inbound(HOME, OWNER, "can you share the log?")
+        await eventually(lambda: delivered)
+        fake.add(HOME, None, "", files=[("cypress.vcf", b"BEGIN:VCARD")])
+        assert (await bridge.reply(HOME, "will do once it's cleared")).startswith("sent")
+        assert "you: (cypress.vcf)" in prompts[0]
+    run_bridge(scenario)
+
+
 REFUSED = "not sent: a text to the head chef names the Swarm agent you consulted first"
 
 
