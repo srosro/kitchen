@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -255,7 +256,33 @@ def sous_first_turn(kitchen: str) -> list[str]:
         account = json.loads(link.read_text())
         if rooms := swarm_rooms(account):
             joins.append(swarm_join_prompt(account["user_id"], rooms))
+    if links:
+        joins.extend(receive_prompts(kitchen, links[0]))
     return [" ".join(joins)] if joins else []
+
+
+def receive_prompts(kitchen: str, link: Path) -> list[str]:
+    """What brings the kitchen's own account in line with the `receive` list in
+    its project's `.kitchen/config.toml`: a disconnect from each named room it
+    left out, and an unmute of each it lists that swarm has muted. Swarm keeps a
+    mute across restarts, so a list already in force asks nothing. Rooms without
+    a name, its DMs, are always received, and a mention reaches it anywhere. No
+    config, or no `receive` in it, receives every room."""
+    config = Path(json.loads((state_dir(kitchen) / "kitchen.json").read_text())["source"]) / ".kitchen" / "config.toml"
+    receive = tomllib.loads(config.read_text()).get("receive") if config.exists() else None
+    if receive is None:
+        return []
+    muted_file = link.resolve().parent / "muted"
+    muted = set(json.loads(muted_file.read_text()).values()) if muted_file.exists() else set()
+    account = json.loads(link.read_text())
+    named = [room for room in swarm_rooms(account) if room.startswith("#")]
+    prompts = []
+    if off := [room for room in named if room not in receive and room not in muted]:
+        prompts.append(f"Call the swarm `disconnect` tool once for each of: {', '.join(off)}. Say nothing else.")
+    if on := [room for room in named if room in receive and room in muted]:
+        prompts.append(f"Call the swarm `join` tool as account {account['user_id']} with unmute: true "
+                       f"once for each of: {', '.join(on)}. Say nothing else.")
+    return prompts
 
 
 def channel_servers(kitchen: str) -> dict:

@@ -366,6 +366,7 @@ The orchestration behavior is intentionally not hard-coded:
 - **`src/claude_kitchen/sous-chef.md`** defines the manager's operating method: protect context, delegate investigation, use superpowers for spec work, review across models, preserve decisions, and require evidence.
 - **`src/claude_kitchen/roles/`** contains the cook contracts: `eng`, `reviewer`, `qa`, and `_default`.
 - **`.kitchen/on-open.sh` and `.kitchen/on-close.sh`** in a project can run lifecycle automation for that repository.
+- **`.kitchen/config.toml`** in a project can hold `receive = ["#so-dev:plow.co", …]`: the named rooms its sous receives. At each launch the sous disconnects from the account's other named rooms and unmutes listed ones it had muted. It stays a member, mentions still reach it, and DMs are always received. Leave `receive` out to receive every room.
 
 With an editable install, reopen the kitchen or re-hire a cook after changing a prompt to pick up the new behavior. For long-lived customization, fork the repository and install your fork.
 

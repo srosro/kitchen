@@ -345,6 +345,7 @@ def link_account(tmp_path, homeserver="https://plow.swarm.example.com"):
     link = state_dir("boss") / "swarm" / "credential.json"
     link.parent.mkdir(parents=True)
     link.symlink_to(credential)
+    (state_dir("boss") / "kitchen.json").write_text(json.dumps({"source": str(tmp_path / "project")}))
     return link
 
 
@@ -429,6 +430,28 @@ def test_each_account_gets_its_own_bound_server_and_a_join_only_where_swarm_wont
     assert ("as account @other:x once for each of: #general:x." in turn) == ("@other:x" in joins)
 
 
+@pytest.mark.parametrize("config, muted, off, on", [
+    (None, {}, None, None),                                          # no config receives every room
+    ('receive = ["#design:p"]\n', {}, "#general:p", None),            # an unlisted named room is disconnected; the DM stays
+    ('receive = ["#design:p"]\n', {"!g": "#general:p"}, None, None),  # a list already in force asks nothing
+    ('receive = ["#design:p", "#general:p"]\n', {"!g": "#general:p"}, None, "#general:p"),  # a widened list unmutes
+])
+def test_the_sous_receives_only_the_rooms_its_config_lists(tmp_path, monkeypatch, homeserver, config, muted, off, on):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PATH", str(fake_swarm(tmp_path, build=156).parent))
+    link = link_account(tmp_path, homeserver)
+    (link.resolve().parent / "receiving.json").write_text("{}")  # resumed: no joins, only the receive list's turn
+    if config:
+        (tmp_path / "project" / ".kitchen").mkdir(parents=True)
+        (tmp_path / "project" / ".kitchen" / "config.toml").write_text(config)
+    if muted:
+        (link.resolve().parent / "muted").write_text(json.dumps(muted))
+    turn = " ".join(sous_first_turn("boss"))
+    assert ("disconnect` tool once for each of: " + (off or "") + "." in turn) == bool(off)
+    assert (f"as account {ACCOUNT} with unmute: true once for each of: " + (on or "") + "." in turn) == bool(on)
+    assert "#design:p" not in turn and "!dm" not in turn and "#space:p" not in turn
+
+
 def test_restart_keeps_a_sous_running_when_swarm_cant_read_its_account(tmp_path, monkeypatch, capsys):
     # A revoked token leaves swarm listing the account with rooms null.
     from claude_kitchen import cli, spawn
@@ -438,7 +461,7 @@ def test_restart_keeps_a_sous_running_when_swarm_cant_read_its_account(tmp_path,
     link_account(tmp_path)
     fake_swarm(tmp_path, accounts=[{"account": ACCOUNT, "rooms": None, "error": {"code": "denied"}}])
     base = state_dir("boss")
-    (base / "kitchen.json").write_text(json.dumps({"sous_session_id": "s", "sous_launch": {
+    (base / "kitchen.json").write_text(json.dumps({"source": str(tmp_path), "sous_session_id": "s", "sous_launch": {
         "argv": ["kitchen", "open"], "cwd": str(tmp_path), "socket": "/sock", "pane": "%1"}}))
     (base / "sous.pid").write_text(str(os.getpid()))
     monkeypatch.setattr(cli, "resolve_kitchen", lambda k: k)
