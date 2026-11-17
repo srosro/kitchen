@@ -233,9 +233,10 @@ class TestHook:
             cmd_brigade(kitchen=None)
         assert "kitchen: risotto  (Claude week 81%)" in capsys.readouterr().out
 
-    @pytest.mark.parametrize("week", [None, {"used_percentage": 97, "resets_at": 1763629200}])
+    @pytest.mark.parametrize("week", [None, {"used_percentage": 97, "resets_at": 1763629200},
+                                      {"used_percentage": 97}])
     def test_no_or_stale_usage_warns_no_one(self, monkeypatch, tmp_path, week):
-        """Nothing kept, or a window whose reset has passed: no notice."""
+        """Nothing kept, a window whose reset has passed, or one with no reset time: no notice."""
         assert self._turn_ends_at(monkeypatch, tmp_path, week) == []
 
     def test_a_swarm_without_login_hook_stays_quiet(self, monkeypatch, tmp_path, capfd):

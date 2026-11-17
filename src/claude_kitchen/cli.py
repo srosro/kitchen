@@ -1064,7 +1064,8 @@ def _weekly_usage() -> dict | None:
         week = json.loads((Path.home() / ".claude" / "usage" / "rate_limits.json").read_text()).get("seven_day")
     except FileNotFoundError:
         return None
-    return week if week and week["resets_at"] > datetime.now().timestamp() else None
+    # Claude may leave resets_at out of a window: unknown is as good as reset.
+    return week if week and week.get("resets_at", 0) > datetime.now().timestamp() else None
 
 
 def _warn_weekly_usage(base: Path):
