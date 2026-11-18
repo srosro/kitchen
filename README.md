@@ -92,6 +92,8 @@ You continue talking to the sous while both cook sessions remain visible in tmux
 - **superpowers plugin** — the supplied sous workflow invokes its brainstorming and development skills.
   - Install from Claude Code: `/plugin install superpowers@claude-plugins-official` (the `superpowers-marketplace` install also works)
 - **`mcp` Python SDK** — installed automatically as a transitive dependency of this project; no separate install step is needed.
+- **`jq`** — the sous's status line keeps the plan's usage with it, for the warnings at 80% and 95% of the week.
+  - Verify: `jq --version`
 - **Node.js with `npm`/`npx`** — `kitchen setup` registers the Playwright MCP server (for the `playwright` skill) through `npx`, and on Linux without a system Chromium it resolves Playwright's browser through `npm`.
   - Verify: `npx --version`
 
@@ -99,7 +101,6 @@ You continue talking to the sous while both cook sessions remain visible in tmux
 
 - **Codex CLI** — required only for `--backend codex` cooks. Kitchen forces its completion notify command per cook launch, so `~/.codex/config.toml` needs no kitchen entries.
 - **Antigravity CLI (`agy`)** — required only for the opt-in `--backend gemini` cook. Kitchen does not use a `gemini` binary and `kitchen setup` does not install or check `agy`.
-- **`jq`** — needed only by the packaged richer statusline example, not by the kitchen core.
 
 ## Install
 
@@ -108,11 +109,11 @@ You continue talking to the sous while both cook sessions remain visible in tmux
 On macOS:
 
 ```bash
-brew install tmux git
+brew install tmux git jq
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-On Linux, install tmux and git through your package manager, then install uv with the command above.
+On Linux, install tmux, git and jq through your package manager, then install uv with the command above.
 
 ### 2. Install Claude Code and authenticate
 

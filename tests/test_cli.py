@@ -198,7 +198,7 @@ class TestHook:
             cmd_brigade(kitchen=None)
             assert capsys.readouterr().out.splitlines()[1].split() == ["sous", "idle", "—"]
 
-    def _turn_ends_at(self, monkeypatch, tmp_path, week):
+    def _turn_ends_at(self, monkeypatch, tmp_path, week, sous_listening=True):
         """A cook's turn ends with the plan's weekly window at `week` (None: nothing
         kept); returns what reached the sous from kitchen itself."""
         usage = tmp_path / ".claude" / "usage" / "rate_limits.json"
@@ -211,15 +211,23 @@ class TestHook:
         monkeypatch.setenv("STATUS_DIR", str(tmp_path / "risotto"))
         _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message="done")
         pushes = []
-        with patch("claude_kitchen.channel.send_to_socket", lambda _sock, push: pushes.append(push)):
+
+        def deliver(_sock, push):
+            if not sous_listening:
+                raise ConnectionRefusedError
+            pushes.append(push)
+        with patch("claude_kitchen.channel.deliver_to_socket", deliver):
             cmd_hook(argparse.Namespace(command="hook"))
         return [p["summary"] for p in pushes if p["cook"] == "kitchen"]
 
     def test_weekly_usage_past_80_then_95_asks_the_sous_to_tell_the_owner_once_each(
             self, monkeypatch, tmp_path, capsys):
         """Turns end as the week fills: one notice past 80%, one past 95%, none again in
-        the same window; a new window warns afresh. Brigade shows the week's usage."""
+        the same window, and one missed while no sous listens is told on a later turn;
+        a new window warns afresh. Brigade shows the week's usage."""
         resets = int((datetime.now() + timedelta(days=2)).timestamp())
+        assert self._turn_ends_at(monkeypatch, tmp_path, {"used_percentage": 82, "resets_at": resets},
+                                  sous_listening=False) == []
         told = [self._turn_ends_at(monkeypatch, tmp_path, {"used_percentage": pct, "resets_at": resets})
                 for pct in (50, 83, 85, 96, 97)]
         assert [len(t) for t in told] == [0, 1, 0, 1, 0]
@@ -2384,42 +2392,24 @@ class TestCmdSetupStatusline:
         assert "the sous runs kitchen's own" in out
         assert "🍳 All set" in out
 
+    @pytest.mark.parametrize("exists", [False, True], ids=["missing", "existing"])
     @patch("claude_kitchen.cli.subprocess.run")
-    def test_statusline_points_to_missing_file(self, mock_run, monkeypatch, tmp_path, capsys):
-        """Broken path in statusLine.command → it is still the user's: both embed advices."""
+    def test_custom_statusline_embed_advice(self, mock_run, monkeypatch, tmp_path, capsys, exists):
+        """A statusline of the user's own, even one whose script is missing, stays
+        theirs: setup advises embedding the kitchen segment and the usage writer."""
         mock_run.return_value = MagicMock(returncode=0, stdout="2.1.99 (claude)\n", stderr="")
         monkeypatch.setenv("HOME", str(tmp_path))
-        settings = self._base_settings()
-        settings["statusLine"] = {
-            "type": "command",
-            "command": str(tmp_path / "does-not-exist.sh"),
-        }
-        self._prep_home(tmp_path, settings)
+        script = tmp_path / "custom.sh"
+        if exists:
+            script.write_text("#!/bin/sh\necho hi\n")
+            script.chmod(0o755)
+        self._prep_home(tmp_path, {**self._base_settings(), "statusLine": {"type": "command", "command": str(script)}})
 
         from claude_kitchen.cli import cmd_setup
         cmd_setup(MagicMock())
         out = capsys.readouterr().out
-        assert "no kitchen segment detected" in out and "rate_limits writer" in out
-
-    @patch("claude_kitchen.cli.subprocess.run")
-    def test_statusline_different_not_kitchen(self, mock_run, monkeypatch, tmp_path, capsys):
-        """User has their own statusline script, no kitchen segment → embed advice."""
-        mock_run.return_value = MagicMock(returncode=0, stdout="2.1.99 (claude)\n", stderr="")
-        monkeypatch.setenv("HOME", str(tmp_path))
-        script = tmp_path / "mystatusline.sh"
-        script.write_text("#!/bin/sh\necho hi\n")
-        script.chmod(0o755)
-        settings = self._base_settings()
-        settings["statusLine"] = {"type": "command", "command": str(script)}
-        self._prep_home(tmp_path, settings)
-
-        from claude_kitchen.cli import cmd_setup
-        cmd_setup(MagicMock())
-        out = capsys.readouterr().out
-        assert "no kitchen segment detected" in out
-        assert "$(kitchen statusline-segment)" in out
-        assert "rate_limits writer" in out
-        assert "🍳 All set" in out
+        assert all(s in out for s in ("no kitchen segment detected", "$(kitchen statusline-segment)",
+                                      "rate_limits writer", "🍳 All set"))
 
     @patch("claude_kitchen.cli.subprocess.run")
     def test_statusline_green_when_script_embeds_segment(self, mock_run, monkeypatch, tmp_path, capsys):

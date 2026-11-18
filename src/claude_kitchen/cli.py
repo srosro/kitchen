@@ -1083,11 +1083,15 @@ def _warn_weekly_usage(base: Path):
         flag.open("x").close()
     except FileExistsError:
         return
-    resets = datetime.fromtimestamp(week["resets_at"]).astimezone().strftime("%a %b %-d, %-I:%M %p %Z")
-    from claude_kitchen.channel import send_to_socket
-    send_to_socket(channel_socket(base), {"cook": "kitchen", "summary": (
-        f"Claude weekly usage is at {pct:.0f}%; it resets {resets}. Tell your owner once, plainly, in their DM: "
-        f"your agents pause when it reaches 100% until then, unless they add usage credits.")})
+    at = datetime.fromtimestamp(week["resets_at"]).astimezone()  # no %-d / %-I: Windows has neither
+    resets = f"{at:%a %b} {at.day}, {at.hour % 12 or 12}:{at:%M %p %Z}"
+    from claude_kitchen.channel import deliver_to_socket
+    try:
+        deliver_to_socket(channel_socket(base), {"cook": "kitchen", "summary": (
+            f"Claude weekly usage is at {pct:.0f}%; it resets {resets}. Tell your owner once, plainly, in their DM: "
+            f"your agents pause when it reaches 100% until then, unless they add usage credits.")})
+    except OSError:
+        flag.unlink()  # no sous listening (a restart): a later turn's end tells it
 
 
 def _swarm_login_hook(kitchen: str, raw: str):
@@ -1528,6 +1532,9 @@ def cmd_setup(args):
         if not _mentions(cmd, "rate_limits"):
             print("⚠️  Your statusline doesn't keep the plan's usage, so kitchen can't warn at 80% and 95%")
             print(f"   Copy the rate_limits writer from {statusline_pkg} into it.")
+        print()
+    if not shutil.which("jq"):
+        print("⚠️  jq not found: the statusline can't keep the plan's usage, so kitchen can't warn at 80% and 95%")
         print()
 
     # --- stray root-level .mcp.json (auto-remove; §Design.4 landmine) ---
