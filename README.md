@@ -256,8 +256,8 @@ kitchen hire architect --model opus
 # Codex model; astra is passed to `codex -m` as gpt-6-astra (Codex cooks only)
 kitchen hire reviewer --backend codex --model astra
 
-# Work in a free ~/Hacking/plow<N> slot claimed with kitchen's `tc claim`
-kitchen hire eng --role eng --slot plow
+# Work in a free ~/Hacking/widget<N> slot claimed with kitchen's `tc claim`
+kitchen hire eng --role eng --slot widget
 
 # Near-fresh eval worker: no role, auto-memory, or superpowers startup injection
 kitchen hire eval1 --clean-room --project /absolute/eval-directory
@@ -369,7 +369,7 @@ The orchestration behavior is intentionally not hard-coded:
 - **`src/claude_kitchen/sous-chef.md`** defines the manager's operating method: protect context, delegate investigation, use superpowers for spec work, review across models, preserve decisions, and require evidence.
 - **`src/claude_kitchen/roles/`** contains the cook contracts: `eng`, `reviewer`, `qa`, and `_default`.
 - **`.kitchen/on-open.sh` and `.kitchen/on-close.sh`** in a project can run lifecycle automation for that repository.
-- **`.kitchen/config.toml`** in a project can hold `receive = ["#so-dev:plow.co", …]`: the named rooms its sous receives. At each launch the sous disconnects from the account's other named rooms and unmutes listed ones it had muted. It stays a member, mentions still reach it, and DMs are always received. Leave `receive` out and kitchen leaves the account's mutes as they are; list a room to unmute it.
+- **`.kitchen/config.toml`** in a project can hold `receive = ["#dev:example.org", …]`: the named rooms its sous receives. At each launch the sous disconnects from the account's other named rooms and unmutes listed ones it had muted. It stays a member, mentions still reach it, and DMs are always received. Leave `receive` out and kitchen leaves the account's mutes as they are; list a room to unmute it.
 
 With an editable install, reopen the kitchen or re-hire a cook after changing a prompt to pick up the new behavior. For long-lived customization, fork the repository and install your fork.
 

@@ -40,8 +40,8 @@ Commit in small, reviewable increments so the daemon can process each focused ch
 Current-branch commands cannot reveal failures left in another repository, clone, or branch. Run the read-only helper explicitly when checking the whole machine:
 
 ```sh
-python3 ~/services/kitchen/src/claude_kitchen/hooks/roborev-list-all.py
-python3 ~/services/kitchen/src/claude_kitchen/hooks/roborev-list-all.py --json
+python3 <this skill's directory>/../../hooks/roborev-list-all.py
+python3 <this skill's directory>/../../hooks/roborev-list-all.py --json
 ```
 
 Resolve stale findings you authored. Do not close recent findings that another session may still be handling; when uncertain, leave them open.
@@ -49,5 +49,5 @@ Resolve stale findings you authored. Do not close recent findings that another s
 ## Recovery
 
 - If `roborev` is missing, install it with roborev's own installer (the operator's config repo wraps it as `just install-roborev`). `kitchen setup` owns the Claude hooks and this skill; the roborev install owns the binary, daemon, and native Git hooks.
-- If the queue is not draining, check `roborev status`. Restart `roborev-daemon.service` on Linux or reload the `co.plow.roborev-daemon` LaunchAgent on macOS.
+- If the queue is not draining, check `roborev status`. Restart `roborev-daemon.service` on Linux or reload its LaunchAgent on macOS (`launchctl list | grep roborev` names it).
 - The Linux service is named `roborev-daemon.service`, not `roborev`.

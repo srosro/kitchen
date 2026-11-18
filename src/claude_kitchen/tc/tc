@@ -79,7 +79,7 @@ exec tmux new -A -s \"\${out%% *}\" -c \"\${out#* }\""
 # Headless local claim: pick a free+unlocked slot, atomically lock it, branch it,
 # print JUST the dir, release the lock (the branch is now the steady-state claim —
 # pick.sh skips non-main checkouts). No ssh/tmux: a dispatched subagent runs on
-# this host. Consumer: dir=$(tc claim plow feat/foo) || { echo "no slot"; exit; }
+# this host. Consumer: dir=$(tc claim widget feat/foo) || { echo "no slot"; exit; }
 tc_claim() { # tc_claim <repo-or-tag> <branch> [exact-slot]
   local raw=$1 branch=$2 exact=${3:-} repo tag out dir lock
   _safe_name "$raw"; _safe_branch "$branch"

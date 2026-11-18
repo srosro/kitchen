@@ -1014,7 +1014,7 @@ class TestStatusPreservationAcrossNonStopWriters:
 
     @patch("claude_kitchen.cli.wait_for_prompt", return_value=True)
     @patch("claude_kitchen.cli.state_dir")
-    @patch("claude_kitchen.cli.resolve_kitchen", return_value="kitchen-agents-cos")
+    @patch("claude_kitchen.cli.resolve_kitchen", return_value="widget-cos")
     def test_cmd_hire_swarm_account_gives_the_cook_its_own_bound_swarm_server(
         self, mock_rk, mock_state, mock_wait, tmp_path, monkeypatch,
     ):
@@ -1022,9 +1022,9 @@ class TestStatusPreservationAcrossNonStopWriters:
         account, then is asked to join that account's rooms; Codex is refused."""
         mock_state.return_value = tmp_path
         monkeypatch.setenv("HOME", str(tmp_path))
-        credential = tmp_path / ".swarm/accounts/chief.swarm.example.com/cypress/credential.json"
+        credential = tmp_path / ".swarm/accounts/swarm.example.com/cedar/credential.json"
         credential.parent.mkdir(parents=True)
-        credential.write_text(json.dumps({"user_id": "@cypress:c", "homeserver": "https://c", "access_token": "t"}))
+        credential.write_text(json.dumps({"user_id": "@cedar:c", "homeserver": "https://c", "access_token": "t"}))
         (tmp_path / "cooks").mkdir()
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
@@ -1033,18 +1033,18 @@ class TestStatusPreservationAcrossNonStopWriters:
         monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
         args = argparse.Namespace(kitchen=None, name="relay", backend="claude", project=str(tmp_path), slot=None,
                                   role=None, effort=None, clean_room=False, with_skill=[], model=None,
-                                  swarm_account="@cypress:c")
+                                  swarm_account="@cedar:c")
         with patch("claude_kitchen.cli.spawn_window", return_value=True) as spawn, \
              patch("claude_kitchen.cli.swarm_rooms", return_value=["#general:c"]), \
              patch("claude_kitchen.cli.join_swarm") as join:
             cmd_hire(args)
         config = json.loads(spawn.call_args.kwargs["mcp_config"].read_text())
         assert config == {"mcpServers": {"swarm": {"command": str(bin_dir / "swarm"),
-                                                   "args": ["mcp", "claude", "--account", "@cypress:c"]}}}
+                                                   "args": ["mcp", "claude", "--account", "@cedar:c"]}}}
         # Outside the cooks/*.json namespace, which sweep and brigade read as cook records.
         assert spawn.call_args.kwargs["mcp_config"].name == "relay.mcp"
         kitchen, window, account, prompt = join.call_args.args
-        assert (window, account) == ("relay", "@cypress:c") and "#general:c" in prompt
+        assert (window, account) == ("relay", "@cedar:c") and "#general:c" in prompt
 
         args.name, args.backend = "relay2", "codex"
         with pytest.raises(SystemExit, match="--swarm-account is for Claude cooks"):

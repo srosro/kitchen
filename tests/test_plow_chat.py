@@ -609,9 +609,9 @@ def test_the_reviewer_sees_which_file_was_sent_not_just_that_one_was():
         bridge.reviewer = reviewing("SEND", prompts)
         await fake.inbound(HOME, OWNER, "can you share the log?")
         await eventually(lambda: delivered)
-        fake.add(HOME, None, "", files=[("cypress.vcf", b"BEGIN:VCARD")])
+        fake.add(HOME, None, "", files=[("cedar.vcf", b"BEGIN:VCARD")])
         assert (await bridge.reply(HOME, "will do once it's cleared")).startswith("sent")
-        assert "you: (cypress.vcf)" in prompts[0]
+        assert "you: (cedar.vcf)" in prompts[0]
     run_bridge(scenario)
 
 
@@ -824,12 +824,12 @@ def test_a_reply_that_went_out_reports_sent_even_if_clearing_eyes_fails():
     ("sous", {"room": "#dev:x", "text": "merged"}, False),
     ("sous", {"room": "@owner:x", "text": "merged"}, True),
     ("sous", {"room": "#dev:x", "mentions": ["@owner:x"], "text": "merged"}, True),
-    ("sous", {"room": "#dev:x", "mentions": ["@owner:x"], "text": "merged\n\n— with maple"}, False),
+    ("sous", {"room": "#dev:x", "mentions": ["@owner:x"], "text": "merged\n\n— with oak"}, False),
     ("sous", {"room": "@owner:x", "text": "merged\n\n— with cedar"}, True),
     ("sous", {"room": "@owner:x", "text": "merged\n\n— with owner"}, True),
     ("sous", {"room": "@owner:x", "text": "merged", "dangerously_skip_attaching_a_priority": True}, False),
     ("sous", {"room": "!dmOwner", "text": "merged"}, True),
-    ("sous", {"room": "!dmOwner", "text": "merged\n\n— with maple"}, False),
+    ("sous", {"room": "!dmOwner", "text": "merged\n\n— with oak"}, False),
     ("sous", {"room": "!dmOther", "text": "merged"}, False),
     ("sous", {"room": "!notIn", "text": "merged"}, False),
     ("dev", {"room": "!dmCook", "text": "merged"}, True),
