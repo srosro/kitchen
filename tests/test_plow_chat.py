@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from claude_kitchen import plow_chat
+from claude_kitchen.channel import reply_server
 from claude_kitchen.cli import cmd_hook
 from claude_kitchen.plow_chat import CREDENTIALS, Bridge, call, content_type_of, read_credentials
 from tests.fake_plow import SIGNATURE, TOKEN, FakePlow
@@ -902,3 +903,17 @@ def test_an_expired_claude_login_tells_the_owner_once_until_a_turn_ends_normally
     turn_ends("sous", "Stop")
     turn_ends("eng", "StopFailure", "authentication_failed")
     assert fake.sent[1:] == [(SOLO, "eng: my Claude login expired; run /login in my pane")]
+
+
+def test_the_sous_is_told_the_name_on_its_lines_contact_card():
+    """People text the agent by its line's persona (the fake's line is Cedar), so the
+    plow-chat server's instructions, which reach the sous's system prompt, name it."""
+    async def main():
+        base_url, server = await FakePlow().serve()
+        try:
+            async with httpx.AsyncClient(base_url=base_url, headers={"Authorization": f"Bearer {TOKEN}"}) as client:
+                return await plow_chat.introduction(client)
+        finally:
+            server.should_exit = True
+    _, options = reply_server("plow-chat", "Plow chat (iMessage)", None, instructions=asyncio.run(main()))
+    assert "contact card named Cedar, so Cedar is your name" in options.instructions

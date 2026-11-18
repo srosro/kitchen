@@ -726,27 +726,43 @@ def tell_owner(kitchen: str, text: str) -> str:
         return sent(client.post(f"/v1/chats/{chat}/messages", json={"body": text}), "message to the owner")
 
 
+async def introduction(client: httpx.AsyncClient) -> str | None:
+    """Who the sous is to the people it texts: its line's persona, the name on the
+    contact card its texts arrive under. None for an unnamed line, or when Plow
+    can't be read at start: a server that dies here takes the line down for the
+    whole session, so it starts without the name and says so in the log."""
+    try:
+        r = await client.get("/v1/agents/me")
+        r.raise_for_status()
+    except httpx.HTTPError as e:
+        log(f"reading the line failed ({type(e).__name__}); starting without its name")
+        return None
+    name = r.json()["line"].get("display_name")
+    return name and (f"You text on the Plow line named {name}, and people get your texts under a contact card "
+                     f"named {name}, so {name} is your name to them. A text naming {name} in a chat this line is "
+                     f"in is addressed to you, even when another agent elsewhere shares the name.")
+
+
 async def run_server(kitchen: str):
     directory = plow_chat_dir(kitchen)
     credentials = read_credentials(directory / CREDENTIALS)
     bridge = None  # bound once the HTTP client and stdio streams are open
-    server, init_options = reply_server("plow-chat", "Plow chat (iMessage)",
-                                        lambda name, arguments: call(bridge, name, arguments), SEND_FILE, START_CHAT, NO_REPLY,
-                                        reply_properties=GATE_PROPERTIES)
-
     headers = {"Authorization": f"Bearer {credentials['PLOW_AGENT_TOKEN']}"}
-    async with httpx.AsyncClient(base_url=credentials["PLOW_API_BASE"], headers=headers, timeout=30) as client, \
-            stdio_server() as (read_stream, write_stream):
-        bridge = Bridge(client, lambda content, meta: push(write_stream, with_digest(state_dir(kitchen), content), meta), directory / "last_seen.json")
-        if (gate := directory / CONSULT_GATE).exists():
-            accounts = swarm_accounts(kitchen)
-            bridge.consult = (accounts[0]["user_id"], listed(gate).pop())
-            bridge.name_of = lambda user_id: display_name(accounts, user_id)
-        supervisor = asyncio.create_task(bridge.run())
-        try:
-            await server.run(read_stream, write_stream, init_options)
-        finally:
-            supervisor.cancel()
+    async with httpx.AsyncClient(base_url=credentials["PLOW_API_BASE"], headers=headers, timeout=30) as client:
+        server, init_options = reply_server("plow-chat", "Plow chat (iMessage)",
+                                            lambda name, arguments: call(bridge, name, arguments), SEND_FILE, START_CHAT, NO_REPLY,
+                                            reply_properties=GATE_PROPERTIES, instructions=await introduction(client))
+        async with stdio_server() as (read_stream, write_stream):
+            bridge = Bridge(client, lambda content, meta: push(write_stream, with_digest(state_dir(kitchen), content), meta), directory / "last_seen.json")
+            if (gate := directory / CONSULT_GATE).exists():
+                accounts = swarm_accounts(kitchen)
+                bridge.consult = (accounts[0]["user_id"], listed(gate).pop())
+                bridge.name_of = lambda user_id: display_name(accounts, user_id)
+            supervisor = asyncio.create_task(bridge.run())
+            try:
+                await server.run(read_stream, write_stream, init_options)
+            finally:
+                supervisor.cancel()
 
 
 def main(kitchen: str):

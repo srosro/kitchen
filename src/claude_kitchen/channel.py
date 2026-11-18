@@ -78,11 +78,12 @@ def _refuse_if_deaf(capabilities):
         )
 
 
-def reply_server(name: str, medium: str, call, *tools: Tool, reply_properties: dict = {}):
+def reply_server(name: str, medium: str, call, *tools: Tool, reply_properties: dict = {}, instructions: str = None):
     """A chat channel's MCP server and init options: a `reply` tool (with any
     `reply_properties` beyond chat and text) plus `tools`, each run by
-    `call(tool_name, arguments) -> str`, and the channel capability."""
-    server = Server(name)
+    `call(tool_name, arguments) -> str`, and the channel capability.
+    `instructions` reach the sous's system prompt."""
+    server = Server(name, instructions=instructions)
     reply = Tool(
         name="reply",
         description=(f"Send a message to a {medium}; pass the `chat` attribute of the "
