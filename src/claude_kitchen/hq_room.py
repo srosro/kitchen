@@ -1,9 +1,9 @@
-"""Retire one HQ room for everyone, for good (irreversible), history kept, on Sam's 🗑️.
+"""Retire one HQ room for everyone, for good (irreversible), history kept, on the approver's 🗑️.
 
 Agents hold no admin on HQ: they assume `swarm-hq-room` (AWS profile of that
 name), which may only invoke the `swarm-hq-room` function in plow's terraform.
-The function records the retire prompt (`ask`) and, on `retire`, checks Sam's
-🗑️ on it, the keep list and the rest, retires the room with purge off, reads
+The function records the retire prompt (`ask`) and, on `retire`, checks the
+approver's 🗑️ on it, the keep list and the rest, retires the room with purge off, reads
 it back, and logs every action where agents can't edit it.
 """
 import json

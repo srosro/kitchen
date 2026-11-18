@@ -642,7 +642,7 @@ def test_a_text_to_the_owner_alone_names_the_agent_consulted_first(gate, kwargs,
 
 
 @pytest.mark.parametrize("profiles, credit", [
-    ({"old": None, "hq": "Aspen ⚉ Patrick's front desk"}, "Aspen ⚉ Patrick's front desk"),
+    ({"old": None, "hq": "Aspen ⚉ Kim's front desk"}, "Aspen ⚉ Kim's front desk"),
     ({"old": None, "hq": None}, "abcdefghij"),
     ({"old": None, "hq": {}}, "abcdefghij"),
 ], ids=["named-on-another-server", "unknown-everywhere", "no-display-name"])

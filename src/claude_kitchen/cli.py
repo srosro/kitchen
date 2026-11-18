@@ -1810,13 +1810,13 @@ def main():
 
     p_hq = sub.add_parser("hq-room", help="Retire one HQ room for everyone, for good: IRREVERSIBLE (no undo; history kept, purge off)",
                           description="Retire one HQ room for everyone. IRREVERSIBLE: its members are removed and nobody can get back in. "
-                                      "1) Send in that room, with swarm's send: 'Retire this room for good? Sam, react 🗑️ to confirm.' "
+                                      "1) Send in that room, with swarm's send: 'Retire this room for good? <approver>, react 🗑️ to confirm.' "
                                       "2) kitchen hq-room ask <room> --prompt <its event id>. "
-                                      "3) Within 30 minutes, once Sam reacts: kitchen hq-room retire <room> --asked-in <his reaction's event id>.")
+                                      "3) Within 30 minutes, once the approver (HQ_ROOM_APPROVER) reacts: kitchen hq-room retire <room> --asked-in <their reaction's event id>.")
     p_hq.add_argument("action", choices=["ask", "retire"])
-    p_hq.add_argument("room", help="One HQ room: !roomid or #alias:plow.co, the same form for ask and retire")
+    p_hq.add_argument("room", help="One HQ room: !roomid or #alias:server, the same form for ask and retire")
     p_hq.add_argument("--prompt", help="ask: the event id ($...) of the retire prompt you sent in that room")
-    p_hq.add_argument("--asked-in", help="retire: Sam's 🗑️ reaction event id ($...) on that prompt")
+    p_hq.add_argument("--asked-in", help="retire: the approver's 🗑️ reaction event id ($...) on that prompt")
 
     p_channel = sub.add_parser("channel-server", help="(internal) Run channel MCP server")
     p_channel.add_argument("kitchen", help="Kitchen name")

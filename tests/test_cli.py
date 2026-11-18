@@ -153,7 +153,7 @@ class TestHook:
         monkeypatch.setenv("AGENT_KITCHEN", "risotto")
         monkeypatch.setenv("STATUS_DIR", str(kitchen))
         said = {"authentication_failed": "Login expired · Please run /login",
-                "rate_limit": "You've hit your weekly limit · resets Nov 20 at 2am (America/Los_Angeles)"}[error]
+                "rate_limit": "You've hit your weekly limit · resets Nov 20 at 2am (Europe/Berlin)"}[error]
         payload = {"hook_event_name": event, "error": error, "session_id": "s1", "last_assistant_message": said}
         _stdin_payload(monkeypatch, **payload)
         cmd_hook(argparse.Namespace(command="hook"))
@@ -187,12 +187,12 @@ class TestHook:
         and its next turn that ends well clears it."""
         self._dead_login(monkeypatch, tmp_path, error="rate_limit")
         base = tmp_path / ".claude-kitchen" / "risotto"
-        assert read_status(base, "sous")["resets"] == "Nov 20 at 2am (America/Los_Angeles)"
+        assert read_status(base, "sous")["resets"] == "Nov 20 at 2am (Europe/Berlin)"
         with patch("claude_kitchen.cli.list_kitchens", return_value=["risotto"]), \
                 patch("claude_kitchen.cli.list_windows", return_value=[]):  # the sous has no window
             assert _sweep_cooks(base, "risotto") == []
             cmd_brigade(kitchen=None)
-            assert "  sous  paused   —  resets Nov 20 at 2am (America/Los_Angeles)" in capsys.readouterr().out
+            assert "  sous  paused   —  resets Nov 20 at 2am (Europe/Berlin)" in capsys.readouterr().out
             _stdin_payload(monkeypatch, hook_event_name="Stop", session_id="s1")
             cmd_hook(argparse.Namespace(command="hook"))
             cmd_brigade(kitchen=None)
