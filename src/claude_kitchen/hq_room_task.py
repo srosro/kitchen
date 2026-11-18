@@ -90,7 +90,9 @@ def retire(target, token):
     if out["status"] == "complete":
         unlist(room, token)
     after = {**snapshot(room, token), **listings(room, token)}
-    if after["aliases"] or after["in_spaces"]:
+    if out["failed_to_kick"] or after["joined_members"]:
+        out["error"] = "members are still in the room"
+    elif after["aliases"] or after["in_spaces"]:
         out["error"] = "the room is still listed in the directory"
     return {**out, "after": after}
 

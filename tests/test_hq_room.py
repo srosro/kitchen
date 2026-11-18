@@ -14,13 +14,14 @@ ALIASES = {"#general:plow.co": "!general", "#admin-log:plow.co": "!log", "#swarm
 
 
 class Requests(list):
-    """Each request the fake saw, and `broken`: (method, path part) pairs it answers with a 500."""
+    """Each request the fake saw; `broken`: (method, path part) pairs it answers with a 500;
+    `joined`: rooms' joined member counts, 0 when unset."""
 
 
 @pytest.fixture
 def synapse(monkeypatch):
     """A fake Synapse: records every request, serves the reads the task makes."""
-    seen, aliases, children, broken = Requests(), dict(ALIASES), {"!work": {"via": ["plow.co"]}}, set()
+    seen, aliases, children, broken, joined = Requests(), dict(ALIASES), {"!work": {"via": ["plow.co"]}}, set(), {}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -56,7 +57,7 @@ def synapse(monkeypatch):
                 return self.reply(200, {"rooms": ["#general:plow.co", "#plow-feedback:plow.co"]})
             if path.startswith("/_synapse/admin/v1/rooms/"):
                 room = path.rsplit("/", 1)[1]
-                return self.reply(200, {"name": room, "room_type": ROOMS[room]}) if room in ROOMS else self.reply(404, {})
+                return self.reply(200, {"name": room, "room_type": ROOMS[room], "joined_members": joined.get(room, 0)}) if room in ROOMS else self.reply(404, {})
             if self.command == "DELETE" and path.startswith("/_synapse/admin/v2/rooms/"):
                 return self.reply(200, {"delete_id": "d1"})
             if path == "/_synapse/admin/v2/rooms/delete_status/d1":
@@ -78,7 +79,7 @@ def synapse(monkeypatch):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     monkeypatch.setattr(hq_room_task, "BASE", f"http://127.0.0.1:{server.server_port}")
     monkeypatch.setenv("SWARM_PLOW_PASSWORD", "pw-fake7c1")
-    seen.broken = broken
+    seen.broken, seen.joined = broken, joined
     yield seen
     server.shutdown()
 
@@ -137,3 +138,8 @@ def test_every_attempt_is_logged_privately_even_with_no_result(monkeypatch, tmp_
     entry = json.loads((tmp_path / "hq-room.log").read_text())
     assert (entry["asked_by"], entry["target"], entry["result"]) == ("Sam, #so-cos", "#work:plow.co", {"error": "no result from the task"})
     assert (tmp_path / "hq-room.log").stat().st_mode & 0o777 == 0o600
+
+
+def test_a_member_left_in_the_room_is_an_error(synapse, capsys):
+    synapse.joined["!work"] = 1
+    assert run("#work:plow.co", capsys)["error"] == "members are still in the room"
