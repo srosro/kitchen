@@ -1,9 +1,14 @@
-"""Runs inside HQ's synapse container: retire one room as `@plow`, history kept.
+"""Runs inside HQ's synapse container: retire one room as `@plow`, for good, history kept.
 
-`hq_room.py` sends this file with a `main(<target>)` call appended. It logs in
-from the task's own environment, refuses anything but one ordinary HQ room,
-makes the one admin call with purge off, reads the room back, logs out, and
-prints one `HQ_ROOM <json>` line. Neither the password nor the token is printed.
+`hq_room.py` sends this file with a `main(<target>, <reaction event id>, <rules>)`
+call appended. It logs in from the task's own environment and refuses unless
+the room is an ordinary one Sam or his agents made on HQ, kept by no rule, and
+the approver confirmed it there: a 🗑️ reaction, under a day old, on a prompt one
+of his agents sent in that room under a day ago. Swarm's rooms are encrypted,
+so no message text can be read here; reactions travel in plaintext, and the
+room they sit in names the target. Then it makes the one admin call with purge
+off, reads the room back, logs out, and prints one `HQ_ROOM <json>` line.
+Neither the password nor the token is printed.
 """
 import json
 import os
@@ -16,6 +21,8 @@ SERVER = "plow.co"
 BASE = "http://localhost:8008"
 # Rooms swarm itself keeps: the Spaces, #general, the Admin log and its own room.
 CORE_ALIASES = ("general", "admin-log", "swarm-module", "rooms", "guests")
+CONFIRM_KEYS = ("🗑️", "🗑")
+DAY_MS = 24 * 3600 * 1000
 q = lambda s: urllib.parse.quote(s, safe="")
 
 
@@ -66,15 +73,57 @@ def snapshot(room, token):
     return {k: d.get(k) for k in ("name", "canonical_alias", "joined_members", "public", "room_type", "creator")}
 
 
-def retire(target, token):
+def event(event_id, token):
+    status, found_ = call("GET", "/_synapse/admin/v1/fetch_event/" + q(event_id), token=token)
+    return found_["event"] if status == 200 else None
+
+
+def unconfirmed(room, asked_in, rules, token):
+    """Why `asked_in` doesn't confirm retiring `room`, or None when it does."""
+    now = int(time.time() * 1000)
+    reaction = event(asked_in, token)
+    if not reaction:
+        return f"{asked_in} is no event on HQ"
+    relates = reaction["content"].get("m.relates_to") or {}
+    if reaction["type"] != "m.reaction" or relates.get("rel_type") != "m.annotation" or relates.get("key") not in CONFIRM_KEYS:
+        return f"{asked_in} is not a 🗑️ reaction"
+    if reaction["sender"] != rules["approver"]:
+        return f"the 🗑️ is {reaction['sender']}'s, not {rules['approver']}'s"
+    if reaction["room_id"] != room:
+        return "the 🗑️ is in another room: it must sit in the room it retires"
+    if now - reaction["origin_server_ts"] > DAY_MS:
+        return "the 🗑️ is over a day old"
+    prompt = event(relates["event_id"], token)
+    if not prompt or prompt["room_id"] != room or prompt["sender"] not in rules["agents"]:
+        return "the 🗑️ is not on a prompt one of the approver's agents sent in this room"
+    if now - prompt["origin_server_ts"] > DAY_MS:
+        return "the prompt is over a day old"
+    return None
+
+
+def kept(room, before, rules, token):
+    """Why `room` stays whoever asks, or None when it may be retired."""
+    if before["creator"] not in (rules["approver"], *rules["agents"]):
+        return f"made by {before['creator'] or 'another server'}, not by {rules['approver']} or their agents"
+    if not before["name"]:
+        return "an unnamed room, a direct chat"
+    core = core_rooms(token)
+    if room in core or before["room_type"] == "m.space":
+        return f"{core.get(room, 'a Space')} is one of HQ's core rooms"
+    if room in {found(resolve(k, token), k) if k.startswith("#") else k for k in rules["keep"]}:
+        return f"{before['canonical_alias'] or before['name']} is on the operator's keep list"
+    return None
+
+
+def retire(target, asked_in, rules, token):
     room = resolve(target, token) if target.startswith("#") else target
     before = room and snapshot(room, token)
     if not before:
         return {"refused": f"{target} is no room on HQ ({SERVER})"}
     out = {"room_id": room, "before": before}
-    core = core_rooms(token)
-    if room in core or before["room_type"] == "m.space":
-        return {**out, "refused": f"{core.get(room, 'a Space')} is one of HQ's core rooms: it stays"}
+    why = kept(room, before, rules, token) or unconfirmed(room, asked_in, rules, token)
+    if why:
+        return {**out, "refused": why + ": it stays"}
     status, started = call("DELETE", "/_synapse/admin/v2/rooms/" + q(room),
                            {"purge": False, "block": False, "message": "This room was closed by Plow."}, token)
     if status != 200:
@@ -119,13 +168,13 @@ def unlist(room, token):
         call("PUT", f"/_matrix/client/v3/rooms/{q(resolve(alias, token))}/state/m.space.child/{q(room)}", {}, token)
 
 
-def main(target):
+def main(target, asked_in, rules):
     token, result = None, {"error": "the run stopped before a result"}
     try:
         token = call("POST", "/_matrix/client/v3/login", {
             "type": "m.login.password", "identifier": {"type": "m.id.user", "user": "plow"},
             "password": os.environ["SWARM_PLOW_PASSWORD"], "initial_device_display_name": "ops kitchen hq-room"})[1]["access_token"]
-        result = retire(target, token)
+        result = retire(target, asked_in, rules, token)
     except RuntimeError as e:
         result = {"error": str(e)}
     finally:

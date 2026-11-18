@@ -1758,10 +1758,13 @@ def main():
     p_approve.add_argument("account", help="The agent's Swarm id, @name:server")
     p_approve.add_argument("host", help="The host to allow, e.g. example.com")
 
-    p_hq = sub.add_parser("hq-room", help="Retire one HQ room for everyone, history kept (purge off), on a person's ask")
+    p_hq = sub.add_parser("hq-room", help="Retire one HQ room for everyone, for good: IRREVERSIBLE (no undo; history kept, purge off)",
+                          description="Retire one HQ room for everyone. IRREVERSIBLE: its members are removed and nobody can get back in. "
+                                      "First post in that room: 'Retire this room for good? Sam, react 🗑️ to confirm.' "
+                                      "Then pass the event id of his 🗑️ reaction.")
     p_hq.add_argument("action", choices=["retire"])
     p_hq.add_argument("room", help="One HQ room: !roomid or #alias:plow.co")
-    p_hq.add_argument("--asked-by", required=True, help="Who asked for it, e.g. Sam (swarm event or message link welcome)")
+    p_hq.add_argument("--asked-in", required=True, help="The approver's 🗑️ reaction event id ($...), on your prompt in that room, under a day old")
 
     p_channel = sub.add_parser("channel-server", help="(internal) Run channel MCP server")
     p_channel.add_argument("kitchen", help="Kitchen name")
@@ -1807,7 +1810,7 @@ def main():
         cmd_approve_host(args)
     elif args.command == "hq-room":
         from claude_kitchen.hq_room import retire
-        result = retire(args.room, args.asked_by)
+        result = retire(args.room, args.asked_in)
         print(json.dumps(result, indent=2))
         sys.exit(0 if result.get("status") == "complete" and not (result.get("error") or result.get("logout_error")) else 1)
     elif args.command in ("hook", "hook-codex", "hook-agy"):
