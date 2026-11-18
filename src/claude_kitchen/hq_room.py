@@ -69,6 +69,9 @@ def append_log(asked_by: str, target: str, result: dict) -> None:
 def retire(target: str, asked_by: str) -> dict:
     if not TARGET.fullmatch(target):
         raise SystemExit(f"{target} is not an HQ room: give one !roomid or #alias:plow.co.")
-    result = parse(run_in_task(task_command(target)))
-    append_log(asked_by, target, result)
-    return result
+    result = {"error": "no result from the task"}
+    try:
+        result = parse(run_in_task(task_command(target)))
+        return result
+    finally:
+        append_log(asked_by, target, result)

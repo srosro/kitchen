@@ -125,3 +125,13 @@ def test_a_failed_lookup_or_step_is_reported_as_an_error_and_still_logs_out(syna
     assert "500" in run("#work:plow.co", capsys)["error"]
     assert bool([m for m, p, _ in synapse if m == "DELETE" and "admin" in p]) == changed
     assert synapse[-1][:2] == ("POST", "/_matrix/client/v3/logout")
+
+
+def test_every_attempt_is_logged_privately_even_with_no_result(monkeypatch, tmp_path):
+    monkeypatch.setattr(hq_room, "state_root", lambda: tmp_path)
+    monkeypatch.setattr(hq_room, "run_in_task", lambda _: "Cannot perform start session: EOF")
+    with pytest.raises(SystemExit, match="printed no result"):
+        hq_room.retire("#work:plow.co", "Sam, #so-cos")
+    entry = json.loads((tmp_path / "hq-room.log").read_text())
+    assert (entry["asked_by"], entry["target"], entry["result"]) == ("Sam, #so-cos", "#work:plow.co", {"error": "no result from the task"})
+    assert (tmp_path / "hq-room.log").stat().st_mode & 0o777 == 0o600

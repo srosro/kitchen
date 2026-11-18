@@ -89,7 +89,10 @@ def retire(target, token):
            "kicked": shut.get("kicked_users"), "failed_to_kick": shut.get("failed_to_kick_users")}
     if out["status"] == "complete":
         unlist(room, token)
-    return {**out, "after": {**snapshot(room, token), **listings(room, token)}}
+    after = {**snapshot(room, token), **listings(room, token)}
+    if after["aliases"] or after["in_spaces"]:
+        out["error"] = "the room is still listed in the directory"
+    return {**out, "after": after}
 
 
 def listings(room, token):
@@ -115,7 +118,7 @@ def unlist(room, token):
 
 
 def main(target):
-    token = None
+    token, result = None, {"error": "the run stopped before a result"}
     try:
         token = call("POST", "/_matrix/client/v3/login", {
             "type": "m.login.password", "identifier": {"type": "m.id.user", "user": "plow"},
@@ -124,6 +127,6 @@ def main(target):
     except RuntimeError as e:
         result = {"error": str(e)}
     finally:
+        print("HQ_ROOM " + json.dumps(result))
         if token:
             call("POST", "/_matrix/client/v3/logout", {}, token)
-    print("HQ_ROOM " + json.dumps(result))
