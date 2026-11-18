@@ -4,7 +4,7 @@ Agents can't delete a room on HQ, and its owners' Delete room refuses agents,
 so this runs the one admin call the ops account's how-to describes: an ECS
 exec into HQ's synapse task (AWS profile `plow`), where `hq_room_task.py`
 logs in as `@plow` from the task's environment, checks the approver's 🗑️ on
-an agent's prompt in that room, retires it with purge off, reads it back and
+the prompt `ask` recorded, retires the room with purge off, reads it back and
 logs out. Purge is not offered: it needs a person's written go and a hand-run
 call. Who approves, which agents may prompt, and which rooms are kept come
 from the operator's private settings. Each use is appended to a private log.
@@ -42,6 +42,32 @@ def log_path() -> Path:
     return state_root() / "hq-room.log"
 
 
+def private_write(path: Path, text: str, mode: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with os.fdopen(os.open(path, mode | os.O_WRONLY | os.O_CREAT, 0o600), "w") as f:
+        f.write(text)
+
+
+def asks() -> dict:
+    path = state_root() / "hq-room-asks.json"
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
+def save_asks(recorded: dict) -> None:
+    private_write(state_root() / "hq-room-asks.json", json.dumps(recorded), os.O_TRUNC)
+
+
+def ask(target: str, prompt: str) -> dict:
+    """Record `prompt`, the event id of the retire prompt the agent just sent in
+    `target` with swarm's send (kitchen can't post into an encrypted room), as
+    the one the approver's 🗑️ must answer. A later ask for the room replaces it."""
+    check(target, prompt, "the prompt you sent")
+    recorded = {"prompt": prompt, "at": int(time.time() * 1000)}
+    save_asks({**asks(), target: recorded})
+    append_log("ask", prompt, target, recorded)
+    return recorded
+
+
 def task_command(target: str, asked_in: str, rules: dict) -> str:
     """The container's command: the task script with its call appended,
     compressed and base64'd, since the exec shell-parses what it is given."""
@@ -70,23 +96,30 @@ def parse(output: str) -> dict:
     raise SystemExit("The task printed no result; its output ends:\n" + "\n".join(output.splitlines()[-15:]))
 
 
-def append_log(asked_in: str, target: str, result: dict) -> None:
-    path = log_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-    with os.fdopen(fd, "a") as f:
-        f.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "by": os.environ.get("AGENT_NAME") or getpass.getuser(),
-                            "action": "retire (irreversible)", "asked_in": asked_in, "target": target, "result": result}) + "\n")
+def append_log(action: str, event_id: str, target: str, result: dict) -> None:
+    private_write(log_path(), json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "by": os.environ.get("AGENT_NAME") or getpass.getuser(),
+                                          "action": action, "event": event_id, "target": target, "result": result}) + "\n", os.O_APPEND)
+
+
+def check(target: str, event_id: str, what: str) -> None:
+    if not TARGET.fullmatch(target):
+        raise SystemExit(f"{target} is not an HQ room: give one !roomid or #alias:plow.co.")
+    if not EVENT.fullmatch(event_id):
+        raise SystemExit(f"{event_id} is not an event id ($...): give {what}.")
 
 
 def retire(target: str, asked_in: str) -> dict:
-    if not TARGET.fullmatch(target):
-        raise SystemExit(f"{target} is not an HQ room: give one !roomid or #alias:plow.co.")
-    if not EVENT.fullmatch(asked_in):
-        raise SystemExit(f"{asked_in} is not an event id ($...): give the approver's 🗑️ reaction.")
+    """Retire `target` on the approver's 🗑️ `asked_in`. The recorded ask is used
+    up by the attempt, whatever its result."""
+    check(target, asked_in, "the approver's 🗑️ reaction")
+    recorded = asks()
+    if target not in recorded:
+        raise SystemExit(f"No recorded ask for {target}: send the prompt, then run `kitchen hq-room ask {target} --prompt <its event id>`.")
+    pending = recorded.pop(target)
+    save_asks(recorded)
     result = {"error": "no result from the task"}
     try:
-        result = parse(run_in_task(task_command(target, asked_in, rules())))
+        result = parse(run_in_task(task_command(target, asked_in, {**rules(), "ask": pending})))
         return result
     finally:
-        append_log(asked_in, target, result)
+        append_log("retire (irreversible)", asked_in, target, result)

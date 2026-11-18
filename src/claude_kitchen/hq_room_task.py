@@ -3,8 +3,9 @@
 `hq_room.py` sends this file with a `main(<target>, <reaction event id>, <rules>)`
 call appended. It logs in from the task's own environment and refuses unless
 the room is an ordinary one Sam or his agents made on HQ, kept by no rule, and
-the approver confirmed it there: a 🗑️ reaction, under a day old, on a prompt one
-of his agents sent in that room under a day ago. Swarm's rooms are encrypted,
+the approver confirmed it there: a 🗑️ reaction on the retire prompt one of his
+agents sent in that room under 30 minutes ago and recorded with `kitchen
+hq-room ask`, made after that record. Swarm's rooms are encrypted,
 so no message text can be read here; reactions travel in plaintext, and the
 room they sit in names the target. Then it makes the one admin call with purge
 off, reads the room back, logs out, and prints one `HQ_ROOM <json>` line.
@@ -22,7 +23,7 @@ BASE = "http://localhost:8008"
 # Rooms swarm itself keeps: the Spaces, #general, the Admin log and its own room.
 CORE_ALIASES = ("general", "admin-log", "swarm-module", "rooms", "guests")
 CONFIRM_KEYS = ("🗑️", "🗑")
-DAY_MS = 24 * 3600 * 1000
+WINDOW_MS = 30 * 60 * 1000
 q = lambda s: urllib.parse.quote(s, safe="")
 
 
@@ -91,13 +92,16 @@ def unconfirmed(room, asked_in, rules, token):
         return f"the 🗑️ is {reaction['sender']}'s, not {rules['approver']}'s"
     if reaction["room_id"] != room:
         return "the 🗑️ is in another room: it must sit in the room it retires"
-    if now - reaction["origin_server_ts"] > DAY_MS:
-        return "the 🗑️ is over a day old"
-    prompt = event(relates["event_id"], token)
+    ask = rules["ask"]
+    if relates.get("event_id") != ask["prompt"]:
+        return "the 🗑️ is not on the prompt recorded by `kitchen hq-room ask`"
+    if reaction["origin_server_ts"] < ask["at"]:
+        return "the 🗑️ predates the recorded ask"
+    prompt = event(ask["prompt"], token)
     if not prompt or prompt["room_id"] != room or prompt["sender"] not in rules["agents"]:
-        return "the 🗑️ is not on a prompt one of the approver's agents sent in this room"
-    if now - prompt["origin_server_ts"] > DAY_MS:
-        return "the prompt is over a day old"
+        return "the recorded prompt is not one of the approver's agents' in this room"
+    if now - prompt["origin_server_ts"] > WINDOW_MS:
+        return "the prompt is over 30 minutes old: ask again"
     return None
 
 
