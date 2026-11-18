@@ -1,7 +1,7 @@
 swarm\.plow\.co
 @[a-z0-9]{10}:plow\.co
 America/Los_Angeles
-/home/(?!u/|you/)[a-z]+/
+/home/(?!u/|you/)[A-Za-z0-9._-]+/
 [A-Za-z0-9._%+-]+@(odio\.(dev|com|email)|plow\.co)
 \bSam\b
 \bAbby\b

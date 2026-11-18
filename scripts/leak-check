@@ -16,7 +16,7 @@ files = subprocess.check_output(["git", "ls-files", "-z"], cwd=root, text=True).
 
 hits = 0
 for path in files:
-    if not path or path in (patterns_file, "LICENSE") or path.startswith(".github/"):
+    if not path or path in (patterns_file, "LICENSE"):
         continue
     try:
         lines = (root / path).read_text(encoding="utf-8").splitlines()
