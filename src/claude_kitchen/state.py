@@ -391,7 +391,7 @@ def with_digest(base: Path, content: str) -> str:
     if cooks:
         lines += ["♨️ Waiting on cooks:"] + [f"- {cook} · {r['message']} · {_age(r['opened_at'])}" for r, cook in cooks]
     if waits:
-        lines += ["🍗 Waiting on others:"] + [
+        lines += ["⏲️ Waiting on others:"] + [
             f"- {w['on']} · {w['message']}{' · ' + w['note'] if w['note'] else ''} · {_age(w['opened_at'])}" for w in waits]
     return "\n".join(lines + ["", content]) if lines else content
 

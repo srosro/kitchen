@@ -514,7 +514,7 @@ def test_digest_lists_what_the_sous_owes_oldest_first(tmp_path):
     write_waits(tmp_path, [{"message": "swarm !r $b", "opened_at": ago(minutes=1), "on": "robin", "note": None},
                            {"message": "swarm !r $a", "opened_at": ago(days=2), "on": "jordan", "note": "the OK"}])
     assert with_digest(tmp_path, "report").split("\n\n")[0].endswith(
-        "🍗 Waiting on others:\n- jordan · swarm !r $a · the OK · 2d\n- robin · swarm !r $b · 1m")
+        "⏲️ Waiting on others:\n- jordan · swarm !r $a · the OK · 2d\n- robin · swarm !r $b · 1m")
 
 
 def test_concurrent_waits_all_survive(tmp_path, monkeypatch):
