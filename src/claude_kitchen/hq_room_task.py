@@ -46,7 +46,7 @@ def core_rooms(token):
     core = {}
     for alias in [f"#{a}:{SERVER}" for a in CORE_ALIASES]:
         core[found(resolve(alias, token), alias)] = alias.split(":")[0]
-    general = found(resolve(f"#general:{SERVER}", token), "#general")
+    general = next(room for room, alias in core.items() if alias == "#general")
     listed = found(call("GET", f"/_matrix/client/v3/rooms/{q(general)}/state/swarm.common_rooms/", token=token)[1], "swarm.common_rooms")
     for alias in listed["rooms"]:
         core.setdefault(found(resolve(alias, token), alias), f"{alias} (a common room)")
