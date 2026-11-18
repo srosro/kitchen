@@ -41,7 +41,7 @@ def synapse(monkeypatch):
             if any(m == self.command and b in path for m, b in broken):
                 return self.reply(500, {"errcode": "M_UNKNOWN"})
             route = {
-                ("POST", "/_matrix/client/v3/login"): lambda: (200, {"access_token": "tok"}),
+                ("POST", "/_matrix/client/v3/login"): lambda: (200, {"access_token": "syt_fake9f2"}),
                 ("POST", "/_matrix/client/v3/logout"): lambda: (200, {}),
             }.get((self.command, path))
             if route:
@@ -77,7 +77,7 @@ def synapse(monkeypatch):
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     monkeypatch.setattr(hq_room_task, "BASE", f"http://127.0.0.1:{server.server_port}")
-    monkeypatch.setenv("SWARM_PLOW_PASSWORD", "pw")
+    monkeypatch.setenv("SWARM_PLOW_PASSWORD", "pw-fake7c1")
     seen.broken = broken
     yield seen
     server.shutdown()
@@ -86,7 +86,7 @@ def synapse(monkeypatch):
 def run(target, capsys):
     hq_room_task.main(target)
     out = capsys.readouterr().out
-    assert "tok" not in out and "pw" not in out
+    assert "syt_fake9f2" not in out and "pw-fake7c1" not in out
     return hq_room.parse(out)
 
 
@@ -123,7 +123,8 @@ def test_a_target_off_hq_never_reaches_aws(monkeypatch, target):
                                             (("POST", "/logout"), True)])
 def test_a_failed_lookup_or_step_is_reported_as_an_error_and_still_logs_out(synapse, capsys, broken, changed):
     synapse.broken.add(broken)
-    assert "500" in run("#work:plow.co", capsys)["error"]
+    result = run("#work:plow.co", capsys)
+    assert "500" in f"{result.get('error')} {result.get('logout_error')}"
     assert bool([m for m, p, _ in synapse if m == "DELETE" and "admin" in p]) == changed
     assert synapse[-1][:2] == ("POST", "/_matrix/client/v3/logout")
 

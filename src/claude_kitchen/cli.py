@@ -1791,7 +1791,7 @@ def main():
         from claude_kitchen.hq_room import retire
         result = retire(args.room, args.asked_by)
         print(json.dumps(result, indent=2))
-        sys.exit(0 if result.get("status") == "complete" and not result.get("error") else 1)
+        sys.exit(0 if result.get("status") == "complete" and not (result.get("error") or result.get("logout_error")) else 1)
     elif args.command in ("hook", "hook-codex", "hook-agy"):
         cmd_hook(args)
     elif args.command == "consult-gate":

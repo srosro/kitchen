@@ -131,5 +131,5 @@ def main(target):
             try:
                 call("POST", "/_matrix/client/v3/logout", {}, token)
             except Exception as e:
-                result = {**result, "error": result.get("error") or f"logout failed, the token may still be live: {e}"}
+                result = {**result, "logout_error": f"the token may still be live: {e}"}
         print("HQ_ROOM " + json.dumps(result))
