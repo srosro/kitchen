@@ -1,0 +1,15 @@
+name: leak-check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  leak-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/leak-check
+        env:
+          LEAK_CHECK_ENFORCE: "1"

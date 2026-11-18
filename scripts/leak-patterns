@@ -1,0 +1,14 @@
+swarm\.plow\.co
+@[a-z0-9]{10}:plow\.co
+America/Los_Angeles
+/home/(?!u/|you/)[a-z]+/
+[A-Za-z0-9._%+-]+@(odio\.(dev|com|email)|plow\.co)
+\bSam\b
+\bAbby\b
+\bMary\b
+\bRowan\b
+\bPatrick\b
+\bDaniel\b
+#[a-z0-9-]+:plow\.co
+#im-blocked
+#so-[a-z]
