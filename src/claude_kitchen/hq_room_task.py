@@ -127,6 +127,9 @@ def main(target):
     except RuntimeError as e:
         result = {"error": str(e)}
     finally:
-        print("HQ_ROOM " + json.dumps(result))
         if token:
-            call("POST", "/_matrix/client/v3/logout", {}, token)
+            try:
+                call("POST", "/_matrix/client/v3/logout", {}, token)
+            except Exception as e:
+                result = {**result, "error": result.get("error") or f"logout failed, the token may still be live: {e}"}
+        print("HQ_ROOM " + json.dumps(result))

@@ -119,7 +119,8 @@ def test_a_target_off_hq_never_reaches_aws(monkeypatch, target):
         hq_room.retire(target, "Sam")
 
 
-@pytest.mark.parametrize("broken, changed", [(("GET", "swarm.common_rooms"), False), (("DELETE", "/directory/room/#work"), True)])
+@pytest.mark.parametrize("broken, changed", [(("GET", "swarm.common_rooms"), False), (("DELETE", "/directory/room/#work"), True),
+                                            (("POST", "/logout"), True)])
 def test_a_failed_lookup_or_step_is_reported_as_an_error_and_still_logs_out(synapse, capsys, broken, changed):
     synapse.broken.add(broken)
     assert "500" in run("#work:plow.co", capsys)["error"]
