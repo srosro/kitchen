@@ -204,7 +204,7 @@ class TestWaitForPrompt:
         with pytest.raises(PromptBlocked) as e:
             wait_for_prompt("ck-x", "eng", "claude", timeout=5)
         assert f"one-time {name} prompt" in str(e.value)
-        assert "cd '/home/r x' && claude --dangerously-skip-permissions" in str(e.value)
+        assert "cd '/home/r x' && claude --permission-mode auto" in str(e.value)
         assert not any(c.args[0] == "send-keys" for c in mock_tmux.call_args_list)
 
     @patch("claude_kitchen.tmux.time.sleep", return_value=None)

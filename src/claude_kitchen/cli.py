@@ -965,6 +965,10 @@ def cmd_hook(args):
         _record_pause(base, name, event, payload)
         if event == "Stop":
             _warn_weekly_usage(base)
+        if event == "Notification" and payload.get("notification_type") == "permission_prompt":
+            # Auto mode asks again after repeated blocks, and nobody watches an agent: swarm's running mcp
+            # tells the owner in one DM, with the command that opens this kitchen.
+            _swarm_login_hook(kitchen, json.dumps({**payload, "attach": f"kitchen attach {kitchen}"}))
 
     if name == "sous":
         # Sous hook is otherwise a no-op — prevents echo loops where the sous's
@@ -1358,6 +1362,7 @@ OWNED_HOOKS = (
     ("PreToolUse", "Bash", _hook("roborev-pre-push-gate.py"), 660),
     ("PreToolUse", "Bash", _hook("roborev-pre-checkout-gate.py"), None),
     ("PreToolUse", "mcp__swarm.*__send", "kitchen consult-gate", None),
+    ("Notification", "permission_prompt", "kitchen hook", None),
 )
 
 
@@ -1586,8 +1591,8 @@ def cmd_setup(args):
     # --- stray root-level .mcp.json (auto-remove; §Design.4 landmine) ---
     # A `.mcp.json` at the state root is an ancestor of every cook cwd, so a
     # cook walking up the tree auto-discovers it and spawns a rogue
-    # channel-server (cooks launch with --dangerously-skip-permissions, so the
-    # MCP approval gate doesn't protect them). Layer 1 stops it being recreated;
+    # channel-server (cooks launch unattended, so nobody answers the
+    # MCP approval prompt for them). Layer 1 stops it being recreated;
     # this removes a stale one left from before the fix. Only the literal
     # state-root `.mcp.json` is touched — per-kitchen `kitchen-mcp.json` configs
     # are left alone.

@@ -206,7 +206,7 @@ class PromptBlocked(Exception):
     def __str__(self):
         return (f"Claude Code is waiting on its one-time {self.prompt} prompt. "
                 f"Accept it once by hand — `cd {shlex.quote(self.cwd)} && claude "
-                f"--dangerously-skip-permissions`, answer yes, then /exit — and retry")
+                f"--permission-mode auto`, answer yes, then /exit — and retry")
 
 # Busy markers: a regex present in the pane tail while the agent is mid-turn,
 # gone when it's idle at the prompt. Backend-specific and confirmed empirically

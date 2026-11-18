@@ -126,7 +126,7 @@ class TestHook:
         assert [p.get("chat_message") for p in pushes] == (["swarm !room $evt"] if owes_a_chat else [])
 
     def _dead_login(self, monkeypatch, tmp_path, event="StopFailure", line=False, swarm_exit=0,
-                    error="authentication_failed"):
+                    error="authentication_failed", payload=None, agent="sous"):
         """`kitchen hook` on `event` in kitchen risotto, whose account lives in its own
         SWARM_HOME, with a fake `swarm` that records its argv, SWARM_HOME and stdin and
         exits `swarm_exit`. Returns the owner's Plow chat texts and the hook input."""
@@ -149,12 +149,12 @@ class TestHook:
             (kitchen / "plow-chat" / "plow-credentials").write_text("t")
         texts = []
         monkeypatch.setattr("claude_kitchen.plow_chat.tell_owner", lambda _k, text: texts.append(text))
-        monkeypatch.setenv("AGENT_NAME", "sous")
+        monkeypatch.setenv("AGENT_NAME", agent)
         monkeypatch.setenv("AGENT_KITCHEN", "risotto")
         monkeypatch.setenv("STATUS_DIR", str(kitchen))
         said = {"authentication_failed": "Login expired · Please run /login",
                 "rate_limit": "You've hit your weekly limit · resets Nov 20 at 2am (America/Los_Angeles)"}[error]
-        payload = {"hook_event_name": event, "error": error, "session_id": "s1", "last_assistant_message": said}
+        payload = payload or {"hook_event_name": event, "error": error, "session_id": "s1", "last_assistant_message": said}
         _stdin_payload(monkeypatch, **payload)
         cmd_hook(argparse.Namespace(command="hook"))
         return texts, payload
@@ -179,6 +179,22 @@ class TestHook:
             assert json.loads((tmp_path / "stdin").read_text()) == payload
         else:
             assert not (tmp_path / "argv").exists()
+
+    @pytest.mark.parametrize("agent", ["sous", "eng"])
+    def test_a_permission_prompt_goes_to_swarm_with_the_command_that_opens_the_agent(self, monkeypatch, tmp_path, agent):
+        """In auto mode, repeated blocks make Claude ask again, and an agent nobody watches would wait silently
+        (Boss, 11-18). Its Notification hook (permission_prompt) goes to `swarm login-hook`, whose running
+        `swarm mcp` DMs the owner, with `attach`, the command that opens this kitchen. Other notifications don't."""
+        prompt = {"hook_event_name": "Notification", "notification_type": "permission_prompt", "session_id": "s1",
+                  "message": "Claude needs your permission to use Bash"}
+        texts, sent = self._dead_login(monkeypatch, tmp_path, payload=dict(prompt), agent=agent)
+        assert texts == []
+        assert (tmp_path / "argv").read_text() == "login-hook\n"
+        assert json.loads((tmp_path / "stdin").read_text()) == {**prompt, "attach": "kitchen attach risotto"}
+        (tmp_path / "argv").unlink()
+        _stdin_payload(monkeypatch, **{**prompt, "notification_type": "idle_prompt"})
+        cmd_hook(argparse.Namespace(command="hook"))
+        assert not (tmp_path / "argv").exists()
 
     def test_a_usage_limit_shows_paused_until_its_reset_in_brigade_until_a_turn_ends_well(
             self, monkeypatch, tmp_path, capsys):
@@ -2336,7 +2352,7 @@ class TestCmdSetupHooks:
         for name in ("capture-prompt.sh", "capture-answer.sh", "roborev-pre-commit-context.py",
                      "roborev-pre-push-gate.py", "roborev-pre-checkout-gate.py"):
             assert commands.count(str(HOOKS / name)) == 1, name
-        assert commands.count("kitchen hook") == 3  # Stop, StopFailure + UserPromptSubmit
+        assert commands.count("kitchen hook") == 4  # Stop, StopFailure, UserPromptSubmit + Notification (permission_prompt)
         push = [h for g in data["hooks"]["PreToolUse"] for h in g["hooks"] if h["command"].endswith("roborev-pre-push-gate.py")]
         assert push == [{"type": "command", "command": str(HOOKS / "roborev-pre-push-gate.py"), "timeout": 660}]
         assert settings.stat().st_mode & 0o777 == 0o640

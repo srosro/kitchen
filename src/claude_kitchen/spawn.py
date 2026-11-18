@@ -109,7 +109,7 @@ def spawn_sous(kitchen: str, state_dir: Path, sous_prompt: str,
     # shell quoting is involved; the space never splits it.
     claude_args = [
         "claude",
-        "--dangerously-skip-permissions",
+        "--permission-mode", "auto",  # a risky call is denied and the sous goes on; a fallback to asking DMs its owner
         "--dangerously-load-development-channels", *channel_flags(kitchen),
         "--mcp-config", str(state_dir / MCP_CONFIG_NAME),
         f"--remote-control=[sous] {kitchen}",
@@ -229,7 +229,7 @@ def build_shell_cmd(backend: str, name: str, kitchen: str, status_dir: str,
         # head chef's phone to "kitchen/<cook>".
         rc_name = f"{kitchen}/{name}"
         rc_flag = f" {q('--remote-control=' + rc_name)}" if WINDOWS else f" --remote-control={q(rc_name)}"
-        flags = f"--dangerously-skip-permissions --disallowedTools AskUserQuestion{rc_flag}{effort_flag}{model_flag}{settings_flag}{plugin_flags}{role_flag}"
+        flags = f"--permission-mode auto --disallowedTools AskUserQuestion{rc_flag}{effort_flag}{model_flag}{settings_flag}{plugin_flags}{role_flag}"
         if WINDOWS:  # `exit`: the window closes with claude, as `exec` makes it on Unix
             script = ("$d = { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($args[0])) }; "
                       + "".join(f"$env:{k} = {q(v)}; " for k, v in env_vars.items()) + f"& claude.exe {flags}")

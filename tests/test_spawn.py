@@ -30,7 +30,7 @@ class TestBuildShellCmd:
             status_dir="/tmp/state",
         )
         assert "claude" in cmd
-        assert "--dangerously-skip-permissions" in cmd
+        assert "--permission-mode auto" in cmd and "--dangerously-skip-permissions" not in cmd
         assert "AGENT_NAME=" in cmd
         assert "eng" in cmd
 
@@ -363,6 +363,17 @@ class TestSpawnSous:
 
     @patch("claude_kitchen.spawn.os.chdir")
     @patch("claude_kitchen.spawn.os.execvp")
+    def test_sous_runs_in_auto_permission_mode(self, mock_exec, mock_chdir, tmp_path, monkeypatch):
+        """Auto mode, not skip-permissions (Yoram's install call, 11-18): a risky call is denied and the sous goes on."""
+        for k in ("AGENT_NAME", "AGENT_SESSION", "STATUS_DIR"):
+            monkeypatch.setenv(k, "")
+        spawn_sous("risotto", tmp_path, "prompt", slug="gh-x-y")
+        argv = mock_exec.call_args.args[1]
+        assert argv[argv.index("--permission-mode") + 1] == "auto"
+        assert "--dangerously-skip-permissions" not in argv
+
+    @patch("claude_kitchen.spawn.os.chdir")
+    @patch("claude_kitchen.spawn.os.execvp")
     def test_remote_control_named_with_kitchen(
         self, mock_exec, mock_chdir, tmp_path, monkeypatch,
     ):
@@ -560,7 +571,7 @@ class TestModelSelection:
         exec_argv = toks[toks.index("exec") + 1:]
         assert exec_argv == [
             "claude",
-            "--dangerously-skip-permissions",
+            "--permission-mode", "auto",
             "--disallowedTools", "AskUserQuestion",
             "--remote-control=r/eng",
         ]
@@ -661,7 +672,7 @@ def test_windows_claude_cook_never_puts_a_value_in_powershell_source(monkeypatch
     values = [base64.b64decode(v).decode() for v in re.findall(r"'([A-Za-z0-9+/=]*)'", script)]
     assert tricky in values and f"--remote-control={tricky}/eng" in values and "high" in values
     assert r"C:\roles\eng.md" in values
-    assert "& claude.exe --dangerously-skip-permissions --disallowedTools AskUserQuestion" in script
+    assert "& claude.exe --permission-mode auto --disallowedTools AskUserQuestion" in script
 
 
 def test_windows_kitchen_open_never_signals_a_live_sous(tmp_path, monkeypatch):
