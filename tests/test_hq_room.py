@@ -8,15 +8,19 @@ import pytest
 
 from claude_kitchen import hq_room, hq_room_task
 
-ROOMS = {"!general": None, "!feedback": None, "!space": "m.space", "!team-space": "m.space", "!guests": "m.space", "!work": None}
-ALIASES = {"#general:plow.co": "!general", "#plow-feedback:plow.co": "!feedback", "#rooms:plow.co": "!space", "#guests:plow.co": "!guests",
+ROOMS = {"!general": None, "!log": None, "!module": None, "!feedback": None, "!space": "m.space", "!team-space": "m.space", "!guests": "m.space", "!work": None}
+ALIASES = {"#general:plow.co": "!general", "#admin-log:plow.co": "!log", "#swarm-module:plow.co": "!module", "#plow-feedback:plow.co": "!feedback", "#rooms:plow.co": "!space", "#guests:plow.co": "!guests",
            "#work:plow.co": "!work"}
+
+
+class Requests(list):
+    """Each request the fake saw, and `broken`: (method, path part) pairs it answers with a 500."""
 
 
 @pytest.fixture
 def synapse(monkeypatch):
     """A fake Synapse: records every request, serves the reads the task makes."""
-    seen, aliases, children = [], dict(ALIASES), {"!work": {"via": ["plow.co"]}}
+    seen, aliases, children, broken = Requests(), dict(ALIASES), {"!work": {"via": ["plow.co"]}}, set()
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -34,6 +38,8 @@ def synapse(monkeypatch):
             path = unquote(self.path)
             body = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)) or b"null")
             seen.append((self.command, path, body))
+            if any(m == self.command and b in path for m, b in broken):
+                return self.reply(500, {"errcode": "M_UNKNOWN"})
             route = {
                 ("POST", "/_matrix/client/v3/login"): lambda: (200, {"access_token": "tok"}),
                 ("POST", "/_matrix/client/v3/logout"): lambda: (200, {}),
@@ -72,6 +78,7 @@ def synapse(monkeypatch):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     monkeypatch.setattr(hq_room_task, "BASE", f"http://127.0.0.1:{server.server_port}")
     monkeypatch.setenv("SWARM_PLOW_PASSWORD", "pw")
+    seen.broken = broken
     yield seen
     server.shutdown()
 
@@ -110,3 +117,11 @@ def test_a_target_off_hq_never_reaches_aws(monkeypatch, target):
     monkeypatch.setattr(hq_room, "run_in_task", lambda _: pytest.fail("reached AWS"))
     with pytest.raises(SystemExit, match="not an HQ room"):
         hq_room.retire(target, "Sam")
+
+
+@pytest.mark.parametrize("broken, changed", [(("GET", "swarm.common_rooms"), False), (("DELETE", "/directory/room/#work"), True)])
+def test_a_failed_lookup_or_step_is_reported_as_an_error_and_still_logs_out(synapse, capsys, broken, changed):
+    synapse.broken.add(broken)
+    assert "500" in run("#work:plow.co", capsys)["error"]
+    assert bool([m for m, p, _ in synapse if m == "DELETE" and "admin" in p]) == changed
+    assert synapse[-1][:2] == ("POST", "/_matrix/client/v3/logout")

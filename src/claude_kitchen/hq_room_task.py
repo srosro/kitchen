@@ -20,6 +20,7 @@ q = lambda s: urllib.parse.quote(s, safe="")
 
 
 def call(method, path, body=None, token=None):
+    """(status, body) for a 200 or a 404; any other answer stops the run."""
     req = urllib.request.Request(BASE + path, method=method,
                                  data=None if body is None else json.dumps(body).encode(),
                                  headers={"content-type": "application/json",
@@ -28,7 +29,9 @@ def call(method, path, body=None, token=None):
         with urllib.request.urlopen(req) as r:
             return r.status, json.load(r)
     except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read() or b"{}")
+        if e.code != 404:
+            raise RuntimeError(f"{method} {path.split('?')[0]}: {e.code} {e.read()[:300].decode(errors='replace')}")
+        return 404, {}
 
 
 def resolve(alias, token):
@@ -38,14 +41,22 @@ def resolve(alias, token):
 
 def core_rooms(token):
     """Which rooms swarm keeps, as the server lists them: the core aliases and
-    the common rooms #general names in its `swarm.common_rooms`."""
-    core = {resolve(f"#{a}:{SERVER}", token): f"#{a}" for a in CORE_ALIASES}
-    general = next(r for r, a in core.items() if a == "#general")
-    status, listed = call("GET", f"/_matrix/client/v3/rooms/{q(general)}/state/swarm.common_rooms/", token=token)
-    for alias in listed.get("rooms", []) if status == 200 else []:
-        core.setdefault(resolve(alias, token), f"{alias} (a common room)")
-    core.pop(None, None)
+    the common rooms #general names in its `swarm.common_rooms`. Any of them
+    not found stops the run, so a failed lookup never lets one through."""
+    core = {}
+    for alias in [f"#{a}:{SERVER}" for a in CORE_ALIASES]:
+        core[found(resolve(alias, token), alias)] = alias.split(":")[0]
+    general = found(resolve(f"#general:{SERVER}", token), "#general")
+    listed = found(call("GET", f"/_matrix/client/v3/rooms/{q(general)}/state/swarm.common_rooms/", token=token)[1], "swarm.common_rooms")
+    for alias in listed["rooms"]:
+        core.setdefault(found(resolve(alias, token), alias), f"{alias} (a common room)")
     return core
+
+
+def found(value, what):
+    if not value:
+        raise RuntimeError(f"{what} not found on HQ: refusing, since its core rooms can't be told")
+    return value
 
 
 def snapshot(room, token):
@@ -104,14 +115,15 @@ def unlist(room, token):
 
 
 def main(target):
-    status, login = call("POST", "/_matrix/client/v3/login", {
-        "type": "m.login.password", "identifier": {"type": "m.id.user", "user": "plow"},
-        "password": os.environ["SWARM_PLOW_PASSWORD"], "initial_device_display_name": "ops kitchen hq-room"})
-    if status != 200:
-        print("HQ_ROOM " + json.dumps({"error": {"login": status, **{k: login.get(k) for k in ("errcode", "error")}}}))
-        return
-    token = login["access_token"]
+    token = None
     try:
-        print("HQ_ROOM " + json.dumps(retire(target, token)))
+        token = call("POST", "/_matrix/client/v3/login", {
+            "type": "m.login.password", "identifier": {"type": "m.id.user", "user": "plow"},
+            "password": os.environ["SWARM_PLOW_PASSWORD"], "initial_device_display_name": "ops kitchen hq-room"})[1]["access_token"]
+        result = retire(target, token)
+    except RuntimeError as e:
+        result = {"error": str(e)}
     finally:
-        call("POST", "/_matrix/client/v3/logout", {}, token)
+        if token:
+            call("POST", "/_matrix/client/v3/logout", {}, token)
+    print("HQ_ROOM " + json.dumps(result))
