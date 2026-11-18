@@ -732,7 +732,7 @@ async def introduction(client: httpx.AsyncClient) -> str | None:
     can't be read at start: a server that dies here takes the line down for the
     whole session, so it starts without the name and says so in the log."""
     try:
-        r = await client.get("/v1/agents/me")
+        r = await client.get("/v1/agents/me", timeout=5)  # inside the harness's MCP start-up window
         r.raise_for_status()
     except httpx.HTTPError as e:
         log(f"reading the line failed ({type(e).__name__}); starting without its name")
