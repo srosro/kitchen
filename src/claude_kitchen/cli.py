@@ -1815,7 +1815,7 @@ def main():
         result = invoke(args.action, args.room, (args.prompt if args.action == "ask" else args.asked_in) or "")
         print(json.dumps(result, indent=2))
         if args.action == "ask":
-            sys.exit(0 if "prompt" in result else 1)
+            sys.exit(0 if result.get("prompt") == args.prompt else 1)
         sys.exit(0 if result.get("status") == "complete" and not (result.get("error") or result.get("logout_error")) else 1)
     elif args.command in ("hook", "hook-codex", "hook-agy"):
         cmd_hook(args)
