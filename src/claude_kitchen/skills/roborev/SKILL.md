@@ -40,8 +40,8 @@ Commit in small, reviewable increments so the daemon can process each focused ch
 Current-branch commands cannot reveal failures left in another repository, clone, or branch. Run the read-only helper explicitly when checking the whole machine:
 
 ```sh
-python3 <this skill's directory>/../../hooks/roborev-list-all.py
-python3 <this skill's directory>/../../hooks/roborev-list-all.py --json
+python3 ~/.claude/skills/roborev/../../hooks/roborev-list-all.py
+python3 ~/.claude/skills/roborev/../../hooks/roborev-list-all.py --json
 ```
 
 Resolve stale findings you authored. Do not close recent findings that another session may still be handling; when uncertain, leave them open.
