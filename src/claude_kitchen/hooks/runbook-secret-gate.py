@@ -9,7 +9,8 @@ written. A Bash command is gated whole when it mentions a wiki without any
 shell parsing: its text contains a spelling of a wiki root (as configured,
 expanded, resolved, `$PERSONAL_RUNBOOK`, or relative to the session's cwd), the
 cwd is inside a wiki, or a word in it resolves into one (a symlinked alias).
-What it then scans is
+Words come from a crude split plus, when the command parses, its quoted words
+(`"my notes.txt"`). What it then scans is
 everything the command can see without running: its text, that text with the
 environment expanded (`printf "$TOKEN" > …`), and every file outside the wikis it
 names (`cp ~/.env …`, `cat creds >> …`). That over-blocks a read like
@@ -28,6 +29,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _roborev_hooklib import _split_into_segments
 from _secret_patterns import contains_secret
 
 ROOT_KEYS = ("PERSONAL_RUNBOOK", "COMPANY_RUNBOOK")
@@ -94,7 +96,8 @@ def main() -> int:
         return 0
     if tool == "Bash":
         command, here = args.get("command") or "", Path(cwd).resolve()
-        paths = [_resolve(w, variables, cwd) for w in set(WORD_BREAK.split(command)) if w]
+        words = set(WORD_BREAK.split(command)) | {w for seg in _split_into_segments(command) for w in seg}
+        paths = [_resolve(w, variables, cwd) for w in words if w]
         hit = (_in_wiki(here, roots) or any(_in_wiki(p, roots) for p in paths)
                or any(s in command for k, (v, root) in named.items() for s in _spellings(k, v, root, here)))
         text = "\n".join([command, os.path.expandvars(command),

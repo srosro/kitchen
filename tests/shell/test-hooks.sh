@@ -65,6 +65,8 @@ assert_eq deny "$(gate Bash "$(jq -nc --arg c "echo $planted >> ~/wiki/plowco/ki
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "printf %s $planted > \$PERSONAL_RUNBOOK/runbooks/pa.md" '{command:$c}')")" "gate: Bash writing a secret via \$PERSONAL_RUNBOOK is denied"
 printf 'TOKEN=%s\n' "$planted" > "$GATE_HOME/dot.env"
 assert_eq deny "$(gate Bash "$(jq -nc '{command:"cp ~/dot.env ~/wiki/personal/runbooks/ea.md"}')")" "gate: Bash copying a file that holds a secret into a wiki is denied"
+cp "$GATE_HOME/dot.env" "$GATE_HOME/account notes.txt"
+assert_eq deny "$(gate Bash "$(jq -nc '{command:"cp \"$HOME/account notes.txt\" \"$PERSONAL_RUNBOOK/runbooks/ea.md\""}')")" "gate: a quoted source filename with spaces is still scanned"
 assert_eq deny "$(PLANTED="$planted" gate Bash "$(jq -nc '{command:"printf %s \"$PLANTED\" >> ~/wiki/plowco/kitchen.md"}')")" "gate: Bash writing a secret from the environment is denied"
 mkdir -p "$GATE_HOME/Team Wiki/runbooks"; printf 'COMPANY_RUNBOOK="%s/Team Wiki"\n' "$GATE_HOME" >> "$GATE_HOME/.config/kitchen/operator.env"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "printf 'password=example-value' > \"$GATE_HOME/Team Wiki/note.md\"" '{command:$c}')")" "gate: a quoted wiki path with spaces is still a wiki"
