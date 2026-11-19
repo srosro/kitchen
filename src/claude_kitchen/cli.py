@@ -1067,8 +1067,9 @@ def cmd_hook(args):
         return
     if "chat_message" in final:
         from claude_kitchen.plow_chat import DONE, mark
-        push["chat_message"] = mark(kitchen, final.pop("chat_message"), DONE)["message"]
-        write_status(base, name, final)
+        answered = final.pop("chat_message")
+        write_status(base, name, final)  # before the mark: a ticket taken meanwhile writes its own
+        push["chat_message"] = mark(kitchen, answered, DONE)["message"]
     ctx = _ctx_for_channel(final.get("tokens"))
     if ctx:
         push["ctx"] = ctx

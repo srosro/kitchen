@@ -667,7 +667,10 @@ def mark(kitchen: str, record: dict, emoji: str) -> dict:
     Best effort: a failure is logged and the ticket or report goes on."""
     try:
         source, chat, message = record["message"].split(maxsplit=2)
-        if source == "swarm" and (account := swarm_account(kitchen)):
+        # The kitchen's account on the room's server, else its own (a room id may name no server).
+        server = ":" + chat.rpartition(":")[2]
+        account = next((a for a in swarm_accounts(kitchen) if a["user_id"].endswith(server)), swarm_account(kitchen))
+        if source == "swarm" and account:
             room = chat if chat.startswith("!") else matrix_get(account, f"/directory/room/{quote(chat, safe='')}")["room_id"]
             path = f"/rooms/{quote(room, safe='')}"
             relation = {"rel_type": "m.annotation", "event_id": message, "key": emoji}

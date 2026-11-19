@@ -885,6 +885,23 @@ class TestStatusPreservationAcrossNonStopWriters:
         done = [("react", "♨️"), ("react", "✅"), ("redact", "%24r1")] if source == "swarm" else [("add", "♨️"), ("add", "✅")]
         assert [(seen, push["chat_message"]) for seen, push in pushes] == [(done, chat_message)]
 
+    def test_a_ticket_taken_while_the_report_marks_its_message_keeps_its_own(self, monkeypatch, tmp_path):
+        """The cook is idle while its report's ✅ is on its way, so the sous can ticket it
+        again then; that ticket's chat message must ride back on the next report."""
+        monkeypatch.setenv("AGENT_NAME", "eng")
+        monkeypatch.setenv("AGENT_KITCHEN", "risotto")
+        monkeypatch.setenv("STATUS_DIR", str(tmp_path))
+        update_status(tmp_path, "eng", chat_message={"message": "swarm !r:s $first"})
+
+        def ticketed_meanwhile(_kitchen, record, _emoji):
+            update_status(tmp_path, "eng", chat_message={"message": "swarm !r:s $second"})
+            return record
+        monkeypatch.setattr("claude_kitchen.plow_chat.mark", ticketed_meanwhile)
+        _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message="done")
+        with patch("claude_kitchen.channel.send_to_socket", lambda _sock, _push: None):
+            cmd_hook(argparse.Namespace(command="hook"))
+        assert read_status(tmp_path, "eng")["chat_message"]["message"] == "swarm !r:s $second"
+
     @patch("claude_kitchen.cli.send_keys")
     @patch("claude_kitchen.cli.state_dir")
     @patch("claude_kitchen.cli.resolve_kitchen", return_value="risotto")
