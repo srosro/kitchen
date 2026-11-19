@@ -45,6 +45,7 @@ RETIRED = {"preferences.md", "mistakes.md"}
 MAX_SCAN = 1 << 20  # bytes of one named file read for scanning
 HEREDOC = re.compile(r"""<<(?!<)(-?)\s*(?:('[^']*'|"[^"]*")|\\?([^\s;&|<>()'"]+))""")
 COMPOUND = re.compile(r"(?:^|[\s;&|()])(?:if|then|else|elif|fi|for|while|until|do|done|case|esac|select|function|[{}])(?=[\s;&|()]|$)")
+STATEFUL = re.compile(r"(?:^|[\s;&|()])(?:(?:cd|pushd|popd|export|declare|local|readonly|read|source)(?=[\s;&|()]|$)|\.\s|[A-Za-z_]\w*=)")
 WORD_BREAK = re.compile(r"""[\s<>|;&()'"`]+""")
 
 
@@ -97,7 +98,8 @@ def _unquoted(line: str) -> str | None:
 def _statements(command: str) -> list[str]:
     """The command's statements, one per line: a trailing backslash joins the next line and a line that opens
     heredocs takes their bodies. Wherever that split could be wrong (an unbalanced quote or bracket on a line, a
-    compound-command keyword or brace outside quotes, a line ending in `|`, `&&` or `||`, a heredoc delimiter
+    compound-command keyword or brace outside quotes, a directory change, sourced file or shell assignment (a
+    newline doesn't isolate shell state), a line ending in `|`, `&&` or `||`, a heredoc delimiter
     it can't read whole, an unterminated heredoc) the whole command is one statement."""
     lines, out, i = command.split("\n"), [], 0
     while i < len(lines):
@@ -108,7 +110,8 @@ def _statements(command: str) -> list[str]:
             i += 1
         head = "\n".join(block)
         bare_text = _unquoted(head)
-        if bare_text is None or COMPOUND.search(bare_text) or re.search(r"(\|\||&&|\|&?)\s*$", bare_text):
+        if (bare_text is None or COMPOUND.search(bare_text) or STATEFUL.search(bare_text)
+                or re.search(r"(\|\||&&|\|&?)\s*$", bare_text)):
             return [command]
         heredocs = list(HEREDOC.finditer(head))
         if len(heredocs) != len(re.findall(r"(?<!<)<<(?!<)", bare_text)):
