@@ -1405,6 +1405,24 @@ class TestCmdOpenPlainFolder:
             cmd_open(args)
         assert spawn.call_args.kwargs["model"] == want
 
+    def test_reopen_takes_the_model_from_the_kitchens_stored_worktree(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        source, worktree, state = tmp_path / "source", tmp_path / "worktree", tmp_path / "state"
+        source.mkdir()
+        (worktree / ".kitchen").mkdir(parents=True)
+        (worktree / ".kitchen" / "sous.toml").write_text('model = "sonnet"\n')
+        state.mkdir()
+        (state / "kitchen.json").write_text(json.dumps({"source": str(source), "worktree": str(worktree)}))
+        args = self._args(source, None)
+        args.model = None
+        with patch("claude_kitchen.cli.state_dir", return_value=state), \
+             patch("claude_kitchen.cli.spawn_sous") as spawn, \
+             patch("claude_kitchen.cli.has_session", return_value=False), \
+             patch("claude_kitchen.cli.project_slug", return_value="x-source"), \
+             patch("claude_kitchen.cli.tmux", return_value=MagicMock(returncode=0)):
+            cmd_open(args)
+        assert spawn.call_args.kwargs["model"] == "sonnet"
+
     def test_open_refuses_a_committed_model_it_does_not_know(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
         folder = tmp_path / "notetaker"

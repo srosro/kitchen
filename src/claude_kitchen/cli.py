@@ -362,7 +362,9 @@ def cmd_open(args):
     # MCP config, the tmux session. A duplicate open must be a no-op, not a
     # half-applied one that aborts at the end.
     check_sous_pid(base)
-    model = args.model or project_model(project)
+    # A reopened kitchen runs in the checkout it stored, a named one's worktree.
+    stored = json.loads(kitchen_file.read_text()) if kitchen_file.exists() else {}
+    model = args.model or project_model(Path(stored.get("worktree", stored.get("source", project))))
 
     resuming = kitchen_file.exists()
 
