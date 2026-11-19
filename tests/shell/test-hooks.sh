@@ -97,6 +97,7 @@ assert_eq deny "$(gate Bash "$(jq -nc --arg c "if true; then"$'\n'"printf %s $pl
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "printf %s $planted |"$'\n'"cat > ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a pipeline continued on the next line is judged whole"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "cat <<E\"OF\" > ~/wiki/personal/runbooks/x.md"$'\n'"E"$'\n'"key $planted"$'\n'"EOF" '{command:$c}')")" "gate: a heredoc delimiter it can't read whole judges the whole command"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "printf %s $planted |&"$'\n'"cat > ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a |& continuation is judged whole"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "cat ~/dot.env | # annotation"$'\n'"cat >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a pipe followed by a comment still continues onto the next line"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "cat <<E\\OF > ~/wiki/personal/runbooks/x.md"$'\n'"E\\OF"$'\n'"key $planted"$'\n'"EOF" '{command:$c}')")" "gate: an escaped unquoted delimiter judges the whole command"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "cat <<\\ EOF > ~/wiki/personal/runbooks/x.md"$'\n'"key $planted"$'\n'" EOF" '{command:$c}')")" "gate: a heredoc it can't parse at all judges the whole command"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "cd ~/wiki/personal"$'\n'"printf %s $planted >> note.md" '{command:$c}')")" "gate: a cd on one line carries into the next, so the whole command is judged"

@@ -111,7 +111,7 @@ def _statements(command: str) -> list[str]:
         head = "\n".join(block)
         bare_text = _unquoted(head)
         if (bare_text is None or COMPOUND.search(bare_text) or STATEFUL.search(bare_text)
-                or re.search(r"(\|\||&&|\|&?)\s*$", bare_text)):
+                or re.search(r"(\|\||&&|\|&?)\s*(#.*)?$", bare_text)):
             return [command]
         heredocs = list(HEREDOC.finditer(head))
         if len(heredocs) != len(re.findall(r"(?<!<)<<(?!<)", bare_text)):
