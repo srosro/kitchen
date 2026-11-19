@@ -45,7 +45,8 @@ RETIRED = {"preferences.md", "mistakes.md"}
 MAX_SCAN = 1 << 20  # bytes of one named file read for scanning
 HEREDOC = re.compile(r"""<<(?!<)(-?)\s*(?:('[^']*'|"[^"]*")|\\?([^\s;&|<>()'"]+))""")
 COMPOUND = re.compile(r"(?:^|[\s;&|()])(?:if|then|else|elif|fi|for|while|until|do|done|case|esac|select|function|[{}])(?=[\s;&|()]|$)")
-STATEFUL = re.compile(r"(?:^|[\s;&|()])(?:(?:cd|pushd|popd|export|declare|local|readonly|read|source)(?=[\s;&|()]|$)|\.\s|[A-Za-z_]\w*=)")
+STATEFUL = re.compile(r"(?:^|[\s;&|()])(?:cd|pushd|popd|exec|source|\.)(?=[\s;&|()]|$)")
+SHELL_VAR = re.compile(r"\$(?:\{|[A-Za-z_0-9@*#?!$-])")
 WORD_BREAK = re.compile(r"""[\s<>|;&()'"`]+""")
 
 
@@ -98,8 +99,8 @@ def _unquoted(line: str) -> str | None:
 def _statements(command: str) -> list[str]:
     """The command's statements, one per line: a trailing backslash joins the next line and a line that opens
     heredocs takes their bodies. Wherever that split could be wrong (an unbalanced quote or bracket on a line, a
-    compound-command keyword or brace outside quotes, a directory change, sourced file or shell assignment (a
-    newline doesn't isolate shell state), a line ending in `|`, `&&` or `||`, a heredoc delimiter
+    compound-command keyword or brace outside quotes, a directory change, `exec` or sourced file (a newline
+    doesn't isolate shell state), a line ending in `|`, `&&` or `||`, a heredoc delimiter
     it can't read whole, an unterminated heredoc) the whole command is one statement."""
     lines, out, i = command.split("\n"), [], 0
     while i < len(lines):
@@ -169,14 +170,24 @@ def main() -> int:
     if not roots:
         return 0
     if tool == "Bash":
-        here, paths, judged = Path(cwd).resolve(), [], []
-        for stmt in _statements(args.get("command") or ""):
-            words = set(WORD_BREAK.split(stmt)) | {w for seg in _split_into_segments(stmt) for w in seg}
-            found = [_resolve(w, variables, cwd) for w in words if w]
-            paths += found
-            if (_in_wiki(here, roots) or any(_in_wiki(p, roots) for p in found)
-                    or any(s in stmt for k, (v, root) in named.items() for s in _spellings(k, v, root, here))):
-                judged += [stmt, os.path.expandvars(stmt), *(_read(p) for p in found if not _in_wiki(p, roots))]
+        command, here = args.get("command") or "", Path(cwd).resolve()
+
+        def judge(statements):
+            paths, judged, touching = [], [], []
+            for stmt in statements:
+                words = set(WORD_BREAK.split(stmt)) | {w for seg in _split_into_segments(stmt) for w in seg}
+                found = [_resolve(w, variables, cwd) for w in words if w]
+                paths += found
+                if (_in_wiki(here, roots) or any(_in_wiki(p, roots) for p in found)
+                        or any(s in stmt for k, (v, root) in named.items() for s in _spellings(k, v, root, here))):
+                    touching.append(stmt)
+                    judged += [stmt, os.path.expandvars(stmt), *(_read(p) for p in found if not _in_wiki(p, roots))]
+            return paths, judged, touching
+
+        paths, judged, touching = judge(_statements(command))
+        # A shell variable the environment can't fill was set elsewhere in the command: judge all of it.
+        if any(SHELL_VAR.search(os.path.expandvars(stmt)) for stmt in touching):
+            paths, judged, _ = judge([command])
         hit, text = bool(judged), "\n".join(judged)
     else:
         paths = [_resolve(args.get("file_path") or "/", variables)]

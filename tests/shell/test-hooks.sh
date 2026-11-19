@@ -101,6 +101,9 @@ assert_eq deny "$(gate Bash "$(jq -nc --arg c "cat <<E\\OF > ~/wiki/personal/run
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "cat <<\\ EOF > ~/wiki/personal/runbooks/x.md"$'\n'"key $planted"$'\n'" EOF" '{command:$c}')")" "gate: a heredoc it can't parse at all judges the whole command"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "cd ~/wiki/personal"$'\n'"printf %s $planted >> note.md" '{command:$c}')")" "gate: a cd on one line carries into the next, so the whole command is judged"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "note='key $planted'"$'\n'"printf '%s' \"\$note\" >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a shell assignment carries into the next line, so the whole command is judged"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "printf -v note 'key %s' $planted"$'\n'"echo \"\${note}\" >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: any variable set elsewhere in the command (printf -v) judges the whole command"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "set -- $planted"$'\n'"echo \"key \$1\" >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: positional parameters set elsewhere judge the whole command"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "exec >> ~/wiki/personal/runbooks/x.md"$'\n'"printf %s $planted" '{command:$c}')")" "gate: exec redirection on one line judges the whole command"
 
 # The retired shared memory files: any write is refused, in a wiki or in $KITCHEN_WIKI; archived copies are not.
 mkdir -p "$GATE_HOME/kw"
