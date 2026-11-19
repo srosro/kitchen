@@ -2116,6 +2116,33 @@ class TestOpenDoesNotSweepCooksItCannotSee:
         assert (base / "cooks" / "eng.json").read_text() == '{"status":"working"}'
         assert mock_spawn.call_args.kwargs["resume_session_id"] == "sid-1"
 
+    def test_resume_uses_host_session_when_container_section_is_removed(
+            self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        project = tmp_path / "proj"
+        (project / ".kitchen").mkdir(parents=True)
+        (project / ".kitchen" / "container.toml").write_text("# disabled\n")
+        base = tmp_path / ".claude-kitchen" / "widget"
+        base.mkdir(parents=True)
+        (base / "kitchen.json").write_text(json.dumps({
+            "source": str(project), "slug": "widget",
+            "sous_container": True, "sous_session_id": "host-session",
+        }) + "\n")
+        (base / "container-session.json").write_text(
+            '{"sous_session_id":"container-session"}\n'
+        )
+        args = MagicMock(name_=None, project=str(project), resume=True,
+                         worktree_path=None)
+        args.name = "widget"
+        with patch("claude_kitchen.cli.has_session", return_value=False), \
+             patch("claude_kitchen.cli.tmux", return_value=MagicMock(returncode=0)), \
+             patch("claude_kitchen.cli.project_slug", return_value="widget"), \
+             patch("claude_kitchen.cli.namespaced", return_value="widget"), \
+             patch("claude_kitchen.cli.spawn_sous") as mock_spawn:
+            cmd_open(args)
+
+        assert mock_spawn.call_args.kwargs["resume_session_id"] == "host-session"
+
 
 class TestSecondOpenIsANoOp:
     """`kitchen open` on a kitchen whose sous is already running must change

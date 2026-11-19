@@ -370,8 +370,19 @@ def cmd_open(args):
         if not resuming:
             sys.exit(f"--resume: no existing kitchen \"{name}\" to resume.")
         resume_state = json.loads(kitchen_file.read_text())
-        sous_session_id = _sous_session_id(base, resume_state)
-        if not sous_session_id:
+        resume_project = Path(resume_state.get(
+            "worktree", resume_state.get("source", str(project)),
+        ))
+        container_path = resume_project / ".kitchen" / "container.toml"
+        target_containerized = (
+            container_path.exists()
+            and tomllib.loads(container_path.read_text()).get("container") is not None
+        )
+        sous_session_id = _sous_session_id(
+            base, resume_state, containerized=target_containerized,
+        )
+        runtime_changed = target_containerized != bool(resume_state.get("sous_container"))
+        if not sous_session_id and not runtime_changed:
             sys.exit(
                 f"--resume: no sous session recorded for \"{name}\" yet. "
                 f"Open the kitchen normally once so the sous can save its session id."
@@ -1647,13 +1658,16 @@ def cmd_suspend(args):
 RESTART_DELAY = 3
 
 
-def _sous_session_id(base: Path, kitchen_state: dict) -> str | None:
-    if not kitchen_state.get("sous_container"):
+def _sous_session_id(base: Path, kitchen_state: dict,
+                     containerized: bool | None = None) -> str | None:
+    if containerized is None:
+        containerized = bool(kitchen_state.get("sous_container"))
+    if not containerized:
         return kitchen_state.get("sous_session_id")
     try:
-        return json.loads((base / "container-session.json").read_text()).get("sous_session_id") or kitchen_state.get("sous_session_id")
+        return json.loads((base / "container-session.json").read_text()).get("sous_session_id")
     except (FileNotFoundError, json.JSONDecodeError):
-        return kitchen_state.get("sous_session_id")
+        return None
 
 
 def cmd_restart(args):
