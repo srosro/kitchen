@@ -370,6 +370,7 @@ The orchestration behavior is intentionally not hard-coded:
 - **`src/claude_kitchen/roles/`** contains the cook contracts: `eng`, `reviewer`, `qa`, and `_default`.
 - **`.kitchen/on-open.sh` and `.kitchen/on-close.sh`** in a project can run lifecycle automation for that repository.
 - **`.kitchen/config.toml`** in a project can hold `receive = ["#dev:example.org", …]`: the named rooms its sous receives. At each launch the sous disconnects from the account's other named rooms and unmutes listed ones it had muted. It stays a member, mentions still reach it, and DMs are always received. Leave `receive` out and kitchen leaves the account's mutes as they are; list a room to unmute it.
+- **`.kitchen/sous.toml`** is committed with the project and can hold `model = "sonnet"` (or `fable`, `opus`): the sous's model whenever `kitchen open` is run without `--model`, restarts and `--resume` included. Leave it out for the account default.
 - **`.kitchen/container.toml`** runs that project's sous in its declared Docker image and network; Kitchen keeps its lifecycle and launches as the host UID/GID with declared mounts, no capabilities and `no-new-privileges` (the network must already exist).
 
 With an editable install, reopen the kitchen or re-hire a cook after changing a prompt to pick up the new behavior. For long-lived customization, fork the repository and install your fork.

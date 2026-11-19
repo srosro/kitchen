@@ -360,6 +360,9 @@ def cmd_open(args):
     # MCP config, the tmux session. A duplicate open must be a no-op, not a
     # half-applied one that aborts at the end.
     check_sous_pid(base)
+    # A reopened kitchen runs in the checkout it stored, a named one's worktree.
+    stored = json.loads(kitchen_file.read_text()) if kitchen_file.exists() else {}
+    model = args.model or project_model(Path(stored.get("worktree", stored.get("source", project))))
 
     resuming = kitchen_file.exists()
 
@@ -450,7 +453,19 @@ def cmd_open(args):
         confirm_dev_channels(kj["sous_launch"]["socket"], kj["sous_launch"]["pane"])
         print(DEV_CHANNELS_NOTICE)
     spawn_sous(name, base, prompt, project, slug=slug,
-               resume_session_id=sous_session_id, model=args.model)
+               resume_session_id=sous_session_id, model=model)
+
+
+def project_model(project: Path) -> str | None:
+    """The model the project's committed `.kitchen/sous.toml` names for its sous,
+    so a restart without `--model` keeps it instead of the account default."""
+    path = project / ".kitchen" / "sous.toml"
+    if not path.exists():
+        return None
+    model = tomllib.loads(path.read_text()).get("model")
+    if model is not None and model not in CLAUDE_MODELS:
+        sys.exit(f"{path}: model must be one of {', '.join(CLAUDE_MODELS)}, not {model!r}.")
+    return model
 
 
 DEV_CHANNELS_NOTICE = "Allowing development channels so Swarm messages can reach your agents."
@@ -1766,7 +1781,7 @@ def main():
     p_open.add_argument("--worktree-path", help="Custom path for the worktree (default: sibling directory)")
     p_open.add_argument("--resume", action="store_true", help="Resume the previous sous conversation (uses sous_session_id from kitchen.json)")
     p_open.add_argument("--model", choices=CLAUDE_MODELS,
-                        help="Claude model tier for the sous: fable, sonnet, or opus. Passed to `claude --model` verbatim, resolving the latest model in that tier. Omit to use the account default.")
+                        help="Claude model tier for the sous: fable, sonnet, or opus. Passed to `claude --model` verbatim, resolving the latest model in that tier. Omit to use the project's `.kitchen/sous.toml` model, else the account default.")
 
     p_hire = sub.add_parser("hire", help="Hire a cook")
     p_hire.add_argument("name", help="Cook name")
