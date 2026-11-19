@@ -15,7 +15,7 @@ It runs the stock agent CLIs you already use—authenticated through your existi
 | **An opinionated workflow you can actually edit** | `sous-chef.md` and the role prompts encode a complete operating method: delegate investigation, write verifiable tickets, review across backends, preserve decisions, and prove completion. They are plain Markdown—fork them, tune them, or replace the methodology. |
 | **Cross-model review by design** | The supplied workflow pairs a Claude implementer with a Codex reviewer, or vice versa. An adversarial second model often catches assumptions the first model rationalized past. The convention lives in the prompt, so you remain in control. |
 | **Parallel work without a black box** | Each cook is an isolated tmux window. Run independent workstreams concurrently, attach to watch them live, inspect a pane with `kitchen peek`, or take over the keyboard yourself. |
-| **Memory that survives the shift** | Per-project `mistakes.md` and `preferences.md` files persist across kitchens, while per-kitchen notes support handoffs and task briefs. The team can carry forward lessons without keeping every old conversation alive. |
+| **Memory that survives the shift** | Each agent's runbook and the company's runbook pages persist across kitchens, while per-kitchen notes support handoffs and task briefs. The team can carry forward lessons without keeping every old conversation alive. |
 
 Kitchen also integrates the superpowers skills workflow for brainstorming, specs, chunked implementation, review, and verification. For heavier use cases it can hand an independent workstream to another kitchen's sous with a ticket, or launch a clean-room Claude/Codex cook for a more reproducible evaluation—but the core stays deliberately small: tmux down, hooks and a Unix socket back up.
 
@@ -151,7 +151,7 @@ kitchen setup
 
 `kitchen setup` installs and verifies:
 
-1. Claude hooks, owned by kitchen: `kitchen hook` (`Stop`, `UserPromptSubmit`); the memory-capture nudges `capture-prompt.sh` (`UserPromptSubmit`) and `capture-answer.sh` (after `AskUserQuestion`); and the roborev gates for `git commit`, `git push` and branch switches (`PreToolUse[Bash]`), all from `src/claude_kitchen/hooks/`. Setup drops an older `~/.claude/hooks/<name>` copy of any of these, adds each missing entry once, keeps every other setting and hook, and writes a `settings.json.bak-kitchen-<time>` backup first. The roborev gates need the `roborev` CLI; without it they stay silent.
+1. Claude hooks, owned by kitchen: `kitchen hook` (`Stop`, `UserPromptSubmit`); the memory-capture nudges `capture-prompt.sh` (`UserPromptSubmit`) and `capture-answer.sh` (after `AskUserQuestion`); `runbook-secret-gate.py` (`PreToolUse[Edit|Write|MultiEdit|Bash]`), which refuses a write into the runbook wikis that carries a credential shape; and the roborev gates for `git commit`, `git push` and branch switches (`PreToolUse[Bash]`), all from `src/claude_kitchen/hooks/`. Setup drops an older `~/.claude/hooks/<name>` copy of any of these, adds each missing entry once, keeps every other setting and hook, and writes a `settings.json.bak-kitchen-<time>` backup first. The roborev gates need the `roborev` CLI; without it they stay silent.
 2. Kitchen's skills (`src/claude_kitchen/skills/*`), linked into `~/.claude/skills` and `~/.agents/skills`, and its `tc`, linked into `~/.local/bin`. A missing link is created, a link to the `code-config` copy it moved from is retargeted, and anything else is left alone and reported.
 3. The Playwright MCP server behind the `playwright` skill (`setup-playwright-mcp.sh`): a pinned `@playwright/mcp`, headed on macOS and headless on Linux, with Playwright's Chromium downloaded when the host has none. It is a no-op once registered.
 4. The `mcp` Python SDK.
@@ -272,7 +272,7 @@ Each Codex cook's thread is named `[<kitchen>/<cook>]` at hire and archived with
 
 ## How completion notifications work
 
-Every launched agent gets `AGENT_NAME`, `AGENT_KITCHEN`, and `STATUS_DIR`. Global hooks are gated on those variables, so ordinary agent sessions outside a kitchen are untouched. Every launched agent also gets `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, so durable notes go to the kitchen wiki rather than Claude Code's auto-memory.
+Every launched agent gets `AGENT_NAME`, `AGENT_KITCHEN`, and `STATUS_DIR`. Global hooks are gated on those variables, so ordinary agent sessions outside a kitchen are untouched. Every launched agent also gets `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, so durable notes go to runbooks rather than Claude Code's auto-memory.
 
 When a cook completes a turn:
 
@@ -309,7 +309,7 @@ The status line is what Claude Code hands the plan's usage to, after every reply
 
 `kitchen close` removes managed per-kitchen notes and cook state. The project wiki survives so later kitchens inherit the lessons and preferences. To keep a project's wiki elsewhere (an Obsidian vault, say), add a `<slug> <path>` row to `~/.config/kitchen/wikis`.
 
-The capture hooks route each lesson they nudge an agent to write down by audience, using `KEY=value` lines in `~/.config/kitchen/operator.env`: `PERSONAL_RUNBOOK` (personal notes), `COMPANY_RUNBOOK` (company-shareable pages) and `AGENT_RULES_REPO` (the `owner/repo` that takes a PR for generalizable agent behavior; unset, the nudge says "the operator's agent-rules repo").
+The capture hooks route each lesson they nudge an agent to write down by audience, using `KEY=value` lines in `~/.config/kitchen/operator.env`: `PERSONAL_RUNBOOK` (each agent's runbook, `runbooks/<agent>.md`, for anything about one person), `COMPANY_RUNBOOK` (company pages, for practice every teammate's agent follows) and `AGENT_RULES_REPO` (the `owner/repo` that takes a PR for generalizable agent behavior; unset, the nudge says "the operator's agent-rules repo").
 
 ## Texting the sous (plow-chat)
 

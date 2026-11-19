@@ -1381,6 +1381,7 @@ OWNED_HOOKS = (
     ("PreToolUse", "Bash", _hook("roborev-pre-commit-context.py"), None),
     ("PreToolUse", "Bash", _hook("roborev-pre-push-gate.py"), 660),
     ("PreToolUse", "Bash", _hook("roborev-pre-checkout-gate.py"), None),
+    ("PreToolUse", "Edit|Write|MultiEdit|Bash", _hook("runbook-secret-gate.py"), None),
     RUNTIME_HOOKS[3],
 )
 
