@@ -19,6 +19,9 @@ printf '%s' "$out" | jq -e . >/dev/null 2>&1; assert_rc 0 $? "capture-answer emi
 assert_eq "PostToolUse" "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.hookEventName')" "capture-answer event name"
 ctx=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext')
 assert_contains "$ctx" "\$PERSONAL_RUNBOOK/projects/" "capture-answer routes personal notes to the personal runbook"
+assert_contains "$ctx" "\$PERSONAL_RUNBOOK/runbooks/<your agent's folder name>.md" "capture-answer routes a personal learning to the agent's runbook"
+assert_contains "$ctx" "\$COMPANY_RUNBOOK/runbooks/" "capture-answer routes a company practice to a company page"
+assert_contains "$ctx" "never preferences.md or mistakes.md" "capture-answer no longer writes the shared kitchen wiki"
 assert_contains "$ctx" "never to Claude's auto-memory" "capture-answer keeps notes out of auto-memory"
 assert_contains "$ctx" "Why:" "capture-answer asks for Why"
 assert_contains "$ctx" "How to apply:" "capture-answer asks for How to apply"
@@ -32,12 +35,51 @@ printf '%s' "$out" | jq -e . >/dev/null 2>&1; assert_rc 0 $? "capture-prompt emi
 assert_eq "UserPromptSubmit" "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.hookEventName')" "capture-prompt event name"
 ctx=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext')
 assert_contains "$ctx" "\$PERSONAL_RUNBOOK/projects/" "capture-prompt routes personal notes to the personal runbook"
+assert_contains "$ctx" "\$PERSONAL_RUNBOOK/runbooks/<your agent's folder name>.md" "capture-prompt routes a personal learning to the agent's runbook"
+assert_contains "$ctx" "\$COMPANY_RUNBOOK/runbooks/" "capture-prompt routes a company practice to a company page"
+assert_contains "$ctx" "never preferences.md or mistakes.md" "capture-prompt no longer writes the shared kitchen wiki"
 assert_contains "$ctx" "never to Claude's auto-memory" "capture-prompt keeps notes out of auto-memory"
 assert_contains "$ctx" "paraphrased" "capture-prompt prefers paraphrased evidence (no raw capture)"
 
 # Both scripts executable
 [ -x "$HOOKS/capture-answer.sh" ]; assert_rc 0 $? "capture-answer is executable"
 [ -x "$HOOKS/capture-prompt.sh" ]; assert_rc 0 $? "capture-prompt is executable"
+
+# runbook-secret-gate.py: a write into either runbook wiki that carries a credential
+# shape is denied; a clean write, or a secret written elsewhere, passes.
+GATE_HOME=$(mktemp -d); trap 'rm -rf -- "$GATE_HOME"' EXIT
+mkdir -p "$GATE_HOME/.config/kitchen" "$GATE_HOME/wiki/personal/projects" "$GATE_HOME/wiki/plowco"
+ln -s personal/projects "$GATE_HOME/wiki/projects"
+printf 'PERSONAL_RUNBOOK="~/wiki/personal"\nCOMPANY_RUNBOOK=~/wiki/plowco\n' > "$GATE_HOME/.config/kitchen/operator.env"
+planted="gh""p_$(printf 'A%.0s' {1..36})"  # assembled so no token-shaped literal sits in the repo
+gate() { # gate <tool> <tool_input json> -> the decision, or "allow" when the hook prints nothing
+  local out; out=$(jq -nc --arg t "$1" --argjson i "$2" '{tool_name:$t,tool_input:$i}' | HOME="$GATE_HOME" "$HOOKS/runbook-secret-gate.py")
+  [ -n "$out" ] && printf '%s' "$out" | jq -r .hookSpecificOutput.permissionDecision || echo allow
+}
+P="$GATE_HOME/wiki/personal/runbooks/ea.md" C="$GATE_HOME/wiki/plowco/runbooks/scrum.md"
+assert_eq deny "$(gate Write "$(jq -nc --arg f "$P" --arg c "token: $planted" '{file_path:$f,content:$c}')")" "gate: Write of a secret to a personal runbook is denied"
+assert_eq deny "$(gate Edit "$(jq -nc --arg f "$C" --arg c "$planted" '{file_path:$f,old_string:"x",new_string:$c}')")" "gate: Edit adding a secret to a company page is denied"
+assert_eq deny "$(gate MultiEdit "$(jq -nc --arg f "$P" --arg c "$planted" '{file_path:$f,edits:[{old_string:"x",new_string:$c}]}')")" "gate: MultiEdit adding a secret is denied"
+assert_eq deny "$(gate Write "$(jq -nc --arg f "$GATE_HOME/wiki/projects/kitchen/x.md" --arg c "$planted" '{file_path:$f,content:$c}')")" "gate: a symlinked alias into a wiki is still a wiki"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "echo $planted >> ~/wiki/plowco/kitchen.md" '{command:$c}')")" "gate: Bash appending a secret under a ~ path is denied"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "printf %s $planted > \$PERSONAL_RUNBOOK/runbooks/pa.md" '{command:$c}')")" "gate: Bash writing a secret via \$PERSONAL_RUNBOOK is denied"
+printf 'TOKEN=%s\n' "$planted" > "$GATE_HOME/dot.env"
+assert_eq deny "$(gate Bash "$(jq -nc '{command:"cp ~/dot.env ~/wiki/personal/runbooks/ea.md"}')")" "gate: Bash copying a file that holds a secret into a wiki is denied"
+cp "$GATE_HOME/dot.env" "$GATE_HOME/account notes.txt"
+assert_eq deny "$(gate Bash "$(jq -nc '{command:"cp \"$HOME/account notes.txt\" \"$PERSONAL_RUNBOOK/runbooks/ea.md\""}')")" "gate: a quoted source filename with spaces is still scanned"
+assert_eq deny "$(PLANTED="$planted" gate Bash "$(jq -nc '{command:"printf %s \"$PLANTED\" >> ~/wiki/plowco/kitchen.md"}')")" "gate: Bash writing a secret from the environment is denied"
+mkdir -p "$GATE_HOME/Team Wiki/runbooks"; printf 'COMPANY_RUNBOOK="%s/Team Wiki"\n' "$GATE_HOME" >> "$GATE_HOME/.config/kitchen/operator.env"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "printf 'password=example-value' > \"$GATE_HOME/Team Wiki/note.md\"" '{command:$c}')")" "gate: a quoted wiki path with spaces is still a wiki"
+mkdir -p "$GATE_HOME/Team;Wiki"; printf 'COMPANY_RUNBOOK="%s/Team;Wiki"\n' "$GATE_HOME" >> "$GATE_HOME/.config/kitchen/operator.env"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "printf 'password=example-value' > \"$GATE_HOME/Team;Wiki/note.md\"" '{command:$c}')")" "gate: quoted shell punctuation in a wiki path stays one word"
+assert_eq deny "$(gate Bash "$(jq -nc '{command:"printf %s password=example#value > ~/wiki/personal/runbooks/ea.md"}')")" "gate: a # inside a word doesn't hide the wiki target"
+assert_eq deny "$(jq -nc --arg c "printf %s password=example-value > wiki/personal/note.md # don't forget" '{tool_name:"Bash",tool_input:{command:$c},cwd:"'"$GATE_HOME"'"}' | HOME="$GATE_HOME" "$HOOKS/runbook-secret-gate.py" | jq -r .hookSpecificOutput.permissionDecision)" "gate: an apostrophe in a trailing comment doesn't hide a relative wiki target"
+assert_eq deny "$(jq -nc --arg c "cp dot.env wiki/personal/x.md" '{tool_name:"Bash",tool_input:{command:$c},cwd:"'"$GATE_HOME"'"}' | HOME="$GATE_HOME" "$HOOKS/runbook-secret-gate.py" | jq -r .hookSpecificOutput.permissionDecision)" "gate: relative paths resolve against the session's cwd"
+assert_eq allow "$(gate Write "$(jq -nc --arg f "$P" '{file_path:$f,content:"the key lives in the vault item ea-mail (…AAA)"}')")" "gate: a clean runbook write passes"
+assert_eq allow "$(gate Write "$(jq -nc --arg f "$GATE_HOME/elsewhere.md" --arg c "$planted" '{file_path:$f,content:$c}')")" "gate: a secret written outside the wikis is not this gate's business"
+assert_eq allow "$(gate Bash "$(jq -nc --arg c "echo $planted > /tmp/x" '{command:$c}')")" "gate: a Bash command that touches no wiki passes"
+assert_eq "" "$(printf 'not json' | HOME="$GATE_HOME" "$HOOKS/runbook-secret-gate.py")" "gate: a malformed request fails open"
+assert_eq "" "$(jq -nc --arg f "$P" --arg c "$planted" '{tool_name:"Write",tool_input:{file_path:$f,content:$c}}' | HOME="$GATE_HOME/none" "$HOOKS/runbook-secret-gate.py")" "gate: a machine without the wiki settings is not gated"
 
 # The roborev context bridge consumes the same registry before putting review
 # text back into an agent's context. A newly registered shape must therefore be
