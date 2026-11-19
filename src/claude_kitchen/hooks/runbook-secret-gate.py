@@ -44,7 +44,7 @@ ROOT_KEYS = ("PERSONAL_RUNBOOK", "COMPANY_RUNBOOK")
 RETIRED = {"preferences.md", "mistakes.md"}
 MAX_SCAN = 1 << 20  # bytes of one named file read for scanning
 HEREDOC = re.compile(r"""<<(?!<)(-?)\s*(?:('[^']*'|"[^"]*")|\\?([^\s;&|<>()'"]+))""")
-COMPOUND = re.compile(r"\s*(do|done|then|else|elif|fi|esac|in|\}|\{)(\s|;|$)")
+COMPOUND = re.compile(r"(?:^|[\s;&|()])(?:if|then|else|elif|fi|for|while|until|do|done|case|esac|select|function|[{}])(?=[\s;&|()]|$)")
 WORD_BREAK = re.compile(r"""[\s<>|;&()'"`]+""")
 
 
@@ -75,9 +75,9 @@ def _spellings(key: str, value: str, root: Path, cwd: Path) -> set[str]:
     return names
 
 
-def _balanced(line: str) -> bool:
-    """Whether `line` closes every quote and bracket it opens (a backslash escapes one character)."""
-    quote, depth, i = None, 0, 0
+def _unquoted(line: str) -> str | None:
+    """`line` with its quoted parts removed, or None if a quote or bracket it opens isn't closed on it."""
+    out, quote, depth, i = [], None, 0, 0
     while i < len(line):
         c = line[i]
         if c == "\\":
@@ -87,18 +87,18 @@ def _balanced(line: str) -> bool:
             quote = None if c == quote else quote
         elif c in "'\"`":
             quote = c
-        elif c in "({":
-            depth += 1
-        elif c in ")}":
-            depth -= 1
+        else:
+            depth += (c == "(") - (c == ")")
+            out.append(c)
         i += 1
-    return quote is None and depth == 0
+    return None if quote or depth else "".join(out)
 
 
 def _statements(command: str) -> list[str]:
     """The command's statements, one per line: a trailing backslash joins the next line and a line that opens
-    heredocs takes their bodies. Wherever that split could be wrong (an unbalanced quote or bracket on a line,
-    a compound-command keyword line, an unterminated heredoc) the whole command is one statement."""
+    heredocs takes their bodies. Wherever that split could be wrong (an unbalanced quote or bracket on a line, a
+    compound-command keyword or brace outside quotes, a line ending in `|`, `&&` or `||`, a heredoc delimiter
+    it can't read whole, an unterminated heredoc) the whole command is one statement."""
     lines, out, i = command.split("\n"), [], 0
     while i < len(lines):
         block = [lines[i]]
@@ -107,9 +107,13 @@ def _statements(command: str) -> list[str]:
             block.append(lines[i])
             i += 1
         head = "\n".join(block)
-        if not _balanced(head) or COMPOUND.match(head):
+        bare_text = _unquoted(head)
+        if bare_text is None or COMPOUND.search(bare_text) or re.search(r"(\|\||&&|\|)\s*$", bare_text):
             return [command]
-        for strip_tabs, quoted, bare in HEREDOC.findall(head):
+        for m in HEREDOC.finditer(head):
+            if m.end() < len(head) and not re.match(r"[\s;&|<>()]", head[m.end()]):
+                return [command]
+            strip_tabs, quoted, bare = m.groups()
             delim = quoted[1:-1] if quoted else bare
             while i < len(lines) and (lines[i].lstrip("\t") if strip_tabs else lines[i]) != delim:
                 block.append(lines[i])

@@ -93,6 +93,9 @@ assert_eq deny "$(gate Bash "$(jq -nc --arg c "{ printf %s $planted; true; } > ~
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "cat <<EOF > ~/wiki/personal/runbooks/x.md; true"$'\n'" EOF"$'\n'"key $planted"$'\n'"EOF" '{command:$c}')")" "gate: an indented EOF doesn't end a <<EOF body, and a separator before the body keeps it"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "cat >> ~/wiki/personal/runbooks/x.md <<'END-X'"$'\n'"key $planted"$'\n'"END-X" '{command:$c}')")" "gate: a quoted delimiter with punctuation"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "for f in a; do"$'\n'"printf %s $planted"$'\n'"done >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a multi-line compound command is judged whole"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "if true; then"$'\n'"printf %s $planted"$'\n'"echo x; fi > ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a compound closer later on a line still judges the whole command"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "printf %s $planted |"$'\n'"cat > ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a pipeline continued on the next line is judged whole"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "cat <<E\"OF\" > ~/wiki/personal/runbooks/x.md"$'\n'"E"$'\n'"key $planted"$'\n'"EOF" '{command:$c}')")" "gate: a heredoc delimiter it can't read whole judges the whole command"
 
 # The retired shared memory files: any write is refused, in a wiki or in $KITCHEN_WIKI; archived copies are not.
 mkdir -p "$GATE_HOME/kw"
