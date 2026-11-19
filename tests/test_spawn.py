@@ -649,8 +649,9 @@ class TestCheckSousPid:
                         "patch('os.execvp').start(); patch('os.chdir').start(); "
                         "spawn_sous('k', Path(sys.argv[1]), 'p', slug='gh-x-y')", str(tmp_path)],
                        env=env, check=True)
-        record = (tmp_path / "sous.pid").read_text().split(maxsplit=1)
-        (tmp_path / "sous.pid").write_text(" ".join([str(pid), *record[1:]]))  # the sous exited; its pid is reused
+        assert len((tmp_path / "sous.pid").read_text().split(maxsplit=1)) == 2, "no start time recorded"
+        # The sous exited and its pid now belongs to a process started at another time.
+        (tmp_path / "sous.pid").write_text(f"{pid} Thu Jan  1 00:00:00 1970")
         spawn.check_sous_pid(tmp_path)  # no SystemExit, no PermissionError
 
     def test_a_live_sous_is_refused_at_once(self, tmp_path):
