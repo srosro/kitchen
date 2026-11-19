@@ -45,6 +45,8 @@ def pid_alive(pid: int) -> bool:
             os.kill(pid, 0)
         except ProcessLookupError:
             return False
+        except PermissionError:
+            pass  # another user's process: it runs
         return True
     import ctypes
     kernel32 = ctypes.windll.kernel32
@@ -57,6 +59,28 @@ def pid_alive(pid: int) -> bool:
     finally:
         kernel32.CloseHandle(handle)
 
+
+
+def process_started(pid: int) -> str:
+    """When `pid` started, as ps prints it; "" on Windows or when it isn't running."""
+    if WINDOWS:
+        return ""
+    return subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+
+
+def sous_pid(state_dir: Path) -> int | None:
+    """The running sous's pid, or None. sous.pid records the pid and when that
+    process started, because a pid alone is handed out again: after a container
+    restart, often to kitchen's own `open`. A record without a start time (Windows,
+    or one an older kitchen wrote) is trusted on the pid alone."""
+    try:
+        pid, *started = (state_dir / "sous.pid").read_text().split(maxsplit=1)
+        pid = int(pid)
+    except (FileNotFoundError, ValueError):
+        return None
+    if not pid_alive(pid) or (started and started[0].strip() != process_started(pid)):
+        return None
+    return pid
 
 # Per-kitchen MCP config filename. Deliberately NOT ".mcp.json": Claude Code
 # auto-discovers any file named ".mcp.json" by walking up from a cook's cwd,

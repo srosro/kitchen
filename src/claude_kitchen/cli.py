@@ -21,7 +21,7 @@ from claude_kitchen.state import (
     project_slug, namespaced, wiki_dir, notes_dir, mcp_servers, channel_socket,
     atomic_write_json, state_root, swarm_binary, swarm_credential, swarm_join_prompt, swarm_links, swarm_rooms,
     sous_first_turn,
-    MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME, WINDOWS, lock, pid_alive,
+    MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME, WINDOWS, lock, sous_pid,
 )
 from claude_kitchen.models import max_context_for
 from claude_kitchen.outbound import approve_host, operator_setting
@@ -858,8 +858,7 @@ def _attach_argv(kitchen: str) -> list[str] | None:
     cooks' server it left behind is no live kitchen): the pane its sous runs in, when
     it runs in one (an agent installed into a shared tmux session), else the kitchen's
     own server, where its cooks are. One answer for `kitchen ls` and `kitchen attach`."""
-    pid = state_dir(kitchen) / "sous.pid"
-    if not (pid.exists() and pid_alive(int(pid.read_text()))):
+    if sous_pid(state_dir(kitchen)) is None:
         return None
     launch = json.loads((state_dir(kitchen) / "kitchen.json").read_text()).get("sous_launch") or {}
     if launch.get("pane") and subprocess.run(
@@ -1689,10 +1688,10 @@ def cmd_restart(args):
         sys.exit(f"Kitchen \"{kitchen}\" has no sous session to resume yet.")
     if WINDOWS:
         sys.exit("kitchen restart isn't on Windows yet: exit the sous, then run `kitchen open --resume` in its pane.")
-    pid = int((base / "sous.pid").read_text())
+    pid = sous_pid(base)
     # A live sous means its pane is still the one on record; a dead one leaves
     # that pane to whatever runs there now, which respawn-pane -k would kill.
-    if not pid_alive(pid):
+    if pid is None:
         sys.exit(f"The sous of \"{kitchen}\" isn't running; bring it back with `kitchen open --resume`.")
     # The new sous's swarm joins are built now, while the old sous still runs,
     # so a swarm that fails fails this restart rather than leaving no sous.
