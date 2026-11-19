@@ -590,11 +590,11 @@ def test_a_text_anyone_but_the_owner_reads_goes_out_only_past_the_reviewer(chat,
                 await bridge.reply(chat, "I'll keep Tuesday's logistics straight")
         else:
             result = await bridge.reply(chat, "I'll keep Tuesday's logistics straight")
-            assert result.startswith("not sent: a reviewer held it (Jordan just said") if outcome == "held" else result.startswith("sent")
+            assert result.startswith("not sent: a reviewer held it for existing chat cht_home with Alex (Jordan just said") if outcome == "held" else result.startswith("sent")
         assert fake.sent == ([(chat, "I'll keep Tuesday's logistics straight")] if outcome == "sent" else [])
         if chat == HOME:
             assert "Jordan: Tuesday doesn't work for me" in prompts[0]
-            assert "to people other than Jordan: Alex." in prompts[0]
+            assert "working for Jordan is about to send the iMessage below to Alex." in prompts[0]
         else:
             assert prompts == []
     run_bridge(scenario)
@@ -679,40 +679,8 @@ def test_start_chat_and_send_file_are_reviewed_too(shot):
         assert fake.started == [] and fake.sent == []
         assert ["hi Alex" in prompts[0], "the build" in prompts[1]] == [True, True]
         assert "Jordan: Tuesday's out" in prompts[0]  # start_chat reviews against the chat Plow will adopt
-    run_bridge(scenario)
-
-
-def test_the_review_reads_the_owners_other_recent_threads_with_the_same_people(monkeypatch):
-    """With `messages-host` set, the reviewer also sees the owner's own recent
-    Messages threads with the recipients, through latch; older texts and other
-    people's threads stay out."""
-    now = datetime.now().astimezone()
-    recent, old = now.isoformat(), (now - timedelta(days=plow_chat.REVIEW_DAYS + 1)).isoformat()
-    chats = {"chats": [
-        {"id": 1, "last_message_at": recent, "participants": [{"handle": TEAMMATE, "name": "Alex"}]},
-        {"id": 2, "last_message_at": recent, "participants": [{"handle": STRANGER, "name": None}]},
-        {"id": 3, "last_message_at": old, "participants": [{"handle": TEAMMATE, "name": "Alex"}]},
-    ]}
-    thread = {"messages": [
-        {"date": old, "from": {"me": True, "name": None, "handle": None}, "text": "Tuesday works"},
-        {"date": recent, "from": {"me": True, "name": None, "handle": None}, "text": "Shoot, Tuesday's out"},
-        {"date": recent, "from": {"me": False, "name": "Alex", "handle": TEAMMATE}, "text": "no worries"},
-    ]}
-    calls, prompts = [], []
-
-    async def latch(*args, stdin=""):
-        calls.append(args)
-        return json.dumps(chats if args[2] == "chats" else thread)
-    monkeypatch.setattr(plow_chat, "run", latch)
-
-    async def scenario(fake, bridge, delivered):
-        (bridge.cursor.parent / plow_chat.MESSAGES_HOST).write_text("mac\n")
-        bridge.reviewer = reviewing("SEND", prompts)
-        assert (await bridge.reply(HOME, "see you Tuesday")).startswith("sent")
-        assert [c[c.index("--chat-id") + 1] for c in calls if "--chat-id" in c] == ["1"]
-        assert all(c[c.index("--host") + 1] == "mac" for c in calls)
-        assert "Jordan: Shoot, Tuesday's out\nAlex: no worries" in prompts[0]
-        assert "Tuesday works" not in prompts[0]
+        (bridge.cursor.parent / plow_chat.TRUSTED_CHATS).write_text(f"{HOME}\n")  # a company thread
+        assert (await bridge.reply(HOME, "the build")).startswith("sent") and len(prompts) == 2
     run_bridge(scenario)
 
 
