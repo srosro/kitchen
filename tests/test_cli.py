@@ -1419,6 +1419,7 @@ class TestCmdOpenPlainFolder:
              pytest.raises(SystemExit, match="model must be one of fable, sonnet, opus"):
             cmd_open(args)
         spawn.assert_not_called()
+        assert not (tmp_path / "state").exists()
 
     def test_unnamed_open_launches_the_sous_keyed_by_the_folder_path(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))

@@ -362,6 +362,7 @@ def cmd_open(args):
     # MCP config, the tmux session. A duplicate open must be a no-op, not a
     # half-applied one that aborts at the end.
     check_sous_pid(base)
+    model = args.model or project_model(project)
 
     resuming = kitchen_file.exists()
 
@@ -452,7 +453,7 @@ def cmd_open(args):
         confirm_dev_channels(kj["sous_launch"]["socket"], kj["sous_launch"]["pane"])
         print(DEV_CHANNELS_NOTICE)
     spawn_sous(name, base, prompt, project, slug=slug,
-               resume_session_id=sous_session_id, model=args.model or project_model(project))
+               resume_session_id=sous_session_id, model=model)
 
 
 def project_model(project: Path) -> str | None:
