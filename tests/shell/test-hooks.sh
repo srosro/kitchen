@@ -79,12 +79,15 @@ assert_eq allow "$(gate Write "$(jq -nc --arg f "$P" '{file_path:$f,content:"the
 # Only statements that touch a wiki are judged: a kitchen ticket naming a notes file whose prose reads like
 # "token: still waiting" doesn't block the runbook append beside it, and a Swarm priority ref isn't a credential.
 REF='!rhtLSQCsLcX3dU3lmwtt4C-GJLMay8fdhyeQIrBqV-0/945fba67'
-printf 'STR token: still waiting on Sam\n' > "$GATE_HOME/notes.md"
+printf 'STR token: still waiting on the owner\n' > "$GATE_HOME/notes.md"
 assert_eq allow "$(gate Bash "$(jq -nc --arg c "kitchen ticket eng --priority '$REF' \"see $GATE_HOME/notes.md\" && echo lesson >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a ticket beside a runbook append isn't judged by the append's rules"
 assert_eq allow "$(gate Bash "$(jq -nc --arg c "kitchen ticket eng --priority '$REF' \"see $GATE_HOME/notes.md\""$'\n'"echo lesson >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: same, on separate lines"
 assert_eq allow "$(gate Bash "$(jq -nc --arg c "echo 'priority: $REF, room !TdVm4SfMlHOrV6GTlXE_GkqIbtSLV-fnVfWKXE3F8aE' >> ~/wiki/plowco/kitchen.md" '{command:$c}')")" "gate: Swarm refs and room ids aren't credentials"
 assert_eq deny "$(gate Bash "$(jq -nc '{command:"cat ~/dot.env | tee -a ~/wiki/personal/runbooks/x.md"}')")" "gate: a pipeline stays one statement, so its source is scanned"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "cat >> ~/wiki/personal/runbooks/x.md <<EOF"$'\n'"note; key $planted"$'\n'"EOF" '{command:$c}')")" "gate: a heredoc body stays with the line that opens it"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "printf 'note"$'\n'"key $planted' >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a newline inside quotes doesn't split a statement"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "echo \$(printf %s $planted; true) > ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a ; inside \$( ) doesn't split a statement"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "cat <<\\EOF <<'TWO' >> ~/wiki/personal/runbooks/x.md"$'\n'"fine"$'\n'"EOF"$'\n'"key $planted"$'\n'"TWO" '{command:$c}')")" "gate: escaped and second heredoc bodies stay with their statement"
 
 # The retired shared memory files: any write is refused, in a wiki or in $KITCHEN_WIKI; archived copies are not.
 mkdir -p "$GATE_HOME/kw"

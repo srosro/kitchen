@@ -43,7 +43,7 @@ from _secret_patterns import contains_secret
 ROOT_KEYS = ("PERSONAL_RUNBOOK", "COMPANY_RUNBOOK")
 RETIRED = {"preferences.md", "mistakes.md"}
 MAX_SCAN = 1 << 20  # bytes of one named file read for scanning
-HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)")
+HEREDOC = re.compile(r"<<-?\s*\\?['\"]?(\w+)['\"]?")
 WORD_BREAK = re.compile(r"""[\s<>|;&()'"`]+""")
 
 
@@ -74,41 +74,48 @@ def _spellings(key: str, value: str, root: Path, cwd: Path) -> set[str]:
     return names
 
 
-def _split_unquoted(line: str) -> list[str]:
-    """`line` cut at `&&`, `||`, `;` and a lone `&` outside quotes; `|` stays, so a pipeline is one piece."""
-    parts, start, quote, i = [], 0, None, 0
-    while i < len(line):
-        c = line[i]
+def _statements(command: str) -> list[str]:
+    """Top-level shell statements in `command`: cut at newlines and `&&`, `||`, `;`, a lone `&`, but never
+    inside quotes or `$( )`/`( )`/backticks; a heredoc's body joins the statement that opens it, and `|`
+    keeps a pipeline whole. Anything left unbalanced returns the whole command, the conservative answer."""
+    out, start, quote, depth, i, n = [], 0, None, 0, 0, len(command)
+    heredocs: list[str] = []
+    while i < n:
+        c = command[i]
         if c == "\\":
             i += 2
             continue
         if quote:
             quote = None if c == quote else quote
-        elif c in "'\"":
+            i += 1
+            continue
+        if c in "'\"`":
             quote = c
-        elif line.startswith(("&&", "||"), i) or c == ";" or (c == "&" and line[i - 1:i] not in (">", "<")
-                                                              and line[i + 1:i + 2] != ">"):
-            parts.append(line[start:i])
-            i += 2 if line.startswith(("&&", "||"), i) else 1
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth = max(depth - 1, 0)
+        elif depth == 0 and command.startswith("<<", i) and not command.startswith("<<<", i):
+            m = HEREDOC.match(command, i)
+            if m:
+                heredocs.append(m.group(1))
+                i = m.end()
+                continue
+        elif depth == 0 and (c in ";\n" or command.startswith(("&&", "||"), i)
+                             or (c == "&" and command[i - 1:i] not in "<>" and command[i + 1:i + 2] != ">")):
+            while c == "\n" and heredocs:
+                delim, lines_end = heredocs.pop(0), command.find("\n", i + 1)
+                while lines_end != -1 and command[i + 1:lines_end].strip() != delim:
+                    i, lines_end = lines_end, command.find("\n", lines_end + 1)
+                i = n if lines_end == -1 else lines_end
+            out.append(command[start:i])
+            i += 2 if command.startswith(("&&", "||"), i) else 1
             start = i
             continue
         i += 1
-    return parts + [line[start:]]
-
-
-def _statements(command: str) -> list[str]:
-    """Shell statements in `command`; a heredoc body or a backslash-continued line stays with its first line."""
-    out, lines, i = [], command.split("\n"), 0
-    while i < len(lines):
-        block, heredoc = [lines[i]], HEREDOC.search(lines[i])
-        i += 1
-        while (heredoc or block[-1].endswith("\\")) and i < len(lines):
-            block.append(lines[i])
-            i += 1
-            if heredoc and block[-1].strip() == heredoc.group(1):
-                heredoc = None
-        out += ["\n".join(block)] if len(block) > 1 else _split_unquoted(block[0])
-    return [s for s in out if s.strip()]
+    if quote or depth or heredocs:
+        return [command]
+    return [s for s in out + [command[start:]] if s.strip()]
 
 
 def _in_wiki(path: Path, roots: list[Path]) -> bool:
