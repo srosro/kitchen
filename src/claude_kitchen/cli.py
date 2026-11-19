@@ -18,7 +18,7 @@ from claude_kitchen.tmux import (
 )
 from claude_kitchen.state import (
     state_dir, plow_chat_dir, write_status, read_status, update_status, chat_record, read_waits, write_waits,
-    project_slug, namespaced, wiki_dir, notes_dir, mcp_servers, channel_socket,
+    project_slug, namespaced, notes_dir, mcp_servers, channel_socket,
     atomic_write_json, state_root, swarm_binary, swarm_credential, swarm_join_prompt, swarm_links, swarm_rooms,
     sous_first_turn,
     MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME, WINDOWS, lock, sous_pid,
@@ -43,18 +43,6 @@ _ROLE_ACK_FOOTER = (
     "arrives next.\n"
 )
 
-_WIKI_TEMPLATES = {
-    "mistakes.md": (
-        "# Mistakes\n\n"
-        "Older lessons for this project, read but no longer written: "
-        "write a new lesson in the runbook its audience reads.\n"
-    ),
-    "preferences.md": (
-        "# Preferences\n\n"
-        "Older preferences for this project, read but no longer written: "
-        "write a new one in the runbook its audience reads.\n"
-    ),
-}
 _NOTES_TEMPLATES = {
     "handoff.md": (
         "# Handoff\n\n"
@@ -421,7 +409,6 @@ def cmd_open(args):
         kitchen_file.write_text(json.dumps(kj) + "\n")
         run_hook(source, "on-open", name, cwd=project, source=source)
 
-    _seed(wiki_dir(slug), _WIKI_TEMPLATES)
     _seed(notes_dir(name), _NOTES_TEMPLATES)
 
     # No automatic sweep: cook records outlive their windows on a suspended

@@ -2,7 +2,9 @@
 """PreToolUse[Edit|Write|MultiEdit|Bash] gate: deny a write into the operator's
 runbook wikis (PERSONAL_RUNBOOK, COMPANY_RUNBOOK in ~/.config/kitchen/operator.env)
 that carries a credential shape. The wikis sync to other machines and teammates,
-so a secret written there has already left.
+so a secret written there has already left. It also refuses any write to the
+retired shared memory files, `preferences.md` and `mistakes.md` in `$KITCHEN_WIKI`
+or a wiki (archived copies under `_archived/` excepted): learnings go to runbooks.
 
 Edit/Write/MultiEdit are gated on the resolved target path and the text being
 written. A Bash command is gated whole when it mentions a wiki without any
@@ -33,6 +35,7 @@ from _roborev_hooklib import _split_into_segments
 from _secret_patterns import contains_secret
 
 ROOT_KEYS = ("PERSONAL_RUNBOOK", "COMPANY_RUNBOOK")
+RETIRED = {"preferences.md", "mistakes.md"}
 MAX_SCAN = 1 << 20  # bytes of one named file read for scanning
 WORD_BREAK = re.compile(r"""[\s<>|;&()'"`]+""")
 
@@ -66,6 +69,18 @@ def _spellings(key: str, value: str, root: Path, cwd: Path) -> set[str]:
 
 def _in_wiki(path: Path, roots: list[Path]) -> bool:
     return any(path == root or root in path.parents for root in roots)
+
+
+def _retired(path: Path, roots: list[Path]) -> bool:
+    kitchen_wiki = os.environ.get("KITCHEN_WIKI")
+    in_scope = _in_wiki(path, roots) or (kitchen_wiki and path.parent == Path(kitchen_wiki).resolve())
+    return path.name in RETIRED and "_archived" not in path.parts and bool(in_scope)
+
+
+def _deny(reason: str) -> int:
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}))
+    return 0
 
 
 def _read(path: Path) -> str:
@@ -103,18 +118,17 @@ def main() -> int:
         text = "\n".join([command, os.path.expandvars(command),
                           *(_read(p) for p in paths if not _in_wiki(p, roots))])
     else:
-        hit = _in_wiki(_resolve(args.get("file_path") or "/", variables), roots)
+        paths = [_resolve(args.get("file_path") or "/", variables)]
+        hit = _in_wiki(paths[0], roots)
         text = _written_text(tool, args)
-    if not (hit and contains_secret(text)):
-        return 0
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "deny",
-        "permissionDecisionReason": (
-            "not written: this write to a runbook wiki carries a credential shape. Runbooks sync to other "
-            "machines and teammates: name where the secret lives (the vault item), never its value; mask "
-            "anything you must reference (…*** below 8 characters, otherwise the last 3)."),
-    }}))
+    if any(_retired(p, roots) for p in paths):
+        return _deny("refused: preferences.md and mistakes.md are retired. Write the learning in the runbook "
+                     "its audience reads: anything about one person in your runbook, $PERSONAL_RUNBOOK/runbooks/"
+                     "<your agent's folder name>.md; a practice every teammate's agent follows in a $COMPANY_RUNBOOK page.")
+    if hit and contains_secret(text):
+        return _deny("not written: this write to a runbook wiki carries a credential shape. Runbooks sync to other "
+                     "machines and teammates: name where the secret lives (the vault item), never its value; mask "
+                     "anything you must reference (…*** below 8 characters, otherwise the last 3).")
     return 0
 
 
