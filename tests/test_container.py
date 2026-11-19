@@ -98,23 +98,19 @@ def test_container_run_uses_the_locked_down_boundary(tmp_path, monkeypatch):
     assert channel_socket(tmp_path) == Path("/tmp/kitchen-channel/kitchen.sock")
 
 
-def test_prepare_mount_targets_keeps_nearest_mounted_parent_writable(tmp_path):
+def test_prepare_mount_target_keeps_home_parent_writable(tmp_path, monkeypatch):
+    source = tmp_path / "credential.json"
+    source.write_text("{}\n")
     home_source = tmp_path / "container-home"
-    claude_source = tmp_path / "claude-home"
-    credential_source = tmp_path / "credential.json"
     home_source.mkdir()
-    claude_source.mkdir()
-    credential_source.write_text("{}\n")
-    mounts = [
-        {"source": home_source, "target": Path("/home/u")},
-        {"source": claude_source, "target": Path("/home/u/.claude")},
-        {"source": credential_source,
-         "target": Path("/home/u/.claude/private/credential.json")},
-    ]
+    monkeypatch.setattr(Path, "home", lambda: Path("/home/u"))
 
-    container._prepare_mount_targets(mounts)
+    container._prepare_mount_target(home_source, {
+        "source": source,
+        "target": Path("/home/u/.claude/credential.json"),
+    })
 
-    assert (claude_source / "private").is_dir()
+    assert (home_source / ".claude").is_dir()
 
 
 def test_remove_refuses_a_container_kitchen_does_not_own():
