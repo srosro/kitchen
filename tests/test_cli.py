@@ -1518,6 +1518,7 @@ class TestCmdOpenWikiAndNotes:
         # Wiki keys off the project slug; notes off the (namespaced) kitchen name.
         wiki = tmp_path / ".claude-kitchen" / "projects" / "widget" / "wiki"
         notes = tmp_path / ".claude-kitchen" / "widget-risotto" / "notes"
+        assert wiki.is_dir()
         assert not (wiki / "mistakes.md").exists(), "legacy memory files are retired: learnings go to runbooks"
         assert not (wiki / "preferences.md").exists()
         assert (notes / "handoff.md").exists()

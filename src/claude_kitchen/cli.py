@@ -18,7 +18,7 @@ from claude_kitchen.tmux import (
 )
 from claude_kitchen.state import (
     state_dir, plow_chat_dir, write_status, read_status, update_status, chat_record, read_waits, write_waits,
-    project_slug, namespaced, notes_dir, mcp_servers, channel_socket,
+    project_slug, namespaced, wiki_dir, notes_dir, mcp_servers, channel_socket,
     atomic_write_json, state_root, swarm_binary, swarm_credential, swarm_join_prompt, swarm_links, swarm_rooms,
     sous_first_turn,
     MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME, WINDOWS, lock, sous_pid,
@@ -409,6 +409,7 @@ def cmd_open(args):
         kitchen_file.write_text(json.dumps(kj) + "\n")
         run_hook(source, "on-open", name, cwd=project, source=source)
 
+    wiki_dir(slug).mkdir(parents=True, exist_ok=True)
     _seed(notes_dir(name), _NOTES_TEMPLATES)
 
     # No automatic sweep: cook records outlive their windows on a suspended
