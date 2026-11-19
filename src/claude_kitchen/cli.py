@@ -976,11 +976,12 @@ def cmd_hook(args):
 
     if backend == "claude":
         channel = _login_channel(kitchen, event, payload.get("error"))
-        if event == "Stop" or channel == "line":
+        container_sous = name == "sous" and bool(os.environ.get("KITCHEN_CONTAINER"))
+        if (event == "Stop" or channel == "line") and not container_sous:
             _login_alert(kitchen, name, channel == "line")
         if channel == "swarm":
             _swarm_login_hook(kitchen, raw)
-        if not (name == "sous" and os.environ.get("KITCHEN_CONTAINER")):
+        if not container_sous:
             _record_pause(base, name, event, payload)
         if event == "Stop":
             _warn_weekly_usage(base)
