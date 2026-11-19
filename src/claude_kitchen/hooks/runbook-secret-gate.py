@@ -6,10 +6,15 @@ so a secret written there has already left.
 
 Edit/Write/MultiEdit are gated on the resolved target path and the text being
 written. A Bash command is gated whole when any path-like word in it (with `~`
-and `$VARS` expanded, symlinks resolved) lands in a wiki: that over-blocks a read
-like `grep token= <wiki>`, which the agent can rephrase, rather than parse what a
-shell command writes. Fails open on a malformed request or a machine without the
-wiki settings: this hook must never wedge every tool call.
+and `$VARS` expanded, symlinks resolved) lands in a wiki, and what it scans is
+everything the command can see without running: its text, that text with the
+environment expanded (`printf "$TOKEN" > …`), and every file outside the wikis it
+names (`cp ~/.env …`, `cat creds >> …`). That over-blocks a read like
+`grep token= <wiki>`, which the agent can rephrase, rather than parse what a
+shell command writes. Output of a command substitution, or a program that opens
+the wiki itself, is out of a pre-run hook's reach. Fails open on a malformed
+request or a machine without the wiki settings: this hook must never wedge
+every tool call.
 """
 from __future__ import annotations
 
@@ -23,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _secret_patterns import contains_secret
 
 ROOT_KEYS = ("PERSONAL_RUNBOOK", "COMPANY_RUNBOOK")
+MAX_SCAN = 1 << 20  # bytes of one named file read for scanning
 PATH_WORD = re.compile(r"""[~/$][^\s'"<>|;&()`]*""")
 
 
@@ -50,6 +56,13 @@ def _in_wiki(path: Path, roots: list[Path]) -> bool:
     return any(path == root or root in path.parents for root in roots)
 
 
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(errors="replace") if path.is_file() and path.stat().st_size <= MAX_SCAN else ""
+    except OSError:
+        return ""
+
+
 def _written_text(tool: str, args: dict) -> str:
     if tool == "Write":
         return args.get("content") or ""
@@ -70,8 +83,10 @@ def main() -> int:
         return 0
     if tool == "Bash":
         command = args.get("command") or ""
-        hit = any(_in_wiki(_resolve(w, variables), roots) for w in PATH_WORD.findall(command))
-        text = command
+        paths = [_resolve(w, variables) for w in PATH_WORD.findall(command)]
+        hit = any(_in_wiki(p, roots) for p in paths)
+        text = "\n".join([command, os.path.expandvars(command),
+                          *(_read(p) for p in paths if not _in_wiki(p, roots))])
     else:
         hit = _in_wiki(_resolve(args.get("file_path") or "/", variables), roots)
         text = _written_text(tool, args)
