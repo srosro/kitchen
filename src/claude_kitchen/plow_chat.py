@@ -665,23 +665,21 @@ def mark(kitchen: str, record: dict, emoji: str) -> dict:
     when the cook reports, both before the sous answers, so no reaction lands after the answer
     and hides it from a phone's preview. Returns `record` holding what to take back next time.
     Best effort: a failure is logged and the ticket or report goes on."""
-    source, chat, message = record["message"].split(maxsplit=2)
-    previous = record.get("reaction")
     try:
+        source, chat, message = record["message"].split(maxsplit=2)
         if source == "swarm" and (account := swarm_account(kitchen)):
             room = chat if chat.startswith("!") else matrix_get(account, f"/directory/room/{quote(chat, safe='')}")["room_id"]
             path = f"/rooms/{quote(room, safe='')}"
-            if previous:
-                matrix_put(account, f"{path}/redact/{quote(previous, safe='')}/{uuid.uuid4().hex}", {})
             relation = {"rel_type": "m.annotation", "event_id": message, "key": emoji}
             taken = matrix_put(account, f"{path}/send/m.reaction/{uuid.uuid4().hex}", {"m.relates_to": relation})["event_id"]
+            if previous := record.get("reaction"):  # only once the new one is on, so the message never shows neither
+                matrix_put(account, f"{path}/redact/{quote(previous, safe='')}/{uuid.uuid4().hex}", {})
         elif source == "plow-chat":
+            # Plow keeps one reaction per actor on a message, so this one replaces the last.
             with plow_client(kitchen) as client:
-                for operation, custom in (("remove", previous), ("add", emoji)):
-                    if custom:
-                        client.post(f"/v1/chats/{chat}/messages/{message}/reactions",
-                                    json={"operation": operation, "type": "custom", "custom_emoji": custom}).raise_for_status()
-            taken = emoji
+                client.post(f"/v1/chats/{chat}/messages/{message}/reactions",
+                            json={"operation": "add", "type": "custom", "custom_emoji": emoji}).raise_for_status()
+            taken = None
         else:
             return record
     except (OSError, httpx.HTTPError, KeyError, ValueError) as e:

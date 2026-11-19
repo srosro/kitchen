@@ -882,7 +882,7 @@ class TestStatusPreservationAcrossNonStopWriters:
                        session_id="00000000-0000-0000-0000-000000000000", transcript_path=str(tmp_path / "none.jsonl"))
         with patch("claude_kitchen.channel.send_to_socket", lambda _sock, push: pushes.append((list(marks), push))):
             cmd_hook(argparse.Namespace(command="hook"))
-        done = [("react", "♨️"), ("redact", "%24r1"), ("react", "✅")] if source == "swarm" else [("add", "♨️"), ("remove", "♨️"), ("add", "✅")]
+        done = [("react", "♨️"), ("react", "✅"), ("redact", "%24r1")] if source == "swarm" else [("add", "♨️"), ("add", "✅")]
         assert [(seen, push["chat_message"]) for seen, push in pushes] == [(done, chat_message)]
 
     @patch("claude_kitchen.cli.send_keys")
