@@ -373,7 +373,11 @@ def cmd_open(args):
         resume_project = Path(resume_state.get(
             "worktree", resume_state.get("source", str(project)),
         ))
-        target_containerized = (resume_project / ".kitchen" / "container.toml").exists()
+        container_path = resume_project / ".kitchen" / "container.toml"
+        target_containerized = (
+            container_path.exists()
+            and tomllib.loads(container_path.read_text()).get("container") is not None
+        )
         sous_session_id = _sous_session_id(
             base, resume_state, containerized=target_containerized,
         )
