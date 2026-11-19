@@ -156,6 +156,17 @@ def test_container_reopen_resumes_the_isolated_session(tmp_path, monkeypatch):
     assert _reopen_cmd("acme-scout").endswith("kitchen open --resume")
 
 
+def test_initial_container_move_does_not_resume_host_session(tmp_path):
+    host_state = {"sous_container": False, "sous_session_id": "host-session"}
+    assert _sous_session_id(tmp_path, host_state, containerized=True) is None
+
+
+def test_container_session_does_not_fallback_to_host_session(tmp_path):
+    (tmp_path / "container-session.json").write_text("{}\n")
+    state = {"sous_container": True, "sous_session_id": "host-session"}
+    assert _sous_session_id(tmp_path, state) is None
+
+
 def test_spawn_sous_hands_only_its_runtime_to_the_container(tmp_path, monkeypatch):
     project = tmp_path / "project"
     project.mkdir()
