@@ -1384,6 +1384,42 @@ class TestCmdOpenPlainFolder:
             cmd_open(self._args(folder, name))
         return spawn, tmux
 
+    @pytest.mark.parametrize("flag, sous_toml, want", [
+        (None, None, None),
+        (None, 'model = "sonnet"\n', "sonnet"),
+        ("opus", 'model = "sonnet"\n', "opus"),
+    ])
+    def test_open_launches_the_sous_on_the_flag_else_the_committed_model(
+            self, tmp_path, monkeypatch, flag, sous_toml, want):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        folder = tmp_path / "notetaker"
+        (folder / ".kitchen").mkdir(parents=True)
+        if sous_toml:
+            (folder / ".kitchen" / "sous.toml").write_text(sous_toml)
+        args = self._args(folder, None)
+        args.model = flag
+        with patch("claude_kitchen.cli.state_dir", return_value=tmp_path / "state"), \
+             patch("claude_kitchen.cli.spawn_sous") as spawn, \
+             patch("claude_kitchen.cli.has_session", return_value=False), \
+             patch("claude_kitchen.cli.tmux", return_value=MagicMock(returncode=0)):
+            cmd_open(args)
+        assert spawn.call_args.kwargs["model"] == want
+
+    def test_open_refuses_a_committed_model_it_does_not_know(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        folder = tmp_path / "notetaker"
+        (folder / ".kitchen").mkdir(parents=True)
+        (folder / ".kitchen" / "sous.toml").write_text('model = "haiku"\n')
+        args = self._args(folder, None)
+        args.model = None
+        with patch("claude_kitchen.cli.state_dir", return_value=tmp_path / "state"), \
+             patch("claude_kitchen.cli.spawn_sous") as spawn, \
+             patch("claude_kitchen.cli.has_session", return_value=False), \
+             patch("claude_kitchen.cli.tmux", return_value=MagicMock(returncode=0)), \
+             pytest.raises(SystemExit, match="model must be one of fable, sonnet, opus"):
+            cmd_open(args)
+        spawn.assert_not_called()
+
     def test_unnamed_open_launches_the_sous_keyed_by_the_folder_path(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
         folder = tmp_path / "marketing"
