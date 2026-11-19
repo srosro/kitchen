@@ -8,8 +8,8 @@ Once `trusted-chats` exists, only the chats it lists carry authority: any other 
 arrive marked `trusted="false"`, as context the sous may answer but never act on.
 `start_chat` reaches only people already in one of the line's chats or listed in
 `start-chat-allow`, and opens at most `NEW_CHATS_PER_DAY` new chats a day, each logged.
-Every send that reaches anyone but the line's owner first goes past a fresh reviewer
-model, which reads the live thread (and, once `messages-host` names the latch host
+Every send that reaches anyone but the line's owner, in a new chat or one the owner
+isn't in, first goes past a fresh reviewer model, which reads the live thread (and, once `messages-host` names the latch host
 holding the owner's Messages, the owner's other recent threads with the same people)
 and holds a text that contradicts them, makes the owner look out of the loop, or isn't needed.
 """
