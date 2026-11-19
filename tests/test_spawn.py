@@ -637,10 +637,27 @@ class TestCheckSousPid:
         finally:
             os.kill(pid, 9)
 
+    @pytest.mark.parametrize("pid", [os.getpid(), 1], ids=["kitchen-itself", "another-users-process"])
+    def test_a_pid_reused_after_the_sous_is_gone_is_no_sous(self, tmp_path, pid):
+        """A container restart hands the old sous's pid to a new process, often kitchen's own open."""
+        import subprocess, sys
+        from claude_kitchen import spawn
+        env = {**os.environ, "AGENT_NAME": "", "AGENT_SESSION": "", "STATUS_DIR": ""}
+        subprocess.run([sys.executable, "-c",
+                        "import sys; from pathlib import Path; from unittest.mock import patch; "
+                        "from claude_kitchen.spawn import spawn_sous; "
+                        "patch('os.execvp').start(); patch('os.chdir').start(); "
+                        "spawn_sous('k', Path(sys.argv[1]), 'p', slug='gh-x-y')", str(tmp_path)],
+                       env=env, check=True)
+        record = (tmp_path / "sous.pid").read_text().split(maxsplit=1)
+        (tmp_path / "sous.pid").write_text(" ".join([str(pid), *record[1:]]))  # the sous exited; its pid is reused
+        spawn.check_sous_pid(tmp_path)  # no SystemExit, no PermissionError
+
     def test_a_live_sous_is_refused_at_once(self, tmp_path):
         import time
         from claude_kitchen import spawn
-        (tmp_path / "sous.pid").write_text(str(os.getpid()))  # alive, with its parent: not exiting
+        from claude_kitchen.state import process_started
+        (tmp_path / "sous.pid").write_text(f"{os.getpid()} {process_started(os.getpid())}")  # alive, with its parent: not exiting
         t0 = time.monotonic()
         with pytest.raises(SystemExit, match="already running"):
             spawn.check_sous_pid(tmp_path)
@@ -667,9 +684,11 @@ def test_windows_claude_cook_never_puts_a_value_in_powershell_source(monkeypatch
 def test_windows_kitchen_open_never_signals_a_live_sous(tmp_path, monkeypatch):
     """On Windows os.kill(pid, 0) terminates the process: the live-sous check must only look (pid_alive)."""
     import claude_kitchen.spawn as spawn
-    monkeypatch.setattr(spawn, "WINDOWS", True)
+    import claude_kitchen.state as state
+    for mod in (spawn, state):
+        monkeypatch.setattr(mod, "WINDOWS", True)
+        monkeypatch.setattr(mod, "pid_alive", lambda pid: True)
     monkeypatch.setattr(spawn, "SOUS_EXIT_WAIT", 0.3)
-    monkeypatch.setattr(spawn, "pid_alive", lambda pid: True)
     monkeypatch.setattr(spawn.os, "kill", lambda *a: pytest.fail(f"signalled the sous: os.kill{a}"))
     (tmp_path / "sous.pid").write_text("4242")
     with pytest.raises(SystemExit, match="already running"):

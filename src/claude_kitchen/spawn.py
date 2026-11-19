@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from claude_kitchen.tmux import tmux, has_session, target, SESSION
-from claude_kitchen.state import MCP_CONFIG_NAME, WINDOWS, channel_flags, pid_alive, sous_first_turn
+from claude_kitchen.state import MCP_CONFIG_NAME, WINDOWS, channel_flags, pid_alive, process_started, sous_first_turn, sous_pid
 
 
 FIRST_TURN_ENV = "KITCHEN_SOUS_FIRST_TURN"
@@ -41,13 +41,9 @@ def check_sous_pid(state_dir: Path):
     change nothing, and everything cmd_open does before launching the sous —
     rewriting kitchen.json and the MCP config, creating the session, and on the
     has_session branch _sweep_cooks — is a mutation."""
-    pid_file = state_dir / "sous.pid"
-    if not pid_file.exists():
+    pid = sous_pid(state_dir)
+    if pid is None:
         return
-    try:
-        pid = int(pid_file.read_text().strip())
-    except ValueError:
-        return  # stale pid, fine to proceed
     # A sous whose terminal just went away (tmux kill-server, a closed window) is still exiting for a moment:
     # wait for it, up to SOUS_EXIT_WAIT. Never signal it; a live sous, or one still there after the wait, refuses.
     deadline = time.monotonic() + SOUS_EXIT_WAIT
@@ -102,7 +98,7 @@ def spawn_sous(kitchen: str, state_dir: Path, sous_prompt: str,
                model: str = None):
     """Replace current process with Claude as sous chef."""
     # Write our PID before exec — exec preserves the PID
-    (state_dir / "sous.pid").write_text(str(os.getpid()))
+    (state_dir / "sous.pid").write_text(f"{os.getpid()} {process_started(os.getpid())}".strip())
 
     # AGENT_KITCHEN, not AGENT_SESSION: the tmux session is a constant now, so
     # the kitchen name is the only thing worth passing down and every consumer
