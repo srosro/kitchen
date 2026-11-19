@@ -14,7 +14,7 @@ from starlette.websockets import WebSocketDisconnect
 TOKEN = "agt_fake-token-xyz"
 SIGNATURE = "signed-write-capability"
 ACCEPTED_TYPES = {"image/png", "application/pdf"}  # the types the tests send
-NAMES = {"+15550000001": "Jordan", "+15550000002": "Alex"}  # as Plow names members it knows
+NAMES = {"+15550000001": "Jordan", "+15550000002": "Alex", "+15550000003": "Sky"}  # as Plow names members it knows
 
 
 class FakePlow:
@@ -33,7 +33,8 @@ class FakePlow:
         self.files_auth = {}  # attachment uid -> Authorization header its download carried
         self.started = []  # (members, body, idempotency_key) of each chat the agent started
         self.answer = None  # (handle, body) answering a started chat before the agent reads it back
-        self.members = {"cht_home": ["+15550000001", "+15550000002"], "cht_solo": ["+15550000001"], "cht_agents": ["+15550000001"]}  # chat -> member handles GET /v1/chats lists
+        self.members = {"cht_home": ["+15550000001", "+15550000002"], "cht_solo": ["+15550000001"], "cht_agents": ["+15550000001"],
+                        "cht_guests": ["+15550000003"]}  # cht_guests: a thread the owner isn't in  # chat -> member handles GET /v1/chats lists
         self.peer_chats = {"cht_agents"}  # chats that also seat a peer agent's line
         self.start_bodies = []  # each raw POST /v1/chats body
         self._uids = itertools.count(1)

@@ -20,12 +20,13 @@ from claude_kitchen.cli import cmd_hook
 from claude_kitchen.plow_chat import CREDENTIALS, Bridge, call, content_type_of, read_credentials
 from tests.fake_plow import SIGNATURE, TOKEN, FakePlow
 
-OWNER, TEAMMATE, STRANGER = "+15550000001", "+15550000002", "+15550000099"
+OWNER, TEAMMATE, STRANGER, GUEST = "+15550000001", "+15550000002", "+15550000099", "+15550000003"
 SPRUCE = {"type": "agent", "relationship": "peer", "line": {"display_name": "Spruce", "uid": "ln_peer"}}
 PLOW = {"type": "system", "name": "Plow"}
 NAMELESS = {"type": "agent", "relationship": "peer", "line": {"display_name": None, "uid": "ln_bare", "provider_key": "+15550000077"}}
 HOME = "cht_home"
 SOLO = "cht_solo"  # the owner alone with the line
+GUESTS = "cht_guests"  # a thread the owner isn't in, so the reviewer reads every text
 
 
 @pytest.fixture(autouse=True)
@@ -570,31 +571,35 @@ def reviewing(answer, prompts):
 
 @pytest.mark.parametrize("chat, answer, outcome", [
     ("cht_solo", "HOLD: never asked", "sent"),
-    (HOME, "SEND", "sent"),
-    (HOME, "**SEND.**", "sent"),
-    (HOME, "SEND: nothing contradicts it", "sent"),
-    (HOME, "HOLD: Jordan just said Tuesday doesn't work", "held"),
-    (HOME, "Looks fine to me", "error"),
-], ids=["owner-only-unreviewed", "send", "send-decorated", "send-with-reason", "hold", "no-verdict"])
-def test_a_text_anyone_but_the_owner_reads_goes_out_only_past_the_reviewer(chat, answer, outcome):
-    """The reviewer reads the thread fresh from Plow, so the owner's newest
-    text counts even when the sous was handed it mid-turn and never read it."""
+    (HOME, "HOLD: never asked", "sent"),
+    (GUESTS, "SEND", "sent"),
+    (GUESTS, "**SEND.**", "sent"),
+    (GUESTS, "SEND: nothing contradicts it", "sent"),
+    (GUESTS, "HOLD: Sky just said Tuesday doesn't work", "held"),
+    (GUESTS, "Looks fine to me", "error"),
+], ids=["owner-only-unreviewed", "owner-in-thread-unreviewed", "send", "send-decorated", "send-with-reason", "hold",
+        "no-verdict"])
+def test_only_a_thread_the_owner_isnt_in_goes_out_past_the_reviewer(chat, answer, outcome):
+    """The owner reads every text in a thread they're in, so only others are
+    reviewed. The reviewer reads the thread fresh from Plow, so its newest text
+    counts even when the sous was handed it mid-turn and never read it."""
     prompts = []
 
     async def scenario(fake, bridge, delivered):
         bridge.reviewer = reviewing(answer, prompts)
-        await fake.inbound(chat, OWNER, "Tuesday doesn't work for me")
+        await fake.inbound(chat, GUEST if chat == GUESTS else OWNER, "Tuesday doesn't work for me")
         await eventually(lambda: delivered)
         if outcome == "error":
             with pytest.raises(RuntimeError, match="neither SEND nor HOLD"):
                 await bridge.reply(chat, "I'll keep Tuesday's logistics straight")
         else:
             result = await bridge.reply(chat, "I'll keep Tuesday's logistics straight")
-            assert result.startswith("not sent: a reviewer held it (Jordan just said") if outcome == "held" else result.startswith("sent")
+            held = "not sent: a reviewer held it for existing chat cht_guests with Sky (Sky just said"
+            assert result.startswith(held) if outcome == "held" else result.startswith("sent")
         assert fake.sent == ([(chat, "I'll keep Tuesday's logistics straight")] if outcome == "sent" else [])
-        if chat == HOME:
-            assert "Jordan: Tuesday doesn't work for me" in prompts[0]
-            assert "to people other than Jordan: Alex." in prompts[0]
+        if chat == GUESTS:
+            assert "Sky: Tuesday doesn't work for me" in prompts[0]
+            assert "to people other than Jordan: Sky." in prompts[0]
         else:
             assert prompts == []
     run_bridge(scenario)
@@ -607,10 +612,10 @@ def test_the_reviewer_sees_which_file_was_sent_not_just_that_one_was():
 
     async def scenario(fake, bridge, delivered):
         bridge.reviewer = reviewing("SEND", prompts)
-        await fake.inbound(HOME, OWNER, "can you share the log?")
+        await fake.inbound(GUESTS, GUEST, "can you share the log?")
         await eventually(lambda: delivered)
-        fake.add(HOME, None, "", files=[("cedar.vcf", b"BEGIN:VCARD")])
-        assert (await bridge.reply(HOME, "will do once it's cleared")).startswith("sent")
+        fake.add(GUESTS, None, "", files=[("cedar.vcf", b"BEGIN:VCARD")])
+        assert (await bridge.reply(GUESTS, "will do once it's cleared")).startswith("sent")
         assert "you: (cedar.vcf)" in prompts[0]
     run_bridge(scenario)
 
@@ -666,20 +671,26 @@ def test_a_credit_shows_the_consulted_agents_swarm_display_name(monkeypatch, pro
     run_bridge(scenario)
 
 
-def test_start_chat_and_send_file_are_reviewed_too(shot):
+def test_start_chat_and_send_file_are_reviewed_unless_the_owner_is_in_the_thread(shot):
     prompts = []
+    cursor = Path(tempfile.mkdtemp()) / "last_seen.json"
+    (cursor.parent / plow_chat.START_CHAT_ALLOW).write_text(STRANGER + "\n")
 
     async def scenario(fake, bridge, delivered):
-        bridge.reviewer = reviewing("HOLD: Alex is in the room", prompts)
-        await fake.inbound(HOME, OWNER, "Tuesday's out")
+        bridge.reviewer = reviewing("HOLD: Sky is in the room", prompts)
+        await fake.inbound(GUESTS, GUEST, "Tuesday's out")
         await eventually(lambda: delivered)
-        assert (await bridge.start_chat([TEAMMATE], "hi Alex")).startswith("not sent: a reviewer held it")
-        assert (await bridge.send_file(HOME, [str(shot)], "the build")).startswith("not sent: a reviewer held it")
+        held = "not sent: a reviewer held it for"
+        assert (await bridge.start_chat([GUEST], "hi Sky")).startswith(f"{held} existing chat cht_guests with Sky (")
+        assert (await bridge.start_chat([STRANGER], "hello")).startswith(f"{held} a new chat with {STRANGER} (")
+        assert (await bridge.send_file(GUESTS, [str(shot)], "the build")).startswith(f"{held} existing chat cht_guests")
         assert (await bridge.reply(HOME, "the build", consulted="@cedar:x")).startswith("not sent: `consulted` credits")
         assert fake.started == [] and fake.sent == []
-        assert ["hi Alex" in prompts[0], "the build" in prompts[1]] == [True, True]
-        assert "Jordan: Tuesday's out" in prompts[0]  # start_chat reviews against the chat Plow will adopt
-    run_bridge(scenario)
+        assert ["hi Sky" in prompts[0], "hello" in prompts[1], "the build" in prompts[2]] == [True, True, True]
+        assert "Sky: Tuesday's out" in prompts[0]  # start_chat reviews against the chat Plow will adopt
+        assert (await bridge.start_chat([TEAMMATE], "hi Alex")).startswith("started")  # cht_home seats the owner
+        assert len(prompts) == 3
+    run_bridge(scenario, cursor=cursor)
 
 
 def test_the_review_reads_the_owners_other_recent_threads_with_the_same_people(monkeypatch):
@@ -689,14 +700,14 @@ def test_the_review_reads_the_owners_other_recent_threads_with_the_same_people(m
     now = datetime.now().astimezone()
     recent, old = now.isoformat(), (now - timedelta(days=plow_chat.REVIEW_DAYS + 1)).isoformat()
     chats = {"chats": [
-        {"id": 1, "last_message_at": recent, "participants": [{"handle": TEAMMATE, "name": "Alex"}]},
+        {"id": 1, "last_message_at": recent, "participants": [{"handle": GUEST, "name": "Sky"}]},
         {"id": 2, "last_message_at": recent, "participants": [{"handle": STRANGER, "name": None}]},
-        {"id": 3, "last_message_at": old, "participants": [{"handle": TEAMMATE, "name": "Alex"}]},
+        {"id": 3, "last_message_at": old, "participants": [{"handle": GUEST, "name": "Sky"}]},
     ]}
     thread = {"messages": [
         {"date": old, "from": {"me": True, "name": None, "handle": None}, "text": "Tuesday works"},
         {"date": recent, "from": {"me": True, "name": None, "handle": None}, "text": "Shoot, Tuesday's out"},
-        {"date": recent, "from": {"me": False, "name": "Alex", "handle": TEAMMATE}, "text": "no worries"},
+        {"date": recent, "from": {"me": False, "name": "Sky", "handle": GUEST}, "text": "no worries"},
     ]}
     calls, prompts = [], []
 
@@ -708,10 +719,10 @@ def test_the_review_reads_the_owners_other_recent_threads_with_the_same_people(m
     async def scenario(fake, bridge, delivered):
         (bridge.cursor.parent / plow_chat.MESSAGES_HOST).write_text("mac\n")
         bridge.reviewer = reviewing("SEND", prompts)
-        assert (await bridge.reply(HOME, "see you Tuesday")).startswith("sent")
+        assert (await bridge.reply(GUESTS, "see you Tuesday")).startswith("sent")
         assert [c[c.index("--chat-id") + 1] for c in calls if "--chat-id" in c] == ["1"]
         assert all(c[c.index("--host") + 1] == "mac" for c in calls)
-        assert "Jordan: Shoot, Tuesday's out\nAlex: no worries" in prompts[0]
+        assert "Jordan: Shoot, Tuesday's out\nSky: no worries" in prompts[0]
         assert "Tuesday works" not in prompts[0]
     run_bridge(scenario)
 
@@ -719,11 +730,11 @@ def test_the_review_reads_the_owners_other_recent_threads_with_the_same_people(m
 def test_a_text_landing_while_the_reviewer_thinks_stops_the_send():
     async def scenario(fake, bridge, delivered):
         async def slow_reviewer(prompt):
-            await fake.inbound(HOME, TEAMMATE, "actually, skip Tuesday")
+            await fake.inbound(GUESTS, GUEST, "actually, skip Tuesday")
             await eventually(lambda: delivered)  # handed over already, so only a fresh read catches it
             return "SEND"
         bridge.reviewer = slow_reviewer
-        assert (await bridge.reply(HOME, "see you Tuesday")).startswith("not sent: 1 newer message(s) landed")
+        assert (await bridge.reply(GUESTS, "see you Tuesday")).startswith("not sent: 1 newer message(s) landed")
         assert fake.sent == []
     run_bridge(scenario)
 

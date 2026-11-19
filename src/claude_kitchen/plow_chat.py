@@ -478,7 +478,8 @@ class Bridge:
                    priority: str = "", skip: bool = False, consulted: str = "") -> str | None:
         """Why a reviewer holds `text`, bound for `chat` or the chat with
         `handles` (an existing one's history included), or None to send it.
-        Only a text the owner alone would read goes unreviewed. The thread is
+        Only a new thread, or one the owner isn't in, is reviewed: the owner
+        reads every text in a thread they're in. The thread is
         read fresh, so a text the sous hasn't been shown yet still counts, and
         read again after the review, so one that lands meanwhile stops the send."""
         r = await self.client.get("/v1/chats")
@@ -488,12 +489,15 @@ class Bridge:
                              if p["type"] == "member" and p["role"] != "owner"} for c in chats}
         owner = next((p["display_name"] for c in chats for p in c["participants"]
                       if p["type"] == "member" and p["role"] == "owner"), "the head chef")
+        seated = {c["uid"] for c in chats if any(p["type"] == "member" and p["role"] == "owner" for p in c["participants"])}
         chat = chat or next((uid for uid, people in others.items() if set(people) == set(handles)), None)
         people = {h: h for h in handles} | others.get(chat, {})
         if not people:
             return self.gated(chat, priority, skip, consulted)
         if consulted:
             return "not sent: `consulted` credits a text to the head chef alone; drop it here"
+        if chat in seated:
+            return None
         thread = await self.thread(chat) if chat else {}
         host = self.cursor.parent / MESSAGES_HOST
         other = (await owner_threads(listed(host).pop(), {h.casefold() for h in people}, owner)
@@ -503,7 +507,9 @@ class Bridge:
             other=other, days=REVIEW_DAYS, text=text))).strip()
         verdict, _, why = (answer.splitlines()[0] if answer else "").partition(":")
         if verdict.strip("*. ") == "HOLD":
-            return f"not sent: a reviewer held it ({why.strip()}). Stay quiet, or bring the head chef the draft and the reason"
+            where = f"existing chat {chat}" if chat else "a new chat"
+            return (f"not sent: a reviewer held it for {where} with {', '.join(people.values())} ({why.strip()}). "
+                    "Stay quiet, or bring the head chef the draft and the reason")
         if verdict.strip("*. ") != "SEND":
             raise RuntimeError(f"the pre-send reviewer answered neither SEND nor HOLD: {answer[:200]!r}; not sent")
         if chat and (newer := [line for uid, line in (await self.thread(chat)).items()
