@@ -76,6 +76,16 @@ assert_eq deny "$(gate Bash "$(jq -nc '{command:"printf %s password=example#valu
 assert_eq deny "$(jq -nc --arg c "printf %s password=example-value > wiki/personal/note.md # don't forget" '{tool_name:"Bash",tool_input:{command:$c},cwd:"'"$GATE_HOME"'"}' | HOME="$GATE_HOME" "$HOOKS/runbook-secret-gate.py" | jq -r .hookSpecificOutput.permissionDecision)" "gate: an apostrophe in a trailing comment doesn't hide a relative wiki target"
 assert_eq deny "$(jq -nc --arg c "cp dot.env wiki/personal/x.md" '{tool_name:"Bash",tool_input:{command:$c},cwd:"'"$GATE_HOME"'"}' | HOME="$GATE_HOME" "$HOOKS/runbook-secret-gate.py" | jq -r .hookSpecificOutput.permissionDecision)" "gate: relative paths resolve against the session's cwd"
 assert_eq allow "$(gate Write "$(jq -nc --arg f "$P" '{file_path:$f,content:"the key lives in the vault item ea-mail (…AAA)"}')")" "gate: a clean runbook write passes"
+# Only statements that touch a wiki are judged: a kitchen ticket naming a notes file whose prose reads like
+# "token: still waiting" doesn't block the runbook append beside it, and a Swarm priority ref isn't a credential.
+REF='!rhtLSQCsLcX3dU3lmwtt4C-GJLMay8fdhyeQIrBqV-0/945fba67'
+printf 'STR token: still waiting on Sam\n' > "$GATE_HOME/notes.md"
+assert_eq allow "$(gate Bash "$(jq -nc --arg c "kitchen ticket eng --priority '$REF' \"see $GATE_HOME/notes.md\" && echo lesson >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a ticket beside a runbook append isn't judged by the append's rules"
+assert_eq allow "$(gate Bash "$(jq -nc --arg c "kitchen ticket eng --priority '$REF' \"see $GATE_HOME/notes.md\""$'\n'"echo lesson >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: same, on separate lines"
+assert_eq allow "$(gate Bash "$(jq -nc --arg c "echo 'priority: $REF, room !TdVm4SfMlHOrV6GTlXE_GkqIbtSLV-fnVfWKXE3F8aE' >> ~/wiki/plowco/kitchen.md" '{command:$c}')")" "gate: Swarm refs and room ids aren't credentials"
+assert_eq deny "$(gate Bash "$(jq -nc '{command:"cat ~/dot.env | tee -a ~/wiki/personal/runbooks/x.md"}')")" "gate: a pipeline stays one statement, so its source is scanned"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "cat >> ~/wiki/personal/runbooks/x.md <<EOF"$'\n'"note; key $planted"$'\n'"EOF" '{command:$c}')")" "gate: a heredoc body stays with the line that opens it"
+
 # The retired shared memory files: any write is refused, in a wiki or in $KITCHEN_WIKI; archived copies are not.
 mkdir -p "$GATE_HOME/kw"
 assert_eq deny "$(gate Edit "$(jq -nc --arg f "$GATE_HOME/wiki/personal/projects/kitchen/preferences.md" '{file_path:$f,old_string:"a",new_string:"b"}')")" "gate: a clean write to a retired preferences.md in a wiki is refused"

@@ -10,15 +10,18 @@ the shell parsing this gate avoids. Learnings go to runbooks; the Read tool stil
 reads.
 
 Edit/Write/MultiEdit are gated on the resolved target path and the text being
-written. A Bash command is gated whole when it mentions a wiki without any
-shell parsing: its text contains a spelling of a wiki root (as configured,
-expanded, resolved, `$PERSONAL_RUNBOOK`, or relative to the session's cwd), the
-cwd is inside a wiki, or a word in it resolves into one (a symlinked alias).
-Words come from a crude split plus, when the command parses, its quoted words
-(`"my notes.txt"`). What it then scans is
-everything the command can see without running: its text, that text with the
-environment expanded (`printf "$TOKEN" > …`), and every file outside the wikis it
-names (`cp ~/.env …`, `cat creds >> …`). That over-blocks a read like
+written. A Bash command is judged one statement at a time (split on newlines
+and unquoted `&&`, `||`, `;`, `&`; a heredoc body stays with the line that opens
+it, and a pipeline stays whole), so a `kitchen ticket` beside a runbook append
+isn't judged by the append's rules. A statement is judged when it mentions a
+wiki without any shell parsing: its text contains a spelling of a wiki root (as
+configured, expanded, resolved, `$PERSONAL_RUNBOOK`, or relative to the
+session's cwd), the cwd is inside a wiki, or a word in it resolves into one (a
+symlinked alias). Words come from a crude split plus, when the statement parses,
+its quoted words (`"my notes.txt"`). What it then scans is everything that
+statement can see without running: its text, that text with the environment
+expanded (`printf "$TOKEN" > …`), and every file outside the wikis it names
+(`cp ~/.env …`, `cat creds >> …`). That over-blocks a read like
 `grep token= <wiki>`, which the agent can rephrase, rather than parse what a
 shell command writes. Output of a command substitution, or a program that opens
 the wiki itself, is out of a pre-run hook's reach. Fails open on a malformed
@@ -40,6 +43,7 @@ from _secret_patterns import contains_secret
 ROOT_KEYS = ("PERSONAL_RUNBOOK", "COMPANY_RUNBOOK")
 RETIRED = {"preferences.md", "mistakes.md"}
 MAX_SCAN = 1 << 20  # bytes of one named file read for scanning
+HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)")
 WORD_BREAK = re.compile(r"""[\s<>|;&()'"`]+""")
 
 
@@ -68,6 +72,43 @@ def _spellings(key: str, value: str, root: Path, cwd: Path) -> set[str]:
     if cwd in root.parents:
         names.add(str(root.relative_to(cwd)))
     return names
+
+
+def _split_unquoted(line: str) -> list[str]:
+    """`line` cut at `&&`, `||`, `;` and a lone `&` outside quotes; `|` stays, so a pipeline is one piece."""
+    parts, start, quote, i = [], 0, None, 0
+    while i < len(line):
+        c = line[i]
+        if c == "\\":
+            i += 2
+            continue
+        if quote:
+            quote = None if c == quote else quote
+        elif c in "'\"":
+            quote = c
+        elif line.startswith(("&&", "||"), i) or c == ";" or (c == "&" and line[i - 1:i] not in (">", "<")
+                                                              and line[i + 1:i + 2] != ">"):
+            parts.append(line[start:i])
+            i += 2 if line.startswith(("&&", "||"), i) else 1
+            start = i
+            continue
+        i += 1
+    return parts + [line[start:]]
+
+
+def _statements(command: str) -> list[str]:
+    """Shell statements in `command`; a heredoc body or a backslash-continued line stays with its first line."""
+    out, lines, i = [], command.split("\n"), 0
+    while i < len(lines):
+        block, heredoc = [lines[i]], HEREDOC.search(lines[i])
+        i += 1
+        while (heredoc or block[-1].endswith("\\")) and i < len(lines):
+            block.append(lines[i])
+            i += 1
+            if heredoc and block[-1].strip() == heredoc.group(1):
+                heredoc = None
+        out += ["\n".join(block)] if len(block) > 1 else _split_unquoted(block[0])
+    return [s for s in out if s.strip()]
 
 
 def _in_wiki(path: Path, roots: list[Path]) -> bool:
@@ -107,13 +148,15 @@ def main() -> int:
     if not roots:
         return 0
     if tool == "Bash":
-        command, here = args.get("command") or "", Path(cwd).resolve()
-        words = set(WORD_BREAK.split(command)) | {w for seg in _split_into_segments(command) for w in seg}
-        paths = [_resolve(w, variables, cwd) for w in words if w]
-        hit = (_in_wiki(here, roots) or any(_in_wiki(p, roots) for p in paths)
-               or any(s in command for k, (v, root) in named.items() for s in _spellings(k, v, root, here)))
-        text = "\n".join([command, os.path.expandvars(command),
-                          *(_read(p) for p in paths if not _in_wiki(p, roots))])
+        here, paths, judged = Path(cwd).resolve(), [], []
+        for stmt in _statements(args.get("command") or ""):
+            words = set(WORD_BREAK.split(stmt)) | {w for seg in _split_into_segments(stmt) for w in seg}
+            found = [_resolve(w, variables, cwd) for w in words if w]
+            paths += found
+            if (_in_wiki(here, roots) or any(_in_wiki(p, roots) for p in found)
+                    or any(s in stmt for k, (v, root) in named.items() for s in _spellings(k, v, root, here))):
+                judged += [stmt, os.path.expandvars(stmt), *(_read(p) for p in found if not _in_wiki(p, roots))]
+        hit, text = bool(judged), "\n".join(judged)
     else:
         paths = [_resolve(args.get("file_path") or "/", variables)]
         hit = _in_wiki(paths[0], roots)
