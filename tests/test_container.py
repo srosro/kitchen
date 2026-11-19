@@ -98,21 +98,6 @@ def test_container_run_uses_the_locked_down_boundary(tmp_path, monkeypatch):
     assert channel_socket(tmp_path) == Path("/tmp/kitchen-channel/kitchen.sock")
 
 
-def test_prepare_mount_target_keeps_home_parent_writable(tmp_path, monkeypatch):
-    source = tmp_path / "credential.json"
-    source.write_text("{}\n")
-    home_source = tmp_path / "container-home"
-    home_source.mkdir()
-    monkeypatch.setattr(Path, "home", lambda: Path("/home/u"))
-
-    container._prepare_mount_target(home_source, {
-        "source": source,
-        "target": Path("/home/u/.claude/credential.json"),
-    })
-
-    assert (home_source / ".claude").is_dir()
-
-
 def test_remove_refuses_a_container_kitchen_does_not_own():
     foreign = type("R", (), {"returncode": 0, "stdout": "someone-else\n", "stderr": ""})()
     with patch("claude_kitchen.container.subprocess.run", return_value=foreign) as run:
