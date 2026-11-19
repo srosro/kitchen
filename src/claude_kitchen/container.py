@@ -48,6 +48,16 @@ def _path(value: str) -> Path:
     return Path(os.path.expandvars(value)).expanduser().resolve()
 
 
+def _prepare_mount_target(home_source: Path, mount: dict) -> None:
+    try:
+        relative = mount["target"].relative_to(Path.home())
+    except ValueError:
+        return
+    target = home_source / relative
+    directory = target if mount["source"].is_dir() else target.parent
+    directory.mkdir(parents=True, exist_ok=True)
+
+
 def mcp_config(state_dir: Path) -> Path:
     """Write the container's MCP config, whose binaries resolve in its PATH."""
     source = json.loads((state_dir / "kitchen-mcp.json").read_text())
@@ -105,6 +115,8 @@ def run(kitchen: str, project: Path, state_dir: Path, cfg: dict,
     if "wiki" in cfg:
         mounts.append({"source": cfg["wiki"], "target": cfg["wiki"]})
     mounts.extend(cfg["mounts"])
+    for mount in mounts:
+        _prepare_mount_target(cfg["home_source"], mount)
     argv = [
         "docker", "run", "--detach", "--interactive", "--tty",
         "--name", name,
