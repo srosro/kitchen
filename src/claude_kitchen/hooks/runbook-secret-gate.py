@@ -56,7 +56,7 @@ def _resolve(word: str, variables: dict[str, str], cwd: str = "/") -> Path:
 
 def _words(command: str) -> list[str]:
     """Shell words, or path-like runs when the command doesn't parse (a heredoc body's apostrophe)."""
-    segments = _split_into_segments(command)
+    segments = _split_into_segments(command, comments=False)
     return [w for segment in segments for w in segment] if segments else PATH_WORD.findall(command)
 
 
