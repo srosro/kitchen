@@ -48,6 +48,23 @@ def _path(value: str) -> Path:
     return Path(os.path.expandvars(value)).expanduser().resolve()
 
 
+def _prepare_mount_targets(mounts: list[dict]) -> None:
+    for mount in mounts:
+        ancestors = [
+            candidate for candidate in mounts
+            if candidate is not mount and candidate["source"].is_dir()
+            and mount["target"].is_relative_to(candidate["target"])
+        ]
+        if not ancestors:
+            continue
+        ancestor = max(ancestors, key=lambda candidate: len(candidate["target"].parts))
+        target = ancestor["source"] / mount["target"].relative_to(ancestor["target"])
+        directory = target if mount["source"].is_dir() else target.parent
+        if not directory.resolve().is_relative_to(ancestor["source"].resolve()):
+            raise SystemExit(f"container mount target parent escapes mount source: {mount['target']}")
+        directory.mkdir(parents=True, exist_ok=True)
+
+
 def mcp_config(state_dir: Path) -> Path:
     """Write the container's MCP config, whose binaries resolve in its PATH."""
     source = json.loads((state_dir / "kitchen-mcp.json").read_text())
@@ -105,6 +122,7 @@ def run(kitchen: str, project: Path, state_dir: Path, cfg: dict,
     if "wiki" in cfg:
         mounts.append({"source": cfg["wiki"], "target": cfg["wiki"]})
     mounts.extend(cfg["mounts"])
+    _prepare_mount_targets(mounts)
     argv = [
         "docker", "run", "--detach", "--interactive", "--tty",
         "--name", name,
