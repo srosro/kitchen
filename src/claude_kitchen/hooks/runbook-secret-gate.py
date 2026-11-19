@@ -10,10 +10,10 @@ the shell parsing this gate avoids. Learnings go to runbooks; the Read tool stil
 reads.
 
 Edit/Write/MultiEdit are gated on the resolved target path and the text being
-written. A Bash command is judged one statement at a time (split on newlines
-and unquoted `&&`, `||`, `;`, `&`; a heredoc body stays with the line that opens
-it, and a pipeline stays whole), so a `kitchen ticket` beside a runbook append
-isn't judged by the append's rules. A statement is judged when it mentions a
+written. A Bash command is judged one line at a time (a heredoc body or a
+backslash continuation stays with its line; anything a line split could get
+wrong judges the whole command), so a `kitchen ticket` on its own line isn't
+judged by a runbook append on the next. A statement is judged when it mentions a
 wiki without any shell parsing: its text contains a spelling of a wiki root (as
 configured, expanded, resolved, `$PERSONAL_RUNBOOK`, or relative to the
 session's cwd), the cwd is inside a wiki, or a word in it resolves into one (a
@@ -43,7 +43,8 @@ from _secret_patterns import contains_secret
 ROOT_KEYS = ("PERSONAL_RUNBOOK", "COMPANY_RUNBOOK")
 RETIRED = {"preferences.md", "mistakes.md"}
 MAX_SCAN = 1 << 20  # bytes of one named file read for scanning
-HEREDOC = re.compile(r"<<-?\s*\\?['\"]?(\w+)['\"]?")
+HEREDOC = re.compile(r"""<<(?!<)(-?)\s*(?:('[^']*'|"[^"]*")|\\?([^\s;&|<>()'"]+))""")
+COMPOUND = re.compile(r"\s*(do|done|then|else|elif|fi|esac|in|\}|\{)(\s|;|$)")
 WORD_BREAK = re.compile(r"""[\s<>|;&()'"`]+""")
 
 
@@ -74,48 +75,51 @@ def _spellings(key: str, value: str, root: Path, cwd: Path) -> set[str]:
     return names
 
 
-def _statements(command: str) -> list[str]:
-    """Top-level shell statements in `command`: cut at newlines and `&&`, `||`, `;`, a lone `&`, but never
-    inside quotes or `$( )`/`( )`/backticks; a heredoc's body joins the statement that opens it, and `|`
-    keeps a pipeline whole. Anything left unbalanced returns the whole command, the conservative answer."""
-    out, start, quote, depth, i, n = [], 0, None, 0, 0, len(command)
-    heredocs: list[str] = []
-    while i < n:
-        c = command[i]
+def _balanced(line: str) -> bool:
+    """Whether `line` closes every quote and bracket it opens (a backslash escapes one character)."""
+    quote, depth, i = None, 0, 0
+    while i < len(line):
+        c = line[i]
         if c == "\\":
             i += 2
             continue
         if quote:
             quote = None if c == quote else quote
-            i += 1
-            continue
-        if c in "'\"`":
+        elif c in "'\"`":
             quote = c
-        elif c == "(":
+        elif c in "({":
             depth += 1
-        elif c == ")":
-            depth = max(depth - 1, 0)
-        elif depth == 0 and command.startswith("<<", i) and not command.startswith("<<<", i):
-            m = HEREDOC.match(command, i)
-            if m:
-                heredocs.append(m.group(1))
-                i = m.end()
-                continue
-        elif depth == 0 and (c in ";\n" or command.startswith(("&&", "||"), i)
-                             or (c == "&" and command[i - 1:i] not in "<>" and command[i + 1:i + 2] != ">")):
-            while c == "\n" and heredocs:
-                delim, lines_end = heredocs.pop(0), command.find("\n", i + 1)
-                while lines_end != -1 and command[i + 1:lines_end].strip() != delim:
-                    i, lines_end = lines_end, command.find("\n", lines_end + 1)
-                i = n if lines_end == -1 else lines_end
-            out.append(command[start:i])
-            i += 2 if command.startswith(("&&", "||"), i) else 1
-            start = i
-            continue
+        elif c in ")}":
+            depth -= 1
         i += 1
-    if quote or depth or heredocs:
-        return [command]
-    return [s for s in out + [command[start:]] if s.strip()]
+    return quote is None and depth == 0
+
+
+def _statements(command: str) -> list[str]:
+    """The command's statements, one per line: a trailing backslash joins the next line and a line that opens
+    heredocs takes their bodies. Wherever that split could be wrong (an unbalanced quote or bracket on a line,
+    a compound-command keyword line, an unterminated heredoc) the whole command is one statement."""
+    lines, out, i = command.split("\n"), [], 0
+    while i < len(lines):
+        block = [lines[i]]
+        i += 1
+        while block[-1].endswith("\\") and i < len(lines):
+            block.append(lines[i])
+            i += 1
+        head = "\n".join(block)
+        if not _balanced(head) or COMPOUND.match(head):
+            return [command]
+        for strip_tabs, quoted, bare in HEREDOC.findall(head):
+            delim = quoted[1:-1] if quoted else bare
+            while i < len(lines) and (lines[i].lstrip("\t") if strip_tabs else lines[i]) != delim:
+                block.append(lines[i])
+                i += 1
+            if i == len(lines):
+                return [command]
+            block.append(lines[i])
+            i += 1
+        out.append("\n".join(block))
+    return [s for s in out if s.strip()]
 
 
 def _in_wiki(path: Path, roots: list[Path]) -> bool:

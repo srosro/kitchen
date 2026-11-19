@@ -80,14 +80,19 @@ assert_eq allow "$(gate Write "$(jq -nc --arg f "$P" '{file_path:$f,content:"the
 # "token: still waiting" doesn't block the runbook append beside it, and a Swarm priority ref isn't a credential.
 REF='!rhtLSQCsLcX3dU3lmwtt4C-GJLMay8fdhyeQIrBqV-0/945fba67'
 printf 'STR token: still waiting on the owner\n' > "$GATE_HOME/notes.md"
-assert_eq allow "$(gate Bash "$(jq -nc --arg c "kitchen ticket eng --priority '$REF' \"see $GATE_HOME/notes.md\" && echo lesson >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a ticket beside a runbook append isn't judged by the append's rules"
-assert_eq allow "$(gate Bash "$(jq -nc --arg c "kitchen ticket eng --priority '$REF' \"see $GATE_HOME/notes.md\""$'\n'"echo lesson >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: same, on separate lines"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "kitchen ticket eng --priority '$REF' \"see $GATE_HOME/notes.md\" && echo lesson >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: one line is one statement, so a ticket chained with && to the append is judged with it"
+assert_eq allow "$(gate Bash "$(jq -nc --arg c "kitchen ticket eng --priority '$REF' \"see $GATE_HOME/notes.md\""$'\n'"echo lesson >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a ticket on its own line isn't judged by the runbook append on the next"
 assert_eq allow "$(gate Bash "$(jq -nc --arg c "echo 'priority: $REF, room !TdVm4SfMlHOrV6GTlXE_GkqIbtSLV-fnVfWKXE3F8aE' >> ~/wiki/plowco/kitchen.md" '{command:$c}')")" "gate: Swarm refs and room ids aren't credentials"
 assert_eq deny "$(gate Bash "$(jq -nc '{command:"cat ~/dot.env | tee -a ~/wiki/personal/runbooks/x.md"}')")" "gate: a pipeline stays one statement, so its source is scanned"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "cat >> ~/wiki/personal/runbooks/x.md <<EOF"$'\n'"note; key $planted"$'\n'"EOF" '{command:$c}')")" "gate: a heredoc body stays with the line that opens it"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "printf 'note"$'\n'"key $planted' >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a newline inside quotes doesn't split a statement"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "echo \$(printf %s $planted; true) > ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a ; inside \$( ) doesn't split a statement"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "cat <<\\EOF <<'TWO' >> ~/wiki/personal/runbooks/x.md"$'\n'"fine"$'\n'"EOF"$'\n'"key $planted"$'\n'"TWO" '{command:$c}')")" "gate: escaped and second heredoc bodies stay with their statement"
+assert_eq allow "$(gate Bash "$(jq -nc --arg c "kitchen ticket eng --priority '$REF' 'see the notes'"$'\n'"cat >> ~/wiki/personal/runbooks/x.md <<'EOF'"$'\n'"## A lesson"$'\n'"EOF"$'\n'"echo '- shipped' >> $GATE_HOME/notes.md" '{command:$c}')")" "gate: the reported shape (ticket, heredoc runbook append, notes append) passes"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "{ printf %s $planted; true; } > ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a brace group on one line is one statement"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "cat <<EOF > ~/wiki/personal/runbooks/x.md; true"$'\n'" EOF"$'\n'"key $planted"$'\n'"EOF" '{command:$c}')")" "gate: an indented EOF doesn't end a <<EOF body, and a separator before the body keeps it"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "cat >> ~/wiki/personal/runbooks/x.md <<'END-X'"$'\n'"key $planted"$'\n'"END-X" '{command:$c}')")" "gate: a quoted delimiter with punctuation"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "for f in a; do"$'\n'"printf %s $planted"$'\n'"done >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a multi-line compound command is judged whole"
 
 # The retired shared memory files: any write is refused, in a wiki or in $KITCHEN_WIKI; archived copies are not.
 mkdir -p "$GATE_HOME/kw"
