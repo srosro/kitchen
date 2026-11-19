@@ -8,10 +8,9 @@ Once `trusted-chats` exists, only the chats it lists carry authority: any other 
 arrive marked `trusted="false"`, as context the sous may answer but never act on.
 `start_chat` reaches only people already in one of the line's chats or listed in
 `start-chat-allow`, and opens at most `NEW_CHATS_PER_DAY` new chats a day, each logged.
-Every send that reaches anyone but the line's owner, in a new chat or one the owner
-isn't in, first goes past a fresh reviewer model, which reads the live thread (and, once `messages-host` names the latch host
-holding the owner's Messages, the owner's other recent threads with the same people)
-and holds a text that contradicts them, makes the owner look out of the loop, or isn't needed.
+Every send that reaches anyone but the line's owner, outside a chat `trusted-chats` lists, first goes
+past a fresh reviewer model, which reads the live thread and holds only a text that shares someone
+else's private data, a credential, or a commitment the owner didn't make.
 """
 import asyncio
 import json
@@ -40,27 +39,21 @@ CREDENTIALS = "plow-credentials"  # written mode 600 by `latch agents new --own 
 TRUSTED_CHATS = "trusted-chats"  # one chat uid per line; read at each hand-over, so edits need no restart
 START_CHAT_ALLOW = "start-chat-allow"  # one handle per line, beyond those already in the line's chats
 STARTED_CHATS = "started-chats.log"  # one line per chat start_chat sends: time, chat, created, handles
-MESSAGES_HOST = "messages-host"  # the latch host holding the owner's Messages, read by the pre-send review
 CONSULT_GATE = "consult-gate"  # the owner's Swarm id: a text to the owner alone names the agent consulted first
 NEW_CHATS_PER_DAY = 5
-REVIEW_DAYS = 3  # how far back the review reads the owner's other threads
 REVIEW_MODEL = "sonnet"
-REVIEW = """An AI agent working for {owner} is about to send the iMessage below to people other than \
-{owner}: {people}. You are the second pair of eyes. Someone who gets a wrong, redundant or \
-out-of-step text from {owner}'s agent concludes that {owner} is disorganized.
+REVIEW = """An AI agent working for {owner} is about to send the iMessage below to {people}. \
+Check its content only; whether it should go out is not your call.
 
-Hold it if any of these is true:
-- It contradicts, or has been overtaken by, anything said in this thread or in {owner}'s other \
-recent threads with them. The newest texts count most.
-- It would make {owner} look out of the loop, or show agents talking past each other or past {owner}.
-- It repeats what someone already told them, or answers something nobody asked.
-- It isn't needed: {owner} is handling it, or saying nothing is better. When in doubt, hold.
+Hold it only if it:
+- shares someone else's private information (their number, address, messages or plans),
+- contains a credential: a password, code, key, token or sign-in link (a payment link is not one), or
+- makes a new commitment in {owner}'s name: a price, payment or date it offers as new. Terms \
+the draft says {owner} already agreed, and a link to pay them, are not new: {owner} agrees to things \
+on calls and in chats you can't see, so take the draft's word for it.
 
 This thread, oldest first ("you" is the agent):
 {thread}
-
-{owner}'s other threads with them over the last {days} days, oldest first:
-{other}
 
 The draft:
 {text}
@@ -310,25 +303,6 @@ async def ask_reviewer(prompt: str) -> str:
                      "--model", REVIEW_MODEL, stdin=prompt)
 
 
-async def owner_threads(host: str, handles: set[str], owner: str) -> str:
-    """The owner's own Messages threads with any of `handles` from the last
-    REVIEW_DAYS, read through latch, as `name: text` lines."""
-    cutoff = datetime.now().astimezone() - timedelta(days=REVIEW_DAYS)
-    chats = json.loads(await run("latch", "messages", "chats", "--host", host, "--limit", "200"))["chats"]
-    threads = []
-    for chat in chats:
-        if (datetime.fromisoformat(chat["last_message_at"]) < cutoff
-                or not handles & {p["handle"].casefold() for p in chat["participants"]}):
-            continue
-        thread = json.loads(await run("latch", "messages", "thread", "--host", host,
-                                      "--chat-id", str(chat["id"]), "--limit", "50"))
-        lines = [f"{owner if m['from']['me'] else m['from']['name'] or m['from']['handle']}: {m['text']}"
-                 for m in thread["messages"] if m["text"] and datetime.fromisoformat(m["date"]) >= cutoff]
-        names = ", ".join(p["name"] or p["handle"] for p in chat["participants"])
-        threads.append(f"[{owner}, {names}]\n" + "\n".join(lines))
-    return "\n\n".join(threads) or "(none)"
-
-
 def sent(r: httpx.Response, what: str) -> str:
     """Report a message send, failing unless Plow will deliver it. A held send
     answers 200 and is never delivered."""
@@ -478,10 +452,8 @@ class Bridge:
                    priority: str = "", skip: bool = False, consulted: str = "") -> str | None:
         """Why a reviewer holds `text`, bound for `chat` or the chat with
         `handles` (an existing one's history included), or None to send it.
-        Only a new thread, or one the owner isn't in, is reviewed: the owner
-        reads every text in a thread they're in. The thread is
-        read fresh, so a text the sous hasn't been shown yet still counts, and
-        read again after the review, so one that lands meanwhile stops the send."""
+        A chat `trusted-chats` lists goes unreviewed. The thread is read fresh,
+        and again after the review, so a text that lands meanwhile stops the send."""
         r = await self.client.get("/v1/chats")
         r.raise_for_status()
         chats = r.json()["data"]
@@ -489,22 +461,18 @@ class Bridge:
                              if p["type"] == "member" and p["role"] != "owner"} for c in chats}
         owner = next((p["display_name"] for c in chats for p in c["participants"]
                       if p["type"] == "member" and p["role"] == "owner"), "the head chef")
-        seated = {c["uid"] for c in chats if any(p["type"] == "member" and p["role"] == "owner" for p in c["participants"])}
         chat = chat or next((uid for uid, people in others.items() if set(people) == set(handles)), None)
         people = {h: h for h in handles} | others.get(chat, {})
         if not people:
             return self.gated(chat, priority, skip, consulted)
         if consulted:
             return "not sent: `consulted` credits a text to the head chef alone; drop it here"
-        if chat in seated:
+        if chat and (self.cursor.parent / TRUSTED_CHATS).exists() and not untrusted(self.cursor.parent, chat):
             return None
         thread = await self.thread(chat) if chat else {}
-        host = self.cursor.parent / MESSAGES_HOST
-        other = (await owner_threads(listed(host).pop(), {h.casefold() for h in people}, owner)
-                 if host.exists() else "(not available)")
         answer = (await self.reviewer(REVIEW.format(
             owner=owner, people=", ".join(people.values()), thread="\n".join(thread.values()) or "(new thread)",
-            other=other, days=REVIEW_DAYS, text=text))).strip()
+            text=text))).strip()
         verdict, _, why = (answer.splitlines()[0] if answer else "").partition(":")
         if verdict.strip("*. ") == "HOLD":
             where = f"existing chat {chat}" if chat else "a new chat"
