@@ -475,7 +475,7 @@ class Bridge:
             return None
         thread = await self.thread(chat) if chat else {}
         def data(field: str) -> str:  # no tag, nor a lookalike one (＜/thread＞), can leave its fence
-            return field.translate(dict.fromkeys(map(ord, "<＜﹤"), "&lt;"))
+            return field.translate(dict.fromkeys(map(ord, "<＜﹤〈‹⟨˂"), "&lt;"))
         answer = (await self.reviewer(REVIEW.format(
             owner=owner, people=data(", ".join(people.values())),
             thread=data("\n".join(thread.values())) or "(new thread)", text=data(text)))).strip()
