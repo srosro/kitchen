@@ -60,6 +60,8 @@ def _prepare_mount_targets(mounts: list[dict]) -> None:
         ancestor = max(ancestors, key=lambda candidate: len(candidate["target"].parts))
         target = ancestor["source"] / mount["target"].relative_to(ancestor["target"])
         directory = target if mount["source"].is_dir() else target.parent
+        if not directory.resolve().is_relative_to(ancestor["source"].resolve()):
+            raise SystemExit(f"container mount target parent escapes mount source: {mount['target']}")
         directory.mkdir(parents=True, exist_ok=True)
 
 

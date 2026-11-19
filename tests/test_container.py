@@ -117,6 +117,26 @@ def test_prepare_mount_targets_keeps_nearest_mounted_parent_writable(tmp_path):
     assert (claude_source / "private").is_dir()
 
 
+def test_prepare_mount_targets_rejects_symlink_escape(tmp_path):
+    home_source = tmp_path / "container-home"
+    outside = tmp_path / "outside"
+    credential_source = tmp_path / "credential.json"
+    home_source.mkdir()
+    outside.mkdir()
+    (home_source / ".claude").symlink_to(outside)
+    credential_source.write_text("{}\n")
+    mounts = [
+        {"source": home_source, "target": Path("/home/u")},
+        {"source": credential_source,
+         "target": Path("/home/u/.claude/private/credential.json")},
+    ]
+
+    with pytest.raises(SystemExit, match="escapes mount source"):
+        container._prepare_mount_targets(mounts)
+
+    assert not (outside / "private").exists()
+
+
 def test_remove_refuses_a_container_kitchen_does_not_own():
     foreign = type("R", (), {"returncode": 0, "stdout": "someone-else\n", "stderr": ""})()
     with patch("claude_kitchen.container.subprocess.run", return_value=foreign) as run:
