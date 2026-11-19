@@ -34,7 +34,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _roborev_hooklib import _split_into_segments
+from _roborev_hooklib import _deny, _split_into_segments
 from _secret_patterns import contains_secret
 
 ROOT_KEYS = ("PERSONAL_RUNBOOK", "COMPANY_RUNBOOK")
@@ -78,12 +78,6 @@ def _retired(path: Path, roots: list[Path]) -> bool:
     kitchen_wiki = os.environ.get("KITCHEN_WIKI")
     in_scope = _in_wiki(path, roots) or (kitchen_wiki and path.parent == Path(kitchen_wiki).resolve())
     return path.name in RETIRED and "_archived" not in path.parts and bool(in_scope)
-
-
-def _deny(reason: str) -> int:
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}))
-    return 0
 
 
 def _read(path: Path) -> str:
