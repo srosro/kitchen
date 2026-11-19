@@ -10,17 +10,19 @@ the shell parsing this gate avoids. Learnings go to runbooks; the Read tool stil
 reads.
 
 Edit/Write/MultiEdit are gated on the resolved target path and the text being
-written. A Bash command is gated whole when it mentions a wiki without any
-shell parsing: its text contains a spelling of a wiki root (as configured,
-expanded, resolved, `$PERSONAL_RUNBOOK`, or relative to the session's cwd), the
-cwd is inside a wiki, or a word in it resolves into one (a symlinked alias).
-Words come from a crude split plus, when the command parses, its quoted words
-(`"my notes.txt"`). What it then scans is
-everything the command can see without running: its text, that text with the
-environment expanded (`printf "$TOKEN" > …`), and every file outside the wikis it
-names (`cp ~/.env …`, `cat creds >> …`). That over-blocks a read like
-`grep token= <wiki>`, which the agent can rephrase, rather than parse what a
-shell command writes. Output of a command substitution, or a program that opens
+written. A Bash command that mentions a wiki has its whole text scanned, with
+the environment expanded (`printf "$TOKEN" > …`). A mention needs no shell
+parsing: the text contains a spelling of a wiki root (as configured, expanded,
+resolved, `$PERSONAL_RUNBOOK`, or relative to the session's cwd), the cwd is
+inside a wiki, or a word in it resolves into one (a symlinked alias). Files the
+command names (`cp ~/.env …`, `cat creds >> …`) are scanned too, but only those
+on the lines that mention a wiki, so a `kitchen ticket` naming a notes file on
+its own line isn't judged by a runbook append on the next. A heredoc body or
+backslash continuation stays with its line. Every named file is scanned when a
+line split can't be trusted: shell state crossing lines (`cd`, `exec`, a shell
+variable the environment can't fill), unbalanced quotes or brackets, compound commands, continued
+pipelines, or an unreadable heredoc. Words come from a crude split plus, when a
+statement parses, its quoted words (`"my notes.txt"`). Output of a command substitution, or a program that opens
 the wiki itself, is out of a pre-run hook's reach. Fails open on a malformed
 request or a machine without the wiki settings: this hook must never wedge
 every tool call.
@@ -40,6 +42,10 @@ from _secret_patterns import contains_secret
 ROOT_KEYS = ("PERSONAL_RUNBOOK", "COMPANY_RUNBOOK")
 RETIRED = {"preferences.md", "mistakes.md"}
 MAX_SCAN = 1 << 20  # bytes of one named file read for scanning
+HEREDOC = re.compile(r"""<<(?!<)(-?)\s*(?:('[^']*'|"[^"]*")|\\?([^\s;&|<>()'"]+))""")
+COMPOUND = re.compile(r"(?:^|[\s;&|()])(?:if|then|else|elif|fi|for|while|until|do|done|case|esac|select|function|[{}])(?=[\s;&|()]|$)")
+STATEFUL = re.compile(r"(?:^|[\s;&|()])(?:cd|pushd|popd|exec|source|\.)(?=[\s;&|()]|$)")
+SHELL_VAR = re.compile(r"\$(?:\{|[A-Za-z_0-9@*#?!$-])")
 WORD_BREAK = re.compile(r"""[\s<>|;&()'"`]+""")
 
 
@@ -68,6 +74,62 @@ def _spellings(key: str, value: str, root: Path, cwd: Path) -> set[str]:
     if cwd in root.parents:
         names.add(str(root.relative_to(cwd)))
     return names
+
+
+def _unquoted(line: str) -> str | None:
+    """`line` with its quoted parts removed, or None if a quote or bracket it opens isn't closed on it."""
+    out, quote, depth, i = [], None, 0, 0
+    while i < len(line):
+        c = line[i]
+        if c == "\\":
+            i += 2
+            continue
+        if quote:
+            quote = None if c == quote else quote
+        elif c in "'\"`":
+            quote = c
+        else:
+            depth += (c == "(") - (c == ")")
+            out.append(c)
+        i += 1
+    return None if quote or depth else "".join(out)
+
+
+def _statements(command: str) -> list[str]:
+    """The command's statements, one per line: a trailing backslash joins the next line and a line that opens
+    heredocs takes their bodies. Wherever that split could be wrong (an unbalanced quote or bracket on a line, a
+    compound-command keyword or brace outside quotes, a directory change, `exec` or sourced file (a newline
+    doesn't isolate shell state), a line ending in `|`, `&&` or `||`, a heredoc delimiter
+    it can't read whole, an unterminated heredoc) the whole command is one statement."""
+    lines, out, i = command.split("\n"), [], 0
+    while i < len(lines):
+        block = [lines[i]]
+        i += 1
+        while block[-1].endswith("\\") and i < len(lines):
+            block.append(lines[i])
+            i += 1
+        head = "\n".join(block)
+        bare_text = _unquoted(head)
+        if (bare_text is None or COMPOUND.search(bare_text) or STATEFUL.search(bare_text)
+                or re.search(r"(\|\||&&|\|&?)\s*(#.*)?$", bare_text)):
+            return [command]
+        heredocs = list(HEREDOC.finditer(head))
+        if len(heredocs) != len(re.findall(r"(?<!<)<<(?!<)", bare_text)):
+            return [command]
+        for m in heredocs:
+            if "\\" in m.group(0)[2:] or (m.end() < len(head) and not re.match(r"[\s;&|<>()]", head[m.end()])):
+                return [command]
+            strip_tabs, quoted, bare = m.groups()
+            delim = quoted[1:-1] if quoted else bare
+            while i < len(lines) and (lines[i].lstrip("\t") if strip_tabs else lines[i]) != delim:
+                block.append(lines[i])
+                i += 1
+            if i == len(lines):
+                return [command]
+            block.append(lines[i])
+            i += 1
+        out.append("\n".join(block))
+    return [s for s in out if s.strip()]
 
 
 def _in_wiki(path: Path, roots: list[Path]) -> bool:
@@ -108,12 +170,19 @@ def main() -> int:
         return 0
     if tool == "Bash":
         command, here = args.get("command") or "", Path(cwd).resolve()
-        words = set(WORD_BREAK.split(command)) | {w for seg in _split_into_segments(command) for w in seg}
-        paths = [_resolve(w, variables, cwd) for w in words if w]
-        hit = (_in_wiki(here, roots) or any(_in_wiki(p, roots) for p in paths)
-               or any(s in command for k, (v, root) in named.items() for s in _spellings(k, v, root, here)))
-        text = "\n".join([command, os.path.expandvars(command),
-                          *(_read(p) for p in paths if not _in_wiki(p, roots))])
+        statements = _statements(command)
+        if len(statements) > 1 and SHELL_VAR.search(os.path.expandvars(command)):
+            statements = [command]  # shell state crosses lines: a file it names may feed any of them
+        paths, files, hit = [], [], False
+        for stmt in statements:
+            words = set(WORD_BREAK.split(stmt)) | {w for seg in _split_into_segments(stmt) for w in seg}
+            found = [_resolve(w, variables, cwd) for w in words if w]
+            paths += found
+            if (_in_wiki(here, roots) or any(_in_wiki(p, roots) for p in found)
+                    or any(s in stmt for k, (v, root) in named.items() for s in _spellings(k, v, root, here))):
+                hit = True
+                files += [_read(p) for p in found if not _in_wiki(p, roots)]
+        text = "\n".join([command, os.path.expandvars(command), *files])
     else:
         paths = [_resolve(args.get("file_path") or "/", variables)]
         hit = _in_wiki(paths[0], roots)
