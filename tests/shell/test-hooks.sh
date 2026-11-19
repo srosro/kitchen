@@ -68,6 +68,8 @@ assert_eq deny "$(gate Bash "$(jq -nc '{command:"cp ~/dot.env ~/wiki/personal/ru
 assert_eq deny "$(PLANTED="$planted" gate Bash "$(jq -nc '{command:"printf %s \"$PLANTED\" >> ~/wiki/plowco/kitchen.md"}')")" "gate: Bash writing a secret from the environment is denied"
 mkdir -p "$GATE_HOME/Team Wiki/runbooks"; printf 'COMPANY_RUNBOOK="%s/Team Wiki"\n' "$GATE_HOME" >> "$GATE_HOME/.config/kitchen/operator.env"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "printf 'password=example-value' > \"$GATE_HOME/Team Wiki/note.md\"" '{command:$c}')")" "gate: a quoted wiki path with spaces is still a wiki"
+mkdir -p "$GATE_HOME/Team;Wiki"; printf 'COMPANY_RUNBOOK="%s/Team;Wiki"\n' "$GATE_HOME" >> "$GATE_HOME/.config/kitchen/operator.env"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "printf 'password=example-value' > \"$GATE_HOME/Team;Wiki/note.md\"" '{command:$c}')")" "gate: quoted shell punctuation in a wiki path stays one word"
 assert_eq deny "$(jq -nc --arg c "cp dot.env wiki/personal/x.md" '{tool_name:"Bash",tool_input:{command:$c},cwd:"'"$GATE_HOME"'"}' | HOME="$GATE_HOME" "$HOOKS/runbook-secret-gate.py" | jq -r .hookSpecificOutput.permissionDecision)" "gate: relative paths resolve against the session's cwd"
 assert_eq allow "$(gate Write "$(jq -nc --arg f "$P" '{file_path:$f,content:"the key lives in the vault item ea-mail (…AAA)"}')")" "gate: a clean runbook write passes"
 assert_eq allow "$(gate Write "$(jq -nc --arg f "$GATE_HOME/elsewhere.md" --arg c "$planted" '{file_path:$f,content:$c}')")" "gate: a secret written outside the wikis is not this gate's business"

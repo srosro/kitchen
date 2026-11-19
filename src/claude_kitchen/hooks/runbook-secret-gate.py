@@ -22,11 +22,11 @@ from __future__ import annotations
 import json
 import os
 import re
-import shlex
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _roborev_hooklib import _split_into_segments
 from _secret_patterns import contains_secret
 
 ROOT_KEYS = ("PERSONAL_RUNBOOK", "COMPANY_RUNBOOK")
@@ -56,10 +56,8 @@ def _resolve(word: str, variables: dict[str, str], cwd: str = "/") -> Path:
 
 def _words(command: str) -> list[str]:
     """Shell words, or path-like runs when the command doesn't parse (a heredoc body's apostrophe)."""
-    try:
-        return [w for word in shlex.split(command) for w in re.split(r"[<>|;&()]+", word) if w]
-    except ValueError:
-        return PATH_WORD.findall(command)
+    segments = _split_into_segments(command)
+    return [w for segment in segments for w in segment] if segments else PATH_WORD.findall(command)
 
 
 def _in_wiki(path: Path, roots: list[Path]) -> bool:
