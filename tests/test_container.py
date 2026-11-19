@@ -180,10 +180,11 @@ def test_container_hook_keeps_host_lifecycle_metadata_read_only(tmp_path, monkey
         "hook_event_name": "Stop", "session_id": "session-1",
     })))
 
-    with patch("claude_kitchen.cli._login_alert"), \
+    with patch("claude_kitchen.cli._login_alert") as login_alert, \
             patch("claude_kitchen.cli._record_pause"), \
             patch("claude_kitchen.cli._warn_weekly_usage"):
         cmd_hook(argparse.Namespace(command="hook"))
+    login_alert.assert_not_called()
     assert json.loads((tmp_path / "kitchen.json").read_text()) == host_state
     assert _sous_session_id(tmp_path, host_state) == "session-1"
 
