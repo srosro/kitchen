@@ -1373,16 +1373,16 @@ def _hook(name: str) -> str:
     return f'"{Path(sys.executable).as_posix()}" {path}' if name.endswith(".py") else path
 
 
-# (event, matcher, command, timeout): the Claude hook entries kitchen owns.
+# (event, matcher, command, timeout): the Claude hook entries kitchen owns in
+# ~/.claude/settings.json. Its RUNTIME_HOOKS go to each kitchen session instead,
+# so a session another kitchen runs never calls this one's `kitchen`.
 OWNED_HOOKS = (
-    *RUNTIME_HOOKS[:3],
     ("UserPromptSubmit", None, _hook("capture-prompt.sh"), None),
     ("PostToolUse", "AskUserQuestion", _hook("capture-answer.sh"), None),
     ("PreToolUse", "Bash", _hook("roborev-pre-commit-context.py"), None),
     ("PreToolUse", "Bash", _hook("roborev-pre-push-gate.py"), 660),
     ("PreToolUse", "Bash", _hook("roborev-pre-checkout-gate.py"), None),
     ("PreToolUse", "Edit|Write|MultiEdit|Bash", _hook("runbook-secret-gate.py"), None),
-    RUNTIME_HOOKS[3],
 )
 
 
@@ -1406,6 +1406,8 @@ def _install_claude_hooks(settings: Path) -> list[str]:
         the canonical entry (wrong matcher or timeout) or repeats one already kept."""
         cmd = h.get("command") or ""
         if any(cmd.endswith(d + m) for m in moved for d in ("/.claude/hooks/", "/roborev/claude-hooks/")):
+            return False
+        if any(rt in cmd for _, _, rt, _ in RUNTIME_HOOKS):  # now per session, wrapped copies too
             return False
         if cmd not in owned:
             return True

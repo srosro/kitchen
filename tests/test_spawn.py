@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from unittest.mock import patch, MagicMock
-from claude_kitchen.spawn import build_shell_cmd, spawn_sous, spawn_window
+from claude_kitchen.spawn import _runtime_hooks, build_shell_cmd, spawn_sous, spawn_window
 
 
 def _codex_argv_from_shell_cmd(cmd: str) -> list[str]:
@@ -188,7 +188,8 @@ class TestCleanRoom:
             status_dir="/tmp/state",
         )
         toks = _claude_inner_tokens(cmd)
-        assert "--settings" not in toks
+        settings = json.loads(toks[toks.index("--settings") + 1])
+        assert "enabledPlugins" not in settings and settings["hooks"]["Stop"]  # its runtime hooks only
 
     def test_codex_clean_room_exports_codex_home_keeps_notify(self):
         """Clean-room codex cook runs against a fresh per-cook CODEX_HOME
@@ -339,10 +340,11 @@ class TestSpawnSous:
         spawn_sous("risotto", tmp_path, "prompt text", slug="gh-x-y")
         argv = mock_exec.call_args.args[1]
         settings = [json.loads(argv[i + 1]) for i, a in enumerate(argv) if a == "--settings"]
+        [line] = settings
+        assert line["hooks"]["Stop"]  # kitchen's runtime hooks ride on the sous, never the user's settings
         if own:
-            assert settings == []
+            assert "statusLine" not in line
         else:
-            [line] = settings
             assert line["statusLine"]["command"].endswith("statusline-command.sh")
 
     @patch("claude_kitchen.spawn.os.chdir")
@@ -563,6 +565,7 @@ class TestModelSelection:
             "--dangerously-skip-permissions",
             "--disallowedTools", "AskUserQuestion",
             "--remote-control=r/eng",
+            "--settings", json.dumps({"hooks": _runtime_hooks()}),
         ]
         # And model=None is byte-for-byte identical to omitting the kwarg.
         assert default == build_shell_cmd(

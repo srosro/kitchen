@@ -24,7 +24,8 @@ RUNTIME_HOOKS = (
 )
 
 
-def _container_hooks() -> dict:
+def _runtime_hooks() -> dict:
+    """The hooks a kitchen session runs, passed per session so only kitchen sessions run them."""
     hooks = {}
     for event, matcher, command, _ in RUNTIME_HOOKS:
         group = {"hooks": [{"type": "command", "command": command}]}
@@ -145,15 +146,12 @@ def spawn_sous(kitchen: str, state_dir: Path, sous_prompt: str,
     ]
     if model:
         claude_args.extend(["--model", model])
+    settings = {"hooks": _runtime_hooks()}
     if container_config:
-        claude_args.extend(["--settings", json.dumps({
-            "hooks": _container_hooks(),
-            "statusLine": {"type": "command", "command": container_config.get(
-                "statusline", "kitchen statusline-command",
-            )},
-        })])
+        settings["statusLine"] = {"type": "command", "command": container_config.get("statusline", "kitchen statusline-command")}
     elif not _user_statusline():  # the status line is what receives the plan's usage
-        claude_args.extend(["--settings", json.dumps({"statusLine": {"type": "command", "command": f"bash {shlex.quote(str(STATUSLINE))}"}})])
+        settings["statusLine"] = {"type": "command", "command": f"bash {shlex.quote(str(STATUSLINE))}"}
+    claude_args.extend(["--settings", json.dumps(settings)])
     if resume_session_id:
         claude_args.extend(["--resume", resume_session_id])
     claude_args.extend([
@@ -206,13 +204,12 @@ _GEMINI_ROLE_FOOTER = (
 
 # Clean-room (eval) cooks disable the superpowers plugin so its SessionStart
 # "You have superpowers" injection never fires. Passed via --settings, which
-# MERGES with ~/.claude/settings.json (empirically verified) — the kitchen's
-# own Stop hook there stays live, so cook→sous completion notifications still
-# work. Plugin keys are marketplace-qualified, and superpowers ships from
-# either marketplace below, so both are disabled.
+# MERGES with ~/.claude/settings.json (empirically verified), beside the
+# kitchen's runtime hooks every cook gets there. Plugin keys are
+# marketplace-qualified, and superpowers ships from either marketplace below,
+# so both are disabled.
 SUPERPOWERS_MARKETPLACES = ("superpowers-marketplace", "claude-plugins-official")
-_CLEAN_ROOM_SETTINGS = json.dumps(
-    {"enabledPlugins": {f"superpowers@{m}": False for m in SUPERPOWERS_MARKETPLACES}})
+_CLEAN_ROOM_SETTINGS = {"enabledPlugins": {f"superpowers@{m}": False for m in SUPERPOWERS_MARKETPLACES}}
 
 
 def build_shell_cmd(backend: str, name: str, kitchen: str, status_dir: str,
@@ -250,11 +247,11 @@ def build_shell_cmd(backend: str, name: str, kitchen: str, status_dir: str,
         # codex/gemini cooks.
         env = f"{env} CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false"
         env_vars["CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"] = "false"
-        # Clean-room (eval) cooks: disable the superpowers plugin via --settings
-        # (no SessionStart injection) without touching subscription auth or the
-        # kitchen Stop hook. Auto-memory is already off for every cook (AGENT_ENV).
-        # The caller also passes no role_path, so clean-room cooks boot bare.
-        settings_flag = f" --settings {q(_CLEAN_ROOM_SETTINGS)}" if clean_room else ""
+        # Every cook gets the runtime hooks (its Stop hook reports to the sous);
+        # clean-room (eval) cooks also disable the superpowers plugin. Auto-memory
+        # is already off for every cook (AGENT_ENV). The caller also passes no
+        # role_path, so clean-room cooks boot bare.
+        settings_flag = f" --settings {q(json.dumps({'hooks': _runtime_hooks(), **(_CLEAN_ROOM_SETTINGS if clean_room else {})}))}"
         # Clean-room allowlist opt-in (--with-skill): each path is loaded as a
         # session-scoped plugin dir. Additive only — doesn't touch memory, the
         # disabled superpowers plugin, the role, or the sous-managed cwd. cli.py

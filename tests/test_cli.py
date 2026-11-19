@@ -2486,7 +2486,9 @@ class TestCmdSetupHooks:
             "hooks": {
                 "Stop": [{"hooks": [{"type": "command", "command": "kitchen hook"}]}],
                 "UserPromptSubmit": [{"hooks": [old("capture-prompt.sh"), mine]}],
-                "PreToolUse": [{"matcher": "Bash", "hooks": [old("roborev-pre-push-gate.py")]},
+                "PreToolUse": [{"matcher": "mcp__swarm.*__send", "hooks": [{"type": "command", "command":
+                                "if [ -n \"$AGENT_KITCHEN\" ]; then exec kitchen consult-gate; fi"}]},
+                               {"matcher": "Bash", "hooks": [old("roborev-pre-push-gate.py")]},
                                # the legacy roborev installer's copy (XDG-relocatable dir)
                                {"matcher": "Bash", "hooks": [{"type": "command", "command": "/home/u/xdg/roborev/claude-hooks/roborev-pre-checkout-gate.py"}]},
                                {"matcher": "Bash", "hooks": [gate]},
@@ -2513,7 +2515,8 @@ class TestCmdSetupHooks:
         for name in ("capture-prompt.sh", "capture-answer.sh", "roborev-pre-commit-context.py",
                      "roborev-pre-push-gate.py", "roborev-pre-checkout-gate.py"):
             assert commands.count(str(HOOKS / name)) == 1, name
-        assert commands.count("kitchen hook") == 3  # Stop, StopFailure + UserPromptSubmit
+        # Its runtime hooks run only in kitchen sessions, never from the user's settings.
+        assert not any("kitchen hook" in c or "kitchen consult-gate" in c for c in commands)
         push = [h for g in data["hooks"]["PreToolUse"] for h in g["hooks"] if h["command"].endswith("roborev-pre-push-gate.py")]
         assert push == [{"type": "command", "command": str(HOOKS / "roborev-pre-push-gate.py"), "timeout": 660}]
         assert settings.stat().st_mode & 0o777 == 0o640
