@@ -108,10 +108,13 @@ def _statements(command: str) -> list[str]:
             i += 1
         head = "\n".join(block)
         bare_text = _unquoted(head)
-        if bare_text is None or COMPOUND.search(bare_text) or re.search(r"(\|\||&&|\|)\s*$", bare_text):
+        if bare_text is None or COMPOUND.search(bare_text) or re.search(r"(\|\||&&|\|&?)\s*$", bare_text):
             return [command]
-        for m in HEREDOC.finditer(head):
-            if m.end() < len(head) and not re.match(r"[\s;&|<>()]", head[m.end()]):
+        heredocs = list(HEREDOC.finditer(head))
+        if len(heredocs) != len(re.findall(r"(?<!<)<<(?!<)", bare_text)):
+            return [command]
+        for m in heredocs:
+            if "\\" in m.group(0)[2:] or (m.end() < len(head) and not re.match(r"[\s;&|<>()]", head[m.end()])):
                 return [command]
             strip_tabs, quoted, bare = m.groups()
             delim = quoted[1:-1] if quoted else bare
