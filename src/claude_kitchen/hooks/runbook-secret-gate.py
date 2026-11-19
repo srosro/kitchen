@@ -5,9 +5,11 @@ that carries a credential shape. The wikis sync to other machines and teammates,
 so a secret written there has already left.
 
 Edit/Write/MultiEdit are gated on the resolved target path and the text being
-written. A Bash command is gated whole when any word in it (split the way the
-shell would, quotes kept together; `~` and `$VARS` expanded, relative to the
-session's cwd, symlinks resolved) lands in a wiki, and what it scans is
+written. A Bash command is gated whole when it mentions a wiki without any
+shell parsing: its text contains a spelling of a wiki root (as configured,
+expanded, resolved, `$PERSONAL_RUNBOOK`, or relative to the session's cwd), the
+cwd is inside a wiki, or a word in it resolves into one (a symlinked alias).
+What it then scans is
 everything the command can see without running: its text, that text with the
 environment expanded (`printf "$TOKEN" > …`), and every file outside the wikis it
 names (`cp ~/.env …`, `cat creds >> …`). That over-blocks a read like
@@ -26,12 +28,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _roborev_hooklib import _split_into_segments
 from _secret_patterns import contains_secret
 
 ROOT_KEYS = ("PERSONAL_RUNBOOK", "COMPANY_RUNBOOK")
 MAX_SCAN = 1 << 20  # bytes of one named file read for scanning
-PATH_WORD = re.compile(r"""[~/$][^\s'"<>|;&()`]*""")
+WORD_BREAK = re.compile(r"""[\s<>|;&()'"`]+""")
 
 
 def _settings() -> dict[str, str]:
@@ -54,10 +55,11 @@ def _resolve(word: str, variables: dict[str, str], cwd: str = "/") -> Path:
     return (Path(cwd) / os.path.expandvars(os.path.expanduser(word))).resolve()
 
 
-def _words(command: str) -> list[str]:
-    """Shell words, or path-like runs when the command doesn't parse (a heredoc body's apostrophe)."""
-    segments = _split_into_segments(command, comments=False)
-    return [w for segment in segments for w in segment] if segments else PATH_WORD.findall(command)
+def _spellings(key: str, value: str, root: Path, cwd: Path) -> set[str]:
+    names = {value, os.path.expanduser(value), str(root), "$" + key, "${%s}" % key}
+    if cwd in root.parents:
+        names.add(str(root.relative_to(cwd)))
+    return names
 
 
 def _in_wiki(path: Path, roots: list[Path]) -> bool:
@@ -86,13 +88,15 @@ def main() -> int:
     except (ValueError, KeyError, TypeError):
         return 0
     variables = _settings()
-    roots = [_resolve(v, {}) for v in variables.values() if v]
+    named = {k: (v, _resolve(v, {})) for k, v in variables.items() if v}
+    roots = [root for _, root in named.values()]
     if not roots:
         return 0
     if tool == "Bash":
-        command = args.get("command") or ""
-        paths = [_resolve(w, variables, cwd) for w in _words(command)]
-        hit = any(_in_wiki(p, roots) for p in paths)
+        command, here = args.get("command") or "", Path(cwd).resolve()
+        paths = [_resolve(w, variables, cwd) for w in set(WORD_BREAK.split(command)) if w]
+        hit = (_in_wiki(here, roots) or any(_in_wiki(p, roots) for p in paths)
+               or any(s in command for k, (v, root) in named.items() for s in _spellings(k, v, root, here)))
         text = "\n".join([command, os.path.expandvars(command),
                           *(_read(p) for p in paths if not _in_wiki(p, roots))])
     else:

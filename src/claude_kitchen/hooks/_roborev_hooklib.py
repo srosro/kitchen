@@ -86,7 +86,7 @@ _OPERATOR_TOKENS = {"&&", "||", "|", ";", "&"}
 _GIT_GLOBAL_OPTS_WITH_ARG = {"-C", "-c"}
 
 
-def _split_into_segments(cmd: str, comments: bool = True) -> list[list[str]]:
+def _split_into_segments(cmd: str) -> list[list[str]]:
     """Tokenize `cmd` once (quote-aware) and split the token stream on shell
     operator tokens (`&&`, `||`, `|`, `;`, `&`) into per-segment token lists.
 
@@ -94,13 +94,10 @@ def _split_into_segments(cmd: str, comments: bool = True) -> list[list[str]]:
     standalone tokens while leaving quoted argument strings (`-m "x && y"`)
     intact — so an operator *inside* a quoted commit message is preserved as
     part of the argument and never splits a segment. Returns `[]` on a tokenizer
-    error (unbalanced quote), which fails closed to "no git segment".
-    `comments=False` keeps a `#` and what follows it instead of dropping it."""
+    error (unbalanced quote), which fails closed to "no git segment"."""
     try:
         lexer = shlex.shlex(cmd, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
-        if not comments:
-            lexer.commenters = ""
         tokens = list(lexer)
     except ValueError:
         return []
