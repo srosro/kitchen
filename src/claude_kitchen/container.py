@@ -66,7 +66,8 @@ def remove(kitchen: str) -> None:
         capture_output=True, text=True,
     )
     if owner.returncode:
-        if "No such container" in owner.stderr or "No such object" in owner.stderr:
+        stderr = owner.stderr.lower()
+        if "no such container" in stderr or "no such object" in stderr:
             return
         raise subprocess.CalledProcessError(
             owner.returncode, owner.args, output=owner.stdout, stderr=owner.stderr,

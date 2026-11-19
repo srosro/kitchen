@@ -106,6 +106,18 @@ def test_remove_refuses_a_container_kitchen_does_not_own():
     assert len(run.call_args_list) == 1
 
 
+def test_remove_accepts_docker_lowercase_not_found():
+    missing = type("R", (), {
+        "returncode": 1,
+        "args": ["docker", "inspect"],
+        "stdout": "",
+        "stderr": "error: no such object: kitchen-acme-scout\n",
+    })()
+    with patch("claude_kitchen.container.subprocess.run", return_value=missing) as run:
+        container.remove("acme-scout")
+    assert len(run.call_args_list) == 1
+
+
 def test_container_mcp_uses_binaries_inside_the_image(tmp_path):
     (tmp_path / "kitchen-mcp.json").write_text(json.dumps({"mcpServers": {
         "kitchen": {"command": "kitchen", "args": ["channel-server", "x"]},
