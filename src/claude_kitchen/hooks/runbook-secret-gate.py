@@ -5,8 +5,9 @@ that carries a credential shape. The wikis sync to other machines and teammates,
 so a secret written there has already left.
 
 Edit/Write/MultiEdit are gated on the resolved target path and the text being
-written. A Bash command is gated whole when any path-like word in it (with `~`
-and `$VARS` expanded, symlinks resolved) lands in a wiki, and what it scans is
+written. A Bash command is gated whole when any word in it (split the way the
+shell would, quotes kept together; `~` and `$VARS` expanded, relative to the
+session's cwd, symlinks resolved) lands in a wiki, and what it scans is
 everything the command can see without running: its text, that text with the
 environment expanded (`printf "$TOKEN" > …`), and every file outside the wikis it
 names (`cp ~/.env …`, `cat creds >> …`). That over-blocks a read like
@@ -21,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -46,10 +48,18 @@ def _settings() -> dict[str, str]:
     return out
 
 
-def _resolve(word: str, variables: dict[str, str]) -> Path:
+def _resolve(word: str, variables: dict[str, str], cwd: str = "/") -> Path:
     for key, value in variables.items():
         word = word.replace("${%s}" % key, value).replace("$" + key, value)
-    return Path(os.path.expandvars(os.path.expanduser(word))).resolve()
+    return (Path(cwd) / os.path.expandvars(os.path.expanduser(word))).resolve()
+
+
+def _words(command: str) -> list[str]:
+    """Shell words, or path-like runs when the command doesn't parse (a heredoc body's apostrophe)."""
+    try:
+        return [w for word in shlex.split(command) for w in re.split(r"[<>|;&()]+", word) if w]
+    except ValueError:
+        return PATH_WORD.findall(command)
 
 
 def _in_wiki(path: Path, roots: list[Path]) -> bool:
@@ -74,7 +84,7 @@ def _written_text(tool: str, args: dict) -> str:
 def main() -> int:
     try:
         request = json.load(sys.stdin)
-        tool, args = request["tool_name"], request["tool_input"]
+        tool, args, cwd = request["tool_name"], request["tool_input"], request.get("cwd") or "/"
     except (ValueError, KeyError, TypeError):
         return 0
     variables = _settings()
@@ -83,7 +93,7 @@ def main() -> int:
         return 0
     if tool == "Bash":
         command = args.get("command") or ""
-        paths = [_resolve(w, variables) for w in PATH_WORD.findall(command)]
+        paths = [_resolve(w, variables, cwd) for w in _words(command)]
         hit = any(_in_wiki(p, roots) for p in paths)
         text = "\n".join([command, os.path.expandvars(command),
                           *(_read(p) for p in paths if not _in_wiki(p, roots))])

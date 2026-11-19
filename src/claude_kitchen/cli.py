@@ -46,15 +46,13 @@ _ROLE_ACK_FOOTER = (
 _WIKI_TEMPLATES = {
     "mistakes.md": (
         "# Mistakes\n\n"
-        "Lessons learned across kitchens for this project. "
-        "When you're burned by something worth remembering across features, append a row.\n\n"
-        "| Date | What happened | What to do instead |\n"
-        "| --- | --- | --- |\n"
+        "Older lessons for this project, read but no longer written: "
+        "write a new lesson in the runbook its audience reads.\n"
     ),
     "preferences.md": (
         "# Preferences\n\n"
-        "Head chef's working style, conventions, pet peeves. "
-        "Edit freely.\n"
+        "Older preferences for this project, read but no longer written: "
+        "write a new one in the runbook its audience reads.\n"
     ),
 }
 _NOTES_TEMPLATES = {
