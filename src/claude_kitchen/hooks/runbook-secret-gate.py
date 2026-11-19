@@ -10,20 +10,19 @@ the shell parsing this gate avoids. Learnings go to runbooks; the Read tool stil
 reads.
 
 Edit/Write/MultiEdit are gated on the resolved target path and the text being
-written. A Bash command is judged one line at a time (a heredoc body or a
-backslash continuation stays with its line; anything a line split could get
-wrong judges the whole command), so a `kitchen ticket` on its own line isn't
-judged by a runbook append on the next. A statement is judged when it mentions a
-wiki without any shell parsing: its text contains a spelling of a wiki root (as
-configured, expanded, resolved, `$PERSONAL_RUNBOOK`, or relative to the
-session's cwd), the cwd is inside a wiki, or a word in it resolves into one (a
-symlinked alias). Words come from a crude split plus, when the statement parses,
-its quoted words (`"my notes.txt"`). What it then scans is everything that
-statement can see without running: its text, that text with the environment
-expanded (`printf "$TOKEN" > …`), and every file outside the wikis it names
-(`cp ~/.env …`, `cat creds >> …`). That over-blocks a read like
-`grep token= <wiki>`, which the agent can rephrase, rather than parse what a
-shell command writes. Output of a command substitution, or a program that opens
+written. A Bash command that mentions a wiki has its whole text scanned, with
+the environment expanded (`printf "$TOKEN" > …`). A mention needs no shell
+parsing: the text contains a spelling of a wiki root (as configured, expanded,
+resolved, `$PERSONAL_RUNBOOK`, or relative to the session's cwd), the cwd is
+inside a wiki, or a word in it resolves into one (a symlinked alias). Files the
+command names (`cp ~/.env …`, `cat creds >> …`) are scanned too, but only those
+on the lines that mention a wiki, so a `kitchen ticket` naming a notes file on
+its own line isn't judged by a runbook append on the next. A heredoc body or
+backslash continuation stays with its line. Every named file is scanned when a
+line split can't be trusted: shell state crossing lines (`cd`, `exec`, a shell
+variable the environment can't fill), unbalanced quotes or brackets, compound commands, continued
+pipelines, or an unreadable heredoc. Words come from a crude split plus, when a
+statement parses, its quoted words (`"my notes.txt"`). Output of a command substitution, or a program that opens
 the wiki itself, is out of a pre-run hook's reach. Fails open on a malformed
 request or a machine without the wiki settings: this hook must never wedge
 every tool call.
@@ -171,24 +170,19 @@ def main() -> int:
         return 0
     if tool == "Bash":
         command, here = args.get("command") or "", Path(cwd).resolve()
-
-        def judge(statements):
-            paths, judged, touching = [], [], []
-            for stmt in statements:
-                words = set(WORD_BREAK.split(stmt)) | {w for seg in _split_into_segments(stmt) for w in seg}
-                found = [_resolve(w, variables, cwd) for w in words if w]
-                paths += found
-                if (_in_wiki(here, roots) or any(_in_wiki(p, roots) for p in found)
-                        or any(s in stmt for k, (v, root) in named.items() for s in _spellings(k, v, root, here))):
-                    touching.append(stmt)
-                    judged += [stmt, os.path.expandvars(stmt), *(_read(p) for p in found if not _in_wiki(p, roots))]
-            return paths, judged, touching
-
-        paths, judged, touching = judge(_statements(command))
-        # A shell variable the environment can't fill was set elsewhere in the command: judge all of it.
-        if any(SHELL_VAR.search(os.path.expandvars(stmt)) for stmt in touching):
-            paths, judged, _ = judge([command])
-        hit, text = bool(judged), "\n".join(judged)
+        statements = _statements(command)
+        if len(statements) > 1 and SHELL_VAR.search(os.path.expandvars(command)):
+            statements = [command]  # shell state crosses lines: a file it names may feed any of them
+        paths, files, hit = [], [], False
+        for stmt in statements:
+            words = set(WORD_BREAK.split(stmt)) | {w for seg in _split_into_segments(stmt) for w in seg}
+            found = [_resolve(w, variables, cwd) for w in words if w]
+            paths += found
+            if (_in_wiki(here, roots) or any(_in_wiki(p, roots) for p in found)
+                    or any(s in stmt for k, (v, root) in named.items() for s in _spellings(k, v, root, here))):
+                hit = True
+                files += [_read(p) for p in found if not _in_wiki(p, roots)]
+        text = "\n".join([command, os.path.expandvars(command), *files])
     else:
         paths = [_resolve(args.get("file_path") or "/", variables)]
         hit = _in_wiki(paths[0], roots)

@@ -104,6 +104,10 @@ assert_eq deny "$(gate Bash "$(jq -nc --arg c "note='key $planted'"$'\n'"printf 
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "printf -v note 'key %s' $planted"$'\n'"echo \"\${note}\" >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: any variable set elsewhere in the command (printf -v) judges the whole command"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "set -- $planted"$'\n'"echo \"key \$1\" >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: positional parameters set elsewhere judge the whole command"
 assert_eq deny "$(gate Bash "$(jq -nc --arg c "exec >> ~/wiki/personal/runbooks/x.md"$'\n'"printf %s $planted" '{command:$c}')")" "gate: exec redirection on one line judges the whole command"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "export TOKEN=$planted"$'\n'"env >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: the whole command's text is scanned, so an exported secret dumped by env is caught"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "HOME=$planted"$'\n'"printf %s \"\$HOME\" >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: a reassigned inherited variable carrying a secret is caught in the text"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "outfile=~/wiki/personal/runbooks/x.md"$'\n'"cat ~/dot.env > \"\$outfile\"" '{command:$c}')")" "gate: a variable-held wiki path makes every named file count"
+assert_eq deny "$(gate Bash "$(jq -nc --arg c "printf -v PATH 'key %s' $planted"$'\n'"echo \"\$PATH\" >> ~/wiki/personal/runbooks/x.md" '{command:$c}')")" "gate: printf -v into an inherited name is caught in the text"
 
 # The retired shared memory files: any write is refused, in a wiki or in $KITCHEN_WIKI; archived copies are not.
 mkdir -p "$GATE_HOME/kw"
