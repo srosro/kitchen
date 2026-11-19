@@ -151,7 +151,7 @@ kitchen setup
 
 `kitchen setup` installs and verifies:
 
-1. Claude hooks, owned by kitchen: `kitchen hook` (`Stop`, `UserPromptSubmit`); the memory-capture nudges `capture-prompt.sh` (`UserPromptSubmit`) and `capture-answer.sh` (after `AskUserQuestion`); `runbook-secret-gate.py` (`PreToolUse[Edit|Write|MultiEdit|Bash]`), which refuses a write into the runbook wikis that carries a credential shape; and the roborev gates for `git commit`, `git push` and branch switches (`PreToolUse[Bash]`), all from `src/claude_kitchen/hooks/`. Setup drops an older `~/.claude/hooks/<name>` copy of any of these, adds each missing entry once, keeps every other setting and hook, and writes a `settings.json.bak-kitchen-<time>` backup first. The roborev gates need the `roborev` CLI; without it they stay silent.
+1. Claude hooks, owned by kitchen: `kitchen hook` (`Stop`, `UserPromptSubmit`); the memory-capture nudges `capture-prompt.sh` (`UserPromptSubmit`) and `capture-answer.sh` (after `AskUserQuestion`); `runbook-secret-gate.py` (`PreToolUse[Edit|Write|MultiEdit|Bash]`), which refuses a write into the runbook wikis that carries a credential shape, and any write to the retired `preferences.md`/`mistakes.md`; and the roborev gates for `git commit`, `git push` and branch switches (`PreToolUse[Bash]`), all from `src/claude_kitchen/hooks/`. Setup drops an older `~/.claude/hooks/<name>` copy of any of these, adds each missing entry once, keeps every other setting and hook, and writes a `settings.json.bak-kitchen-<time>` backup first. The roborev gates need the `roborev` CLI; without it they stay silent.
 2. Kitchen's skills (`src/claude_kitchen/skills/*`), linked into `~/.claude/skills` and `~/.agents/skills`, and its `tc`, linked into `~/.local/bin`. A missing link is created, a link to the `code-config` copy it moved from is retargeted, and anything else is left alone and reported.
 3. The Playwright MCP server behind the `playwright` skill (`setup-playwright-mcp.sh`): a pinned `@playwright/mcp`, headed on macOS and headless on Linux, with Playwright's Chromium downloaded when the host has none. It is a no-op once registered.
 4. The `mcp` Python SDK.
@@ -302,12 +302,10 @@ The status line is what Claude Code hands the plan's usage to, after every reply
 │   ├── plow-chat/            # optional: plow-credentials (600), last_seen.json
 │   ├── swarm/                # optional: credential.json, a link to the sous's swarm account; persona.md for a public persona
 │   └── notes/                # handoff, log, and long task briefs
-└── projects/<slug>/wiki/
-    ├── mistakes.md           # durable lessons
-    └── preferences.md        # durable working preferences
+└── projects/<slug>/wiki/    # $KITCHEN_WIKI: a project's own files
 ```
 
-`kitchen close` removes managed per-kitchen notes and cook state. The project wiki survives so later kitchens inherit the lessons and preferences. To keep a project's wiki elsewhere (an Obsidian vault, say), add a `<slug> <path>` row to `~/.config/kitchen/wikis`.
+`kitchen close` removes managed per-kitchen notes and cook state; the project wiki survives. Durable lessons and preferences live in runbooks, not here: the old seeded `mistakes.md` and `preferences.md` are retired, and the runbook gate refuses writes to them. To keep a project's wiki elsewhere (an Obsidian vault, say), add a `<slug> <path>` row to `~/.config/kitchen/wikis`.
 
 The capture hooks route each lesson they nudge an agent to write down by audience, using `KEY=value` lines in `~/.config/kitchen/operator.env`: `PERSONAL_RUNBOOK` (each agent's runbook, `runbooks/<agent>.md`, for anything about one person), `COMPANY_RUNBOOK` (company pages, for practice every teammate's agent follows) and `AGENT_RULES_REPO` (the `owner/repo` that takes a PR for generalizable agent behavior; unset, the nudge says "the operator's agent-rules repo").
 

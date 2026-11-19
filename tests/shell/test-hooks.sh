@@ -76,6 +76,12 @@ assert_eq deny "$(gate Bash "$(jq -nc '{command:"printf %s password=example#valu
 assert_eq deny "$(jq -nc --arg c "printf %s password=example-value > wiki/personal/note.md # don't forget" '{tool_name:"Bash",tool_input:{command:$c},cwd:"'"$GATE_HOME"'"}' | HOME="$GATE_HOME" "$HOOKS/runbook-secret-gate.py" | jq -r .hookSpecificOutput.permissionDecision)" "gate: an apostrophe in a trailing comment doesn't hide a relative wiki target"
 assert_eq deny "$(jq -nc --arg c "cp dot.env wiki/personal/x.md" '{tool_name:"Bash",tool_input:{command:$c},cwd:"'"$GATE_HOME"'"}' | HOME="$GATE_HOME" "$HOOKS/runbook-secret-gate.py" | jq -r .hookSpecificOutput.permissionDecision)" "gate: relative paths resolve against the session's cwd"
 assert_eq allow "$(gate Write "$(jq -nc --arg f "$P" '{file_path:$f,content:"the key lives in the vault item ea-mail (…AAA)"}')")" "gate: a clean runbook write passes"
+# The retired shared memory files: any write is refused, in a wiki or in $KITCHEN_WIKI; archived copies are not.
+mkdir -p "$GATE_HOME/kw"
+assert_eq deny "$(gate Edit "$(jq -nc --arg f "$GATE_HOME/wiki/personal/projects/kitchen/preferences.md" '{file_path:$f,old_string:"a",new_string:"b"}')")" "gate: a clean write to a retired preferences.md in a wiki is refused"
+assert_eq deny "$(KITCHEN_WIKI="$GATE_HOME/kw" gate Bash "$(jq -nc '{command:"echo lesson >> $KITCHEN_WIKI/mistakes.md"}')")" "gate: appending to \$KITCHEN_WIKI/mistakes.md is refused"
+assert_eq allow "$(gate Write "$(jq -nc --arg f "$GATE_HOME/wiki/personal/_archived/kitchen/preferences.md" '{file_path:$f,content:"x"}')")" "gate: an archived copy is not retired"
+assert_eq allow "$(gate Write "$(jq -nc --arg f "$GATE_HOME/elsewhere/preferences.md" '{file_path:$f,content:"x"}')")" "gate: a preferences.md outside the wikis is not this gate's business"
 assert_eq allow "$(gate Write "$(jq -nc --arg f "$GATE_HOME/elsewhere.md" --arg c "$planted" '{file_path:$f,content:$c}')")" "gate: a secret written outside the wikis is not this gate's business"
 assert_eq allow "$(gate Bash "$(jq -nc --arg c "echo $planted > /tmp/x" '{command:$c}')")" "gate: a Bash command that touches no wiki passes"
 assert_eq "" "$(printf 'not json' | HOME="$GATE_HOME" "$HOOKS/runbook-secret-gate.py")" "gate: a malformed request fails open"

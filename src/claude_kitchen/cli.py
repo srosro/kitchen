@@ -43,18 +43,6 @@ _ROLE_ACK_FOOTER = (
     "arrives next.\n"
 )
 
-_WIKI_TEMPLATES = {
-    "mistakes.md": (
-        "# Mistakes\n\n"
-        "Older lessons for this project, read but no longer written: "
-        "write a new lesson in the runbook its audience reads.\n"
-    ),
-    "preferences.md": (
-        "# Preferences\n\n"
-        "Older preferences for this project, read but no longer written: "
-        "write a new one in the runbook its audience reads.\n"
-    ),
-}
 _NOTES_TEMPLATES = {
     "handoff.md": (
         "# Handoff\n\n"
@@ -421,7 +409,7 @@ def cmd_open(args):
         kitchen_file.write_text(json.dumps(kj) + "\n")
         run_hook(source, "on-open", name, cwd=project, source=source)
 
-    _seed(wiki_dir(slug), _WIKI_TEMPLATES)
+    wiki_dir(slug).mkdir(parents=True, exist_ok=True)
     _seed(notes_dir(name), _NOTES_TEMPLATES)
 
     # No automatic sweep: cook records outlive their windows on a suspended

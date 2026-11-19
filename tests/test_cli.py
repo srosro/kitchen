@@ -1518,8 +1518,9 @@ class TestCmdOpenWikiAndNotes:
         # Wiki keys off the project slug; notes off the (namespaced) kitchen name.
         wiki = tmp_path / ".claude-kitchen" / "projects" / "widget" / "wiki"
         notes = tmp_path / ".claude-kitchen" / "widget-risotto" / "notes"
-        assert (wiki / "mistakes.md").exists()
-        assert (wiki / "preferences.md").exists()
+        assert wiki.is_dir()
+        assert not (wiki / "mistakes.md").exists(), "legacy memory files are retired: learnings go to runbooks"
+        assert not (wiki / "preferences.md").exists()
         assert (notes / "handoff.md").exists()
         assert (notes / "log.md").exists()
 
@@ -1554,7 +1555,6 @@ class TestCmdOpenWikiAndNotes:
         args.resume = False
 
         cmd_open(args)
-        assert (tmp_path / ".claude-kitchen" / "projects" / "widget" / "wiki" / "mistakes.md").exists()
         # The resuming branch rewrites kitchen.json with the re-derived slug.
         # Verify the rewrite actually happened and preserved the source field.
         kj = json.loads((base / "kitchen.json").read_text())
