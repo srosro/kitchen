@@ -2,9 +2,12 @@
 """PreToolUse[Edit|Write|MultiEdit|Bash] gate: deny a write into the operator's
 runbook wikis (PERSONAL_RUNBOOK, COMPANY_RUNBOOK in ~/.config/kitchen/operator.env)
 that carries a credential shape. The wikis sync to other machines and teammates,
-so a secret written there has already left. It also refuses any write to the
-retired shared memory files, `preferences.md` and `mistakes.md` in `$KITCHEN_WIKI`
-or a wiki (archived copies under `_archived/` excepted): learnings go to runbooks.
+so a secret written there has already left. It also refuses the retired shared
+memory files, `preferences.md` and `mistakes.md` in `$KITCHEN_WIKI` or a wiki
+(archived copies under `_archived/` excepted): an Edit/Write to them, and any Bash
+command naming them, reads included, since telling a Bash read from a write is
+the shell parsing this gate avoids. Learnings go to runbooks; the Read tool still
+reads.
 
 Edit/Write/MultiEdit are gated on the resolved target path and the text being
 written. A Bash command is gated whole when it mentions a wiki without any
