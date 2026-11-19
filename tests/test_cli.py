@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch, MagicMock, call
 
+import httpx
 import pytest
 
 from claude_kitchen.cli import resolve_kitchen, resolve_project, cmd_brigade, cmd_hook, cmd_open, cmd_hire, cmd_close, cmd_clock_out, _codex_rollout, _sweep_cooks, cmd_sweep, main, _agy_summary, SKIP_PRIORITY_WARNING
@@ -841,6 +842,48 @@ class TestStatusPreservationAcrossNonStopWriters:
             cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message="swarm !r:s $ev", priority=None, dangerously_skip_priority=True))
         report()
         assert [p.get("chat_message") for p in pushes] == ["swarm !r:s $ev", None]
+
+    @pytest.mark.parametrize("source", ["swarm", "plow-chat"])
+    @patch("claude_kitchen.cli.send_keys")
+    @patch("claude_kitchen.cli.state_dir")
+    @patch("claude_kitchen.cli.resolve_kitchen", return_value="risotto")
+    def test_a_ticketed_chat_message_gets_hot_springs_then_a_check_before_the_report(
+            self, mock_rk, mock_state, mock_keys, monkeypatch, tmp_path, source):
+        """The owner sees a cook take their message on (♨️) and finish it (✅), both landing before the
+        sous's answer, so the answer stays the chat's latest preview."""
+        mock_state.return_value = tmp_path
+        write_status(tmp_path, "eng", {"status": "idle", "agent": "eng", "backend": "claude"})
+        monkeypatch.setenv("AGENT_NAME", "eng")
+        monkeypatch.setenv("AGENT_KITCHEN", "risotto")
+        monkeypatch.setenv("STATUS_DIR", str(tmp_path))
+        marks = []
+        if source == "swarm":
+            monkeypatch.setattr("claude_kitchen.plow_chat.swarm_account", lambda _k: {"homeserver": "https://hq", "access_token": "t"})
+
+            def put(_account, path, body):
+                marks.append(("redact", path.split("/")[4]) if "/redact/" in path else ("react", body["m.relates_to"]["key"]))
+                return {"event_id": f"$r{len(marks)}"}
+            monkeypatch.setattr("claude_kitchen.plow_chat.matrix_put", put)
+            chat_message = "swarm !room:hq $asked"
+        else:
+            def plow(request):
+                body = json.loads(request.content)
+                marks.append((body["operation"], body["custom_emoji"]))
+                return httpx.Response(200, json={})
+            monkeypatch.setattr("claude_kitchen.plow_chat.plow_client", lambda _k: httpx.Client(base_url="https://plow", transport=httpx.MockTransport(plow)))
+            chat_message = "plow-chat cht_solo msg_1"
+
+        from claude_kitchen.cli import cmd_ticket
+        cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message=chat_message, priority=None, dangerously_skip_priority=True))
+        assert marks == ([("react", "♨️")] if source == "swarm" else [("add", "♨️")])
+
+        pushes = []
+        _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message="done",
+                       session_id="00000000-0000-0000-0000-000000000000", transcript_path=str(tmp_path / "none.jsonl"))
+        with patch("claude_kitchen.channel.send_to_socket", lambda _sock, push: pushes.append((list(marks), push))):
+            cmd_hook(argparse.Namespace(command="hook"))
+        done = [("react", "♨️"), ("redact", "%24r1"), ("react", "✅")] if source == "swarm" else [("add", "♨️"), ("remove", "♨️"), ("add", "✅")]
+        assert [(seen, push["chat_message"]) for seen, push in pushes] == [(done, chat_message)]
 
     @patch("claude_kitchen.cli.send_keys")
     @patch("claude_kitchen.cli.state_dir")

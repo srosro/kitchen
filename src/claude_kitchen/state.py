@@ -181,6 +181,14 @@ def matrix_get(account: dict, path: str) -> dict:
         return json.load(r)
 
 
+def matrix_put(account: dict, path: str, body: dict) -> dict:
+    """A Matrix client-server PUT of `body` as `account`."""
+    url = f"{account['homeserver'].rstrip('/')}/_matrix/client/v3{path}"
+    headers = {"Authorization": f"Bearer {account['access_token']}", "Content-Type": "application/json"}
+    with urlopen(Request(url, data=json.dumps(body).encode(), headers=headers, method="PUT"), timeout=30) as r:
+        return json.load(r)
+
+
 # A room's name goes into the sous's prompt, and any member can publish an alias: only plain ones do.
 SWARM_ROOM = re.compile(r"#[A-Za-z0-9._=/+-]+:[A-Za-z0-9.-]+(:[0-9]+)?|![A-Za-z0-9._=/+-]+(:[A-Za-z0-9.-]+(:[0-9]+)?)?")
 

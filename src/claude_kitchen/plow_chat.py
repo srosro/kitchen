@@ -12,8 +12,6 @@ Every send that reaches anyone but the line's owner first goes past a fresh revi
 model, which reads the live thread (and, once `messages-host` names the latch host
 holding the owner's Messages, the owner's other recent threads with the same people)
 and holds a text that contradicts them, makes the owner look out of the loop, or isn't needed.
-A person's text addressed to the agent (in a 1:1, or naming it in a group) gets a 👀 tapback
-once handed over, cleared once a send in its chat goes out or the sous calls `no_reply`.
 """
 import asyncio
 import json
@@ -34,8 +32,8 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool
 
 from claude_kitchen.channel import push, reply_server
-from claude_kitchen.state import (atomic_write_json, matrix_get, plow_chat_dir, read_env, state_dir, swarm_accounts,
-                                  swarm_credential, with_digest)
+from claude_kitchen.state import (atomic_write_json, matrix_get, matrix_put, plow_chat_dir, read_env, state_dir, swarm_account,
+                                  swarm_accounts, swarm_credential, with_digest)
 
 CREDENTIALS = "plow-credentials"  # written mode 600 by `latch agents new --own --token-file`
 TRUSTED_CHATS = "trusted-chats"  # one chat uid per line; read at each hand-over, so edits need no restart
@@ -67,7 +65,7 @@ The draft:
 {text}
 
 Answer on one line: SEND, or HOLD: followed by one sentence saying why."""
-SEEN = "👀"
+STARTED, DONE = "♨️", "✅"  # a chat message a cook has taken on, then reported on
 RECONNECT_DELAY = 5
 PAGE = 50
 # One speaker's back-to-back texts are one tag. iMessage sends a link as its
@@ -363,49 +361,7 @@ class Bridge:
         uids += [m["uid"] for m in self.burst]  # after delivery, so a crash mid-send can't suppress it
         del uids[:-2 * PAGE]
         atomic_write_json(self.cursor, self.taken)
-        burst, self.burst = self.burst, []
-        said = [m for m in burst if m["body"].strip() or m["attachments"]]  # not a tapback of theirs
-        if sender and first["sender"]["type"] == "member" and said and await self.addressed(first["chat_uid"], said):
-            await self.react(first["chat_uid"], said[-1]["uid"], "add")  # recorded first, so a slow tapback can't replay it
-
-    async def addressed(self, chat: str, said: list[dict]) -> bool:
-        """Whether `said` is the agent's to answer: its chat seats no one but
-        the sender and this line, or a text names the line or @-mentions it. A group text that
-        doesn't may never get an answer, so it gets no 👀 to clear."""
-        try:
-            r = await self.client.get("/v1/agents/me")
-            r.raise_for_status()
-        except httpx.HTTPError as e:
-            log(f"reading the line failed ({type(e).__name__}); no {SEEN}")
-            return False
-        me = r.json()
-        named = re.compile(rf"\b{re.escape(me['line']['display_name'])}\b", re.IGNORECASE)
-        if any(named.search(m["body"]) or any(x["is_me"] for x in m["mentions"] or []) for m in said):
-            return True
-        return sum(p["relationship"] != "self" for c in me["chats"] if c["uid"] == chat for p in c["participants"]) == 1
-
-    async def react(self, chat: str, uid: str, operation: str):
-        """Add or remove our 👀 on a message. Plow reacts only in iMessage
-        chats, so a refusal is logged and never stops a delivery or a send."""
-        try:
-            r = await self.client.post(f"/v1/chats/{chat}/messages/{uid}/reactions",
-                                       json={"operation": operation, "type": "custom", "custom_emoji": SEEN})
-        except httpx.HTTPError as e:
-            return log(f"{operation} {SEEN} on {uid} failed: {type(e).__name__}")
-        if r.is_error:
-            log(f"{operation} {SEEN} on {uid}: HTTP {r.status_code}")
-
-    async def answered(self, chat: str):
-        """Clear our 👀 from `chat`'s latest texts. Read from Plow, so one a
-        restart or a failed removal left behind clears on the next send."""
-        try:  # the send already went out: nothing here may fail it
-            r = await self.client.get(f"/v1/chats/{chat}/messages", params={"limit": PAGE})
-            r.raise_for_status()
-        except httpx.HTTPError as e:
-            return log(f"reading chat {chat} failed ({type(e).__name__}); its {SEEN} stays")
-        for m in r.json()["data"]:
-            if any(x["custom_emoji"] == SEEN and x["actor"].get("relationship") == "self" for x in m.get("reactions", [])):
-                await self.react(chat, m["uid"], "remove")
+        self.burst = []
 
     async def catch_up(self, chat: str):
         """Take what reached `chat` while the socket was down: the newest
@@ -682,28 +638,11 @@ START_CHAT = Tool(
 )
 
 
-NO_REPLY = Tool(
-    name="no_reply",
-    description=(
-        "Clear your 👀 from a Plow chat's texts without sending anything, once you've read "
-        "them and decided not to answer; pass the `chat` attribute of the <channel "
-        "source=\"plow-chat\"> tag. Any send in that chat clears it too."
-    ),
-    inputSchema={"type": "object", "properties": {"chat": {"type": "string"}}, "required": ["chat"]},
-)
-
-
 async def call(bridge: Bridge, name: str, arguments: dict) -> str:
     """Run the Bridge method a tool names, with its arguments as keywords."""
-    if name == NO_REPLY.name:
-        await bridge.answered(arguments["chat"])
-        return f"{SEEN} cleared; nothing sent"
     if name not in ("reply", SEND_FILE.name, START_CHAT.name):
         raise ValueError(f"unknown tool {name}")
-    result = await getattr(bridge, name)(**arguments)
-    if result.startswith("sent ") and "chat" in arguments:
-        await bridge.answered(arguments["chat"])
-    return result
+    return await getattr(bridge, name)(**arguments)
 
 
 def read_credentials(path: Path) -> dict:
@@ -713,12 +652,48 @@ def read_credentials(path: Path) -> dict:
     return read_env(path) if "PLOW_AGENT_TOKEN=" in text else {"PLOW_API_BASE": "https://api.plow.co", "PLOW_AGENT_TOKEN": text}
 
 
+def plow_client(kitchen: str) -> httpx.Client:
+    """A client for the kitchen's Plow chat line."""
+    credentials = read_credentials(plow_chat_dir(kitchen) / CREDENTIALS)
+    return httpx.Client(base_url=credentials["PLOW_API_BASE"], timeout=30,
+                        headers={"Authorization": f"Bearer {credentials['PLOW_AGENT_TOKEN']}"})
+
+
+def mark(kitchen: str, record: dict, emoji: str) -> dict:
+    """Put the kitchen's `emoji` on the chat message `record` names ('<source> <chat> <id>'),
+    in place of the reaction it put there before: `STARTED` when a cook takes it on, `DONE`
+    when the cook reports, both before the sous answers, so no reaction lands after the answer
+    and hides it from a phone's preview. Returns `record` holding what to take back next time.
+    Best effort: a failure is logged and the ticket or report goes on."""
+    source, chat, message = record["message"].split(maxsplit=2)
+    previous = record.get("reaction")
+    try:
+        if source == "swarm" and (account := swarm_account(kitchen)):
+            room = chat if chat.startswith("!") else matrix_get(account, f"/directory/room/{quote(chat, safe='')}")["room_id"]
+            path = f"/rooms/{quote(room, safe='')}"
+            if previous:
+                matrix_put(account, f"{path}/redact/{quote(previous, safe='')}/{uuid.uuid4().hex}", {})
+            relation = {"rel_type": "m.annotation", "event_id": message, "key": emoji}
+            taken = matrix_put(account, f"{path}/send/m.reaction/{uuid.uuid4().hex}", {"m.relates_to": relation})["event_id"]
+        elif source == "plow-chat":
+            with plow_client(kitchen) as client:
+                for operation, custom in (("remove", previous), ("add", emoji)):
+                    if custom:
+                        client.post(f"/v1/chats/{chat}/messages/{message}/reactions",
+                                    json={"operation": operation, "type": "custom", "custom_emoji": custom}).raise_for_status()
+            taken = emoji
+        else:
+            return record
+    except (OSError, httpx.HTTPError, KeyError, ValueError) as e:
+        log(f"marking {record['message']} {emoji} failed: {type(e).__name__}")
+        return record
+    return record | {"reaction": taken}
+
+
 def tell_owner(kitchen: str, text: str) -> str:
     """Send `text` on the kitchen's Plow chat line to its owner, in the line's
     chat that seats no one else."""
-    credentials = read_credentials(plow_chat_dir(kitchen) / CREDENTIALS)
-    with httpx.Client(base_url=credentials["PLOW_API_BASE"], timeout=30,
-                      headers={"Authorization": f"Bearer {credentials['PLOW_AGENT_TOKEN']}"}) as client:
+    with plow_client(kitchen) as client:
         r = client.get("/v1/chats")
         r.raise_for_status()
         chat = next(c["uid"] for c in r.json()["data"]
@@ -750,7 +725,7 @@ async def run_server(kitchen: str):
     headers = {"Authorization": f"Bearer {credentials['PLOW_AGENT_TOKEN']}"}
     async with httpx.AsyncClient(base_url=credentials["PLOW_API_BASE"], headers=headers, timeout=30) as client:
         server, init_options = reply_server("plow-chat", "Plow chat (iMessage)",
-                                            lambda name, arguments: call(bridge, name, arguments), SEND_FILE, START_CHAT, NO_REPLY,
+                                            lambda name, arguments: call(bridge, name, arguments), SEND_FILE, START_CHAT,
                                             reply_properties=GATE_PROPERTIES, instructions=await introduction(client))
         async with stdio_server() as (read_stream, write_stream):
             bridge = Bridge(client, lambda content, meta: push(write_stream, with_digest(state_dir(kitchen), content), meta), directory / "last_seen.json")
