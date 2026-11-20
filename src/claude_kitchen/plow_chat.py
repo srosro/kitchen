@@ -342,6 +342,7 @@ class Bridge:
     taken: dict = field(init=False)
     burst: list = field(init=False, default_factory=list)  # one speaker's texts not yet handed over
     due: float = 0.0  # loop time the burst closes at
+    solo: str | None = None  # the owner's 1:1, once read
     handing: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)  # the socket and a send both take and flush
     starting: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)  # parallel start_chats share the daily cap
 
@@ -415,9 +416,12 @@ class Bridge:
         self.burst = []
 
     async def owners_chat(self) -> str | None:
-        r = await self.client.get("/v1/chats")
-        r.raise_for_status()
-        return owners_chat(r.json()["data"])
+        """The owner's 1:1 with the line, read from Plow once it exists."""
+        if not self.solo:
+            r = await self.client.get("/v1/chats")
+            r.raise_for_status()
+            self.solo = owners_chat(r.json()["data"])
+        return self.solo
 
     async def catch_up(self, chat: str):
         """Take what reached `chat` while the socket was down: the newest
