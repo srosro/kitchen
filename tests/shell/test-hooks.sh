@@ -20,7 +20,7 @@ assert_eq "PostToolUse" "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.hookE
 ctx=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext')
 assert_contains "$ctx" "\$PERSONAL_RUNBOOK/projects/" "capture-answer routes personal notes to the personal runbook"
 assert_contains "$ctx" "\$PERSONAL_RUNBOOK/runbooks/<your agent's folder name>.md" "capture-answer routes a personal learning to the agent's runbook"
-assert_contains "$ctx" "\$COMPANY_RUNBOOK/runbooks/" "capture-answer routes a company practice to a company page"
+assert_contains "$ctx" "\$COMPANY_RUNBOOK/skills/how-to-<task>/SKILL.md" "capture-answer routes a company practice to a task-named skill"
 assert_contains "$ctx" "never preferences.md or mistakes.md" "capture-answer no longer writes the shared kitchen wiki"
 assert_contains "$ctx" "never to Claude's auto-memory" "capture-answer keeps notes out of auto-memory"
 assert_contains "$ctx" "Why:" "capture-answer asks for Why"
@@ -36,7 +36,7 @@ assert_eq "UserPromptSubmit" "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.
 ctx=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext')
 assert_contains "$ctx" "\$PERSONAL_RUNBOOK/projects/" "capture-prompt routes personal notes to the personal runbook"
 assert_contains "$ctx" "\$PERSONAL_RUNBOOK/runbooks/<your agent's folder name>.md" "capture-prompt routes a personal learning to the agent's runbook"
-assert_contains "$ctx" "\$COMPANY_RUNBOOK/runbooks/" "capture-prompt routes a company practice to a company page"
+assert_contains "$ctx" "\$COMPANY_RUNBOOK/skills/how-to-<task>/SKILL.md" "capture-prompt routes a company practice to a task-named skill"
 assert_contains "$ctx" "never preferences.md or mistakes.md" "capture-prompt no longer writes the shared kitchen wiki"
 assert_contains "$ctx" "never to Claude's auto-memory" "capture-prompt keeps notes out of auto-memory"
 assert_contains "$ctx" "paraphrased" "capture-prompt prefers paraphrased evidence (no raw capture)"
