@@ -1489,8 +1489,8 @@ def _link_installs(pkg: Path, home: Path, wiki_skills: tuple[Path, ...] = ()) ->
     report = [f"skipped {home / '.local' / 'bin' / 'tc'}: tc is a bash tool" if WINDOWS else
               _place_link(pkg / "tc" / "tc", home / ".local" / "bin" / "tc", ("code-config/tc",))]
     dirs = [pkg / "skills", *(d for d in wiki_skills if d.is_dir())]
-    # kitchen first, so a same-named wiki skill is skipped; a symlinked entry could point anywhere, so it is skipped too
-    for src in (p for d in dirs for p in sorted(d.iterdir()) if p.is_dir() and not p.is_symlink()):
+    # kitchen first, so a same-named wiki skill is skipped; a SKILL.md reached through a symlink out of its dir is unreviewed, so skipped too
+    for src in (p for d in dirs for p in sorted(d.iterdir()) if p.is_dir() and (p / "SKILL.md").resolve().is_relative_to(d.resolve())):
         moved = (f"code-config/claude/skills/{src.name}", f"code-config/codex/skills/{src.name}")
         for root in (home / ".claude" / "skills", home / ".agents" / "skills"):
             report.append(_place_link(src, root / src.name, moved))
