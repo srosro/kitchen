@@ -25,7 +25,7 @@ from claude_kitchen.state import (
     MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME, WINDOWS, lock, sous_pid,
 )
 from claude_kitchen.models import max_context_for
-from claude_kitchen.outbound import approve_host, operator_setting
+from claude_kitchen.outbound import approve_host, operator_setting, operator_settings
 from claude_kitchen.spawn import (spawn_window, spawn_sous,
                                   check_sous_pid, FIRST_TURN_ENV, CLAUDE_MODELS, CODEX_MODELS,
                                   SUPERPOWERS_MARKETPLACES, RUNTIME_HOOKS)
@@ -1517,8 +1517,7 @@ def _link_skills(strict: bool = False) -> list[str]:
     open and hire only warn, naming it, and link what they can. A skipped link is
     warned about; the rest are returned."""
     env = Path.home() / ".config" / "kitchen" / "operator.env"
-    lines = env.read_text().splitlines() if env.exists() else []
-    settings = {k: v.strip("\"'") for k, _, v in (l.partition("=") for l in lines if not l.startswith("#"))}
+    settings = operator_settings(env)
     missing = [k for k in OPERATOR_SETTINGS if not settings.get(k)]
     if missing and strict:
         sys.exit(f"❌ {env} sets no {', '.join(missing)}. Add, with your own value:\n"
