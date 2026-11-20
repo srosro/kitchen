@@ -1480,13 +1480,15 @@ def _link(dest: Path, src: Path):
         dest.symlink_to(src)
 
 
-def _link_installs(pkg: Path, home: Path) -> list[str]:
-    """Link kitchen's skills into ~/.claude/skills (Claude) and ~/.agents/skills
-    (Codex), and its `tc` into ~/.local/bin. A link left by code-config, which
-    these moved from, is retargeted. Returns one line per link."""
+def _link_installs(pkg: Path, home: Path, wiki_skills: tuple[Path, ...] = ()) -> list[str]:
+    """Link kitchen's skills, and those in each wiki_skills dir that exists, into
+    ~/.claude/skills (Claude) and ~/.agents/skills (Codex), and its `tc` into
+    ~/.local/bin. A link left by code-config, which these moved from, is
+    retargeted. Returns one line per link."""
     report = [f"skipped {home / '.local' / 'bin' / 'tc'}: tc is a bash tool" if WINDOWS else
               _place_link(pkg / "tc" / "tc", home / ".local" / "bin" / "tc", ("code-config/tc",))]
-    for src in sorted(p for p in (pkg / "skills").iterdir() if p.is_dir()):
+    dirs = [pkg / "skills", *(d for d in wiki_skills if d.is_dir())]
+    for src in sorted(p for d in dirs for p in d.iterdir() if p.is_dir()):
         moved = (f"code-config/claude/skills/{src.name}", f"code-config/codex/skills/{src.name}")
         for root in (home / ".claude" / "skills", home / ".agents" / "skills"):
             report.append(_place_link(src, root / src.name, moved))
@@ -1504,7 +1506,9 @@ def cmd_setup(args):
     print(f"✅ Claude settings {'added (' + ', '.join(added) + ') to ' + str(claude_settings) if added else 'installed'}")
 
     # --- Skills ---
-    for line in _link_installs(_PKG_DIR, Path.home()):
+    env = Path.home() / ".config" / "kitchen" / "operator.env"
+    company = (Path(operator_setting(env, "COMPANY_RUNBOOK")).expanduser() / "skills",) if env.exists() else ()
+    for line in _link_installs(_PKG_DIR, Path.home(), company):
         print(f"{'⚠️ ' if line.startswith('skipped') else '✅'} link {line}")
 
     # --- Playwright MCP server (the playwright skill's browser); idempotent ---
