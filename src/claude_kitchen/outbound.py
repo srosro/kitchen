@@ -44,9 +44,15 @@ def approve_host(account: str, host: str, customers: set[str], operator: str, ho
             "line": f"Approved {host} for {name}, as its owner's delegate."}
 
 
+def operator_settings(operator_env: Path) -> dict[str, str]:
+    """The operator's env file as KEY -> value; empty when the file is missing."""
+    lines = operator_env.read_text().splitlines() if operator_env.exists() else []
+    return {k: v.strip("\"'") for k, _, v in (l.partition("=") for l in lines if not l.startswith("#"))}
+
+
 def operator_setting(operator_env: Path, key: str) -> str:
     """`key`'s value in the operator's env file; unset refuses every approval."""
-    for line in operator_env.read_text().splitlines():
-        if line.startswith(f"{key}="):
-            return line.split("=", 1)[1].strip("\"'")
-    raise SystemExit(f"{operator_env} sets no {key}: refusing to approve for any agent.")
+    value = operator_settings(operator_env).get(key)
+    if not value:
+        raise SystemExit(f"{operator_env} sets no {key}: refusing to approve for any agent.")
+    return value
