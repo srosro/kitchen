@@ -843,14 +843,16 @@ class TestStatusPreservationAcrossNonStopWriters:
         report()
         assert [p.get("chat_message") for p in pushes] == ["swarm !r:s $ev", None]
 
+    @pytest.mark.parametrize("status", ["DONE", "BLOCKED", "NEEDS_CONTEXT"])
     @pytest.mark.parametrize("source", ["swarm", "plow-chat"])
     @patch("claude_kitchen.cli.send_keys")
     @patch("claude_kitchen.cli.state_dir")
     @patch("claude_kitchen.cli.resolve_kitchen", return_value="risotto")
     def test_a_ticketed_chat_message_gets_hot_springs_then_a_check_before_the_report(
-            self, mock_rk, mock_state, mock_keys, monkeypatch, tmp_path, source):
+            self, mock_rk, mock_state, mock_keys, monkeypatch, tmp_path, source, status):
         """The owner sees a cook take their message on (🔨) and finish it (✅), both landing before the
-        sous's answer, so the answer stays the chat's latest preview."""
+        sous's answer, so the answer stays the chat's latest preview. A report that isn't done
+        (blocked, or asking for context) leaves the 🔨: ✅ means the task is complete."""
         mock_state.return_value = tmp_path
         write_status(tmp_path, "eng", {"status": "idle", "agent": "eng", "backend": "claude"})
         monkeypatch.setenv("AGENT_NAME", "eng")
@@ -878,12 +880,13 @@ class TestStatusPreservationAcrossNonStopWriters:
         assert marks == ([("react", "🔨")] if source == "swarm" else [("add", "🔨")])
 
         pushes = []
-        _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message="done",
+        _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message=f"Report.\nSTATUS: {status}",
                        session_id="00000000-0000-0000-0000-000000000000", transcript_path=str(tmp_path / "none.jsonl"))
         with patch("claude_kitchen.channel.send_to_socket", lambda _sock, push: pushes.append((list(marks), push))):
             cmd_hook(argparse.Namespace(command="hook"))
-        done = [("react", "🔨"), ("react", "✅"), ("redact", "%24r1")] if source == "swarm" else [("add", "🔨"), ("add", "✅")]
-        assert [(seen, push["chat_message"]) for seen, push in pushes] == [(done, chat_message)]
+        started = [("react", "🔨")] if source == "swarm" else [("add", "🔨")]
+        done = started + ([("react", "✅"), ("redact", "%24r1")] if source == "swarm" else [("add", "✅")])
+        assert [(seen, push["chat_message"]) for seen, push in pushes] == [(done if status == "DONE" else started, chat_message)]
 
     def test_a_ticket_taken_while_the_report_marks_its_message_keeps_its_own(self, monkeypatch, tmp_path):
         """The cook is idle while its report's ✅ is on its way, so the sous can ticket it
@@ -897,7 +900,7 @@ class TestStatusPreservationAcrossNonStopWriters:
             update_status(tmp_path, "eng", chat_message={"message": "swarm !r:s $second"})
             return record
         monkeypatch.setattr("claude_kitchen.plow_chat.mark", ticketed_meanwhile)
-        _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message="done")
+        _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message="Report.\nSTATUS: DONE")
         with patch("claude_kitchen.channel.send_to_socket", lambda _sock, _push: None):
             cmd_hook(argparse.Namespace(command="hook"))
         assert read_status(tmp_path, "eng")["chat_message"]["message"] == "swarm !r:s $second"

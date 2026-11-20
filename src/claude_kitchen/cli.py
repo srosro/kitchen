@@ -1087,14 +1087,16 @@ def cmd_hook(args):
     # tokens survived via update_status.
     push = {"cook": name, "summary": summary, "ts": ts}
     final = read_status(base, name) or {}
+    last_line = summary.rstrip().rpartition("\n")[2].strip()
     # A turn ending on the line SILENT wakes no one, unless it owes a chat an answer.
-    if "chat_message" not in final and summary.rstrip().rpartition("\n")[2].strip() == "SILENT":
+    if "chat_message" not in final and last_line == "SILENT":
         return
     if "chat_message" in final:
         from claude_kitchen.plow_chat import DONE, mark
         answered = final.pop("chat_message")
         write_status(base, name, final)  # before the mark: a ticket taken meanwhile writes its own
-        push["chat_message"] = mark(kitchen, answered, DONE)["message"]
+        # ✅ only for a finished task: a BLOCKED or NEEDS_CONTEXT report leaves the 🔨 on.
+        push["chat_message"] = (mark(kitchen, answered, DONE) if last_line == "STATUS: DONE" else answered)["message"]
     ctx = _ctx_for_channel(final.get("tokens"))
     if ctx:
         push["ctx"] = ctx
