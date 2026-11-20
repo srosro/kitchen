@@ -1481,14 +1481,16 @@ def _link(dest: Path, src: Path):
 
 
 def _link_installs(pkg: Path, home: Path, wiki_skills: tuple[Path, ...] = ()) -> list[str]:
-    """Link kitchen's skills, and those in each wiki_skills dir that exists, into
+    """Link kitchen's skills, and those in each wiki_skills dir that exists (a
+    reviewed copy: a skill loads into every session), into
     ~/.claude/skills (Claude) and ~/.agents/skills (Codex), and its `tc` into
     ~/.local/bin. A link left by code-config, which these moved from, is
     retargeted. Returns one line per link."""
     report = [f"skipped {home / '.local' / 'bin' / 'tc'}: tc is a bash tool" if WINDOWS else
               _place_link(pkg / "tc" / "tc", home / ".local" / "bin" / "tc", ("code-config/tc",))]
     dirs = [pkg / "skills", *(d for d in wiki_skills if d.is_dir())]
-    for src in (p for d in dirs for p in sorted(d.iterdir()) if p.is_dir()):  # kitchen first: a same-named wiki skill is skipped
+    # kitchen first, so a same-named wiki skill is skipped; a symlinked entry could point anywhere, so it is skipped too
+    for src in (p for d in dirs for p in sorted(d.iterdir()) if p.is_dir() and not p.is_symlink()):
         moved = (f"code-config/claude/skills/{src.name}", f"code-config/codex/skills/{src.name}")
         for root in (home / ".claude" / "skills", home / ".agents" / "skills"):
             report.append(_place_link(src, root / src.name, moved))
@@ -1507,7 +1509,7 @@ def cmd_setup(args):
 
     # --- Skills ---
     env = Path.home() / ".config" / "kitchen" / "operator.env"
-    company = (Path(operator_setting(env, "COMPANY_RUNBOOK")).expanduser() / "skills",) if env.exists() else ()
+    company = (Path(operator_setting(env, "COMPANY_RUNBOOK_REVIEWED")).expanduser() / "skills",) if env.exists() else ()
     for line in _link_installs(_PKG_DIR, Path.home(), company):
         print(f"{'⚠️ ' if line.startswith('skipped') else '✅'} link {line}")
 

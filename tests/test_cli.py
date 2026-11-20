@@ -3219,6 +3219,8 @@ class TestLinkInstalls:
         (local_bin / "tc").symlink_to(cc / "tc")
         wiki = tmp_path / "wiki" / "skills"
         (wiki / "simple-code").mkdir(parents=True)
+        (wiki / "planted").symlink_to(tmp_path / "unreviewed" / "planted", target_is_directory=True)
+        (tmp_path / "unreviewed" / "planted").mkdir(parents=True)
         wiki_skills = (wiki, tmp_path / "unsynced" / "skills")
 
         first = _link_installs(pkg, home, wiki_skills)
@@ -3226,6 +3228,7 @@ class TestLinkInstalls:
         assert (claude / "fresh").resolve() == pkg / "skills" / "fresh"
         assert (agents / "fresh").resolve() == pkg / "skills" / "fresh"
         assert (claude / "simple-code").resolve() == (agents / "simple-code").resolve() == wiki / "simple-code"
+        assert not (claude / "planted").exists() and not (agents / "planted").exists()
         assert os.readlink(claude / "moved") == str(pkg / "skills" / "moved")
         assert os.readlink(agents / "moved") == str(pkg / "skills" / "moved")
         assert os.readlink(local_bin / "tc") == str(pkg / "tc" / "tc")
