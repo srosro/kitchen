@@ -56,11 +56,13 @@ _NOTES_TEMPLATES = {
 
 
 def _seed(dir_path: Path, templates: dict[str, str]):
-    """Create dir and write any template files that don't already exist."""
+    """Create dir and write any template files that don't already exist. A
+    symlink is left alone, dangling or not: a sous can write its notes, and the
+    host must not write a template wherever a link it left points."""
     dir_path.mkdir(parents=True, exist_ok=True)
     for name, body in templates.items():
         f = dir_path / name
-        if not f.exists():
+        if not f.exists() and not f.is_symlink():
             f.write_text(body)
 
 

@@ -1591,6 +1591,20 @@ class TestCmdOpenWikiAndNotes:
             cmd_open(args)
 
 
+def test_seed_leaves_a_symlinked_note_alone(tmp_path):
+    """A sous that can write its notes must not steer the host's reopen into
+    writing a template wherever a link it left points."""
+    from claude_kitchen.cli import _seed
+    notes, target = tmp_path / "notes", tmp_path / "elsewhere"
+    notes.mkdir()
+    (notes / "handoff.md").symlink_to(target)
+
+    _seed(notes, {"handoff.md": "# Handoff\n", "log.md": "# Log\n"})
+
+    assert not target.exists()
+    assert (notes / "log.md").read_text() == "# Log\n"
+
+
 class TestCmdOpenSoftCutover:
     """A pre-namespacing bare-name kitchen owned by this project is
     re-attached (with a deprecation suggestion) instead of forked."""
