@@ -3259,7 +3259,7 @@ def test_install_claude_hooks_removes_the_retired_consult_gate(tmp_path):
     settings.write_text(json.dumps({"hooks": {"PreToolUse": [
         {"matcher": "mcp__swarm.*__send", "hooks": [{"type": "command", "command": "kitchen consult-gate"}, other]},
         {"matcher": "mcp__swarm.*__send", "hooks": [{"type": "command", "command":
-            'if [ -n "$AGENT_KITCHEN" ]; then exec /home/x/.local/bin/kitchen consult-gate; fi'}]}]}}))
+            'if [ -n "$AGENT_KITCHEN" ]; then exec /home/you/.local/bin/kitchen consult-gate; fi'}]}]}}))
     changed = _install_claude_hooks(settings)
     assert changed.count("-consult-gate") == 2
     commands = [h["command"] for gs in json.loads(settings.read_text())["hooks"].values() for g in gs for h in g["hooks"]]
