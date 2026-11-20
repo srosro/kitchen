@@ -2500,9 +2500,12 @@ class TestOperatorEnv:
         _write_operator_env(tmp_path, PERSONAL_RUNBOOK=None, COMPANY_RUNBOOK_REVIEWED=str(tmp_path / "main"))
         (tmp_path / "main" / "skills" / "how-to-x").mkdir(parents=True)
         (tmp_path / "main" / "skills" / "how-to-x" / "SKILL.md").write_text("x")
+        (tmp_path / ".agents" / "skills" / "how-to-x").mkdir(parents=True)  # someone's own copy: left alone, and said so
         _link_skills()
         assert (tmp_path / ".claude" / "skills" / "how-to-x").resolve() == tmp_path / "main" / "skills" / "how-to-x"
-        assert "sets no PERSONAL_RUNBOOK: run `kitchen setup`" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert "sets no PERSONAL_RUNBOOK: run `kitchen setup`" in err
+        assert f"skipped {tmp_path / '.agents' / 'skills' / 'how-to-x'}: not a symlink" in err
 
 
 @pytest.mark.usefixtures("operator_env")

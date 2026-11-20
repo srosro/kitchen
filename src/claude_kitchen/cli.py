@@ -1514,7 +1514,8 @@ OPERATOR_SETTINGS = {"OWNER_NAME": "Alex", "TIMEZONE": "America/Los_Angeles", "P
 def _link_skills(strict: bool = False) -> list[str]:
     """Link kitchen's skills and the company wiki's reviewed ones (_link_installs).
     A variable missing from operator.env stops setup (strict) with the line to add;
-    open and hire only warn, naming it, and link what they can."""
+    open and hire only warn, naming it, and link what they can. A skipped link is
+    warned about; the rest are returned."""
     env = Path.home() / ".config" / "kitchen" / "operator.env"
     lines = env.read_text().splitlines() if env.exists() else []
     settings = {k: v.strip("\"'") for k, _, v in (l.partition("=") for l in lines if not l.startswith("#"))}
@@ -1525,7 +1526,10 @@ def _link_skills(strict: bool = False) -> list[str]:
     if missing:
         print(f"⚠️  {env} sets no {', '.join(missing)}: run `kitchen setup`.", file=sys.stderr)
     company = settings.get("COMPANY_RUNBOOK_REVIEWED")
-    return _link_installs(_PKG_DIR, Path.home(), (Path(company).expanduser() / "skills",) if company else ())
+    report = _link_installs(_PKG_DIR, Path.home(), (Path(company).expanduser() / "skills",) if company else ())
+    for line in (l for l in report if l.startswith("skipped")):
+        print(f"⚠️  link {line}", file=sys.stderr)
+    return [l for l in report if not l.startswith("skipped")]
 
 
 def cmd_setup(args):
@@ -1540,7 +1544,7 @@ def cmd_setup(args):
 
     # --- Skills ---
     for line in _link_skills(strict=True):
-        print(f"{'⚠️ ' if line.startswith('skipped') else '✅'} link {line}")
+        print(f"✅ link {line}")
 
     # --- Playwright MCP server (the playwright skill's browser); idempotent ---
     if WINDOWS:
