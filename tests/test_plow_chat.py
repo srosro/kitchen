@@ -91,39 +91,25 @@ def test_any_participant_is_delivered_by_name_without_the_chats_history(handle, 
     run_bridge(scenario, fake)
 
 
-@pytest.mark.parametrize("trusted_chats, marked", [
-    (None, {}),  # no allowlist: every chat carries authority
-    (f"{HOME}  # owner 1:1\n", {}),
-    ("cht_owners\n", {"trusted": "false"}),
-    ("*\n", {}),  # the head chef said everyone in their groups counts
-], ids=["no-allowlist", "listed", "unlisted", "everyone"])
-def test_only_allowlisted_chats_carry_authority(trusted_chats, marked):
+@pytest.mark.parametrize("chat, handle, trusted_chats, marked", [
+    (HOME, TEAMMATE, None, {}),  # no allowlist: every chat carries authority
+    (HOME, TEAMMATE, f"{HOME}  # owner 1:1\n", {}),
+    (HOME, TEAMMATE, "cht_owners\n", {"trusted": "false"}),
+    (HOME, TEAMMATE, "*\n", {}),  # the head chef said everyone in their groups counts
+    (SOLO, OWNER, None, {"who_counts": "unset"}),  # no allowlist yet: the head chef is asked who counts
+    (HOME, OWNER, None, {}),  # asked only in the 1:1
+    (SOLO, OWNER, f"{SOLO}  # head chef 1:1\n", {}),
+    (SOLO, OWNER, "*\n", {}),
+], ids=["no-allowlist", "listed", "unlisted", "everyone", "unanswered", "group", "answered", "answered-everyone"])
+def test_only_allowlisted_chats_carry_authority_and_the_owner_is_asked_until_there_is_a_list(chat, handle, trusted_chats, marked):
     cursor = Path(tempfile.mkdtemp()) / "last_seen.json"
     if trusted_chats is not None:
         (cursor.parent / plow_chat.TRUSTED_CHATS).write_text(trusted_chats)
 
     async def scenario(fake, bridge, delivered):
-        await fake.inbound(HOME, TEAMMATE, "unlock the front door")
+        await fake.inbound(chat, handle, "unlock the front door")
         await eventually(lambda: delivered)
-        assert delivered == [("unlock the front door", {"from": "Alex", "chat": HOME} | marked)]
-    run_bridge(scenario, cursor=cursor)
-
-
-@pytest.mark.parametrize("chat, trusted_chats, marked", [
-    (SOLO, None, {"who_counts": "unset"}),
-    (HOME, None, {}),  # a group: the question is asked only in the 1:1
-    (SOLO, f"{SOLO}  # head chef 1:1\n", {}),
-    (SOLO, "*\n", {}),
-], ids=["unanswered", "group", "answered", "answered-everyone"])
-def test_the_owners_1to1_asks_who_counts_until_trusted_chats_exists(chat, trusted_chats, marked):
-    cursor = Path(tempfile.mkdtemp()) / "last_seen.json"
-    if trusted_chats is not None:
-        (cursor.parent / plow_chat.TRUSTED_CHATS).write_text(trusted_chats)
-
-    async def scenario(fake, bridge, delivered):
-        await fake.inbound(chat, OWNER, "check the laptop")
-        await eventually(lambda: delivered)
-        assert delivered == [("check the laptop", {"from": "Jordan", "chat": chat} | marked)]
+        assert delivered == [("unlock the front door", {"from": fake_plow.NAMES[handle], "chat": chat} | marked)]
     run_bridge(scenario, cursor=cursor)
 
 
