@@ -5,7 +5,9 @@ member's text and attachments into the sous as a `<channel source="plow-chat">` 
 the sous `reply`, `send_file` and `start_chat` tools. Plow shows the credential only the chats the line's
 account owns, so every participant it delivers — a person or a peer agent's line — is served.
 Once `trusted-chats` exists, only the chats it lists carry authority: any other chat's texts
-arrive marked `trusted="false"`, as context the sous may answer but never act on.
+arrive marked `trusted="false"`, as context the sous may answer but never act on; a `*` entry
+keeps every chat's authority. While the file is missing, the owner's texts in their 1:1 arrive
+marked `who_counts="unset"`, for the sous to ask them who else counts and write the answer there.
 `start_chat` reaches only people already in one of the line's chats or listed in
 `start-chat-allow`, and opens at most `NEW_CHATS_PER_DAY` new chats a day, each logged.
 Every send that reaches anyone but the line's owner, outside a chat `trusted-chats` lists, first goes
@@ -36,7 +38,7 @@ from claude_kitchen.state import (atomic_write_json, matrix_get, matrix_put, plo
                                   swarm_accounts, swarm_credential, with_digest)
 
 CREDENTIALS = "plow-credentials"  # written mode 600 by `latch agents new --own --token-file`
-TRUSTED_CHATS = "trusted-chats"  # one chat uid per line; read at each hand-over, so edits need no restart
+TRUSTED_CHATS = "trusted-chats"  # one chat uid per line, or `*` for every chat; read at each hand-over, so edits need no restart
 START_CHAT_ALLOW = "start-chat-allow"  # one handle per line, beyond those already in the line's chats
 STARTED_CHATS = "started-chats.log"  # one line per chat start_chat sends: time, chat, created, handles
 CONSULT_GATE = "consult-gate"  # the owner's Swarm id: a text to the owner alone names the agent consulted first
@@ -129,9 +131,15 @@ def listed(file: Path) -> set[str]:
 
 
 def untrusted(directory: Path, chat: str) -> bool:
-    """Whether `chat` lacks authority: true once `trusted-chats` exists and doesn't list it."""
+    """Whether `chat` lacks authority: true once `trusted-chats` exists and lists neither it nor `*`."""
     file = directory / TRUSTED_CHATS
-    return file.exists() and chat not in listed(file)
+    return file.exists() and not {chat, "*"} & listed(file)
+
+
+def owners_chat(chats: list[dict]) -> str | None:
+    """The line's chat that seats no one but its owner."""
+    return next((c["uid"] for c in chats
+                 if [p.get("role") for p in c["participants"] if p["relationship"] != "self"] == ["owner"]), None)
 
 
 def new_chats_today(log_file: Path) -> int:
@@ -334,6 +342,7 @@ class Bridge:
     taken: dict = field(init=False)
     burst: list = field(init=False, default_factory=list)  # one speaker's texts not yet handed over
     due: float = 0.0  # loop time the burst closes at
+    solo: str | None = None  # the owner's 1:1, once read
     handing: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)  # the socket and a send both take and flush
     starting: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)  # parallel start_chats share the daily cap
 
@@ -397,12 +406,22 @@ class Bridge:
                 meta = {"from": sender, "chat": first["chat_uid"]} | ({"file": " ".join(files)} if files else {})
                 if untrusted(self.cursor.parent, first["chat_uid"]):
                     meta["trusted"] = "false"
+                elif not (self.cursor.parent / TRUSTED_CHATS).exists() and first["chat_uid"] == await self.owners_chat():
+                    meta["who_counts"] = "unset"
                 await self.deliver("\n\n".join(texts), meta)
         uids = self.taken[first["chat_uid"]]
         uids += [m["uid"] for m in self.burst]  # after delivery, so a crash mid-send can't suppress it
         del uids[:-2 * PAGE]
         atomic_write_json(self.cursor, self.taken)
         self.burst = []
+
+    async def owners_chat(self) -> str | None:
+        """The owner's 1:1 with the line, read from Plow once it exists."""
+        if not self.solo:
+            r = await self.client.get("/v1/chats")
+            r.raise_for_status()
+            self.solo = owners_chat(r.json()["data"])
+        return self.solo
 
     async def catch_up(self, chat: str):
         """Take what reached `chat` while the socket was down: the newest
@@ -471,7 +490,7 @@ class Bridge:
             return self.gated(chat, priority, skip, consulted)
         if consulted:
             return "not sent: `consulted` credits a text to the head chef alone; drop it here"
-        if chat and (self.cursor.parent / TRUSTED_CHATS).exists() and not untrusted(self.cursor.parent, chat):
+        if chat and (file := self.cursor.parent / TRUSTED_CHATS).exists() and chat in listed(file):  # named, not by `*`
             return None
         thread = await self.thread(chat) if chat else {}
         def data(field: str) -> str:  # no tag, nor a lookalike one (＜/thread＞), can leave its fence
@@ -740,8 +759,7 @@ def tell_owner(kitchen: str, text: str) -> str:
     with plow_client(kitchen) as client:
         r = client.get("/v1/chats")
         r.raise_for_status()
-        chat = next(c["uid"] for c in r.json()["data"]
-                    if [p.get("role") for p in c["participants"] if p["relationship"] != "self"] == ["owner"])
+        chat = owners_chat(r.json()["data"])
         return sent(client.post(f"/v1/chats/{chat}/messages", json={"body": text}), "message to the owner")
 
 

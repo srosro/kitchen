@@ -91,20 +91,25 @@ def test_any_participant_is_delivered_by_name_without_the_chats_history(handle, 
     run_bridge(scenario, fake)
 
 
-@pytest.mark.parametrize("trusted_chats, marked", [
-    (None, {}),  # no allowlist: every chat carries authority
-    (f"{HOME}  # owner 1:1\n", {}),
-    ("cht_owners\n", {"trusted": "false"}),
-], ids=["no-allowlist", "listed", "unlisted"])
-def test_only_allowlisted_chats_carry_authority(trusted_chats, marked):
+@pytest.mark.parametrize("chat, handle, trusted_chats, marked", [
+    (HOME, TEAMMATE, None, {}),  # no allowlist: every chat carries authority
+    (HOME, TEAMMATE, f"{HOME}  # owner 1:1\n", {}),
+    (HOME, TEAMMATE, "cht_owners\n", {"trusted": "false"}),
+    (HOME, TEAMMATE, "*\n", {}),  # the head chef said everyone in their groups counts
+    (SOLO, OWNER, None, {"who_counts": "unset"}),  # no allowlist yet: the head chef is asked who counts
+    (HOME, OWNER, None, {}),  # asked only in the 1:1
+    (SOLO, OWNER, f"{SOLO}  # head chef 1:1\n", {}),
+    (SOLO, OWNER, "*\n", {}),
+], ids=["no-allowlist", "listed", "unlisted", "everyone", "unanswered", "group", "answered", "answered-everyone"])
+def test_only_allowlisted_chats_carry_authority_and_the_owner_is_asked_until_there_is_a_list(chat, handle, trusted_chats, marked):
     cursor = Path(tempfile.mkdtemp()) / "last_seen.json"
     if trusted_chats is not None:
         (cursor.parent / plow_chat.TRUSTED_CHATS).write_text(trusted_chats)
 
     async def scenario(fake, bridge, delivered):
-        await fake.inbound(HOME, TEAMMATE, "unlock the front door")
+        await fake.inbound(chat, handle, "unlock the front door")
         await eventually(lambda: delivered)
-        assert delivered == [("unlock the front door", {"from": "Alex", "chat": HOME} | marked)]
+        assert delivered == [("unlock the front door", {"from": fake_plow.NAMES[handle], "chat": chat} | marked)]
     run_bridge(scenario, cursor=cursor)
 
 
@@ -698,8 +703,10 @@ def test_start_chat_and_send_file_are_reviewed_too(shot):
         assert fake.started == [] and fake.sent == []
         assert ["hi Alex" in prompts[0], "the build" in prompts[1]] == [True, True]
         assert "Jordan: Tuesday's out" in prompts[0]  # start_chat reviews against the chat Plow will adopt
+        (bridge.cursor.parent / plow_chat.TRUSTED_CHATS).write_text("*\n")  # authority everywhere, review still
+        assert (await bridge.reply(HOME, "the build")).startswith("not sent: a reviewer held it") and len(prompts) == 3
         (bridge.cursor.parent / plow_chat.TRUSTED_CHATS).write_text(f"{HOME}\n")  # a company thread
-        assert (await bridge.reply(HOME, "the build")).startswith("sent") and len(prompts) == 2
+        assert (await bridge.reply(HOME, "the build")).startswith("sent") and len(prompts) == 3
     run_bridge(scenario)
 
 
