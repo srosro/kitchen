@@ -190,7 +190,8 @@ def main() -> int:
     if any(_retired(p, roots) for p in paths):
         return _deny("refused: preferences.md and mistakes.md are retired. Write the learning in the runbook "
                      "its audience reads: anything about one person in your runbook, $PERSONAL_RUNBOOK/runbooks/"
-                     "<your agent's folder name>.md; a practice every teammate's agent follows in a $COMPANY_RUNBOOK page.")
+                     "<your agent's folder name>.md; how any agent does a task in the company skill "
+                     "$COMPANY_RUNBOOK/skills/how-to-<task>/SKILL.md.")
     if hit and contains_secret(text):
         return _deny("not written: this write to a runbook wiki carries a credential shape. Runbooks sync to other "
                      "machines and teammates: name where the secret lives (the vault item), never its value; mask "
