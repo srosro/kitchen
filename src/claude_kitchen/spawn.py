@@ -20,7 +20,6 @@ RUNTIME_HOOKS = (
     ("Stop", None, "kitchen hook", None),
     ("StopFailure", "authentication_failed|rate_limit", "kitchen hook", None),
     ("UserPromptSubmit", "", "kitchen hook", None),
-    ("PreToolUse", "mcp__swarm.*__send", "kitchen consult-gate", None),
 )
 
 

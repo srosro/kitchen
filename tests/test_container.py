@@ -227,7 +227,7 @@ def test_spawn_sous_hands_only_its_runtime_to_the_container(tmp_path, monkeypatc
     assert argv[argv.index("--mcp-config") + 1] == str(tmp_path / "container-mcp.json")
     settings = json.loads(argv[argv.index("--settings") + 1])
     assert settings["hooks"]["Stop"][0]["hooks"][0]["command"] == "kitchen hook"
-    assert settings["hooks"]["PreToolUse"][0]["matcher"] == "mcp__swarm.*__send"
+    assert "PreToolUse" not in settings["hooks"]
     assert settings["statusLine"]["command"] == "kitchen statusline-command"
     assert "do not hire or ticket cooks" in argv[argv.index("--append-system-prompt") + 1].lower()
     assert env == {

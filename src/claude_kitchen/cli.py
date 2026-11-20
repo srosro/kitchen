@@ -936,21 +936,6 @@ def _hook_gate() -> tuple[str, str, Path] | None:
     return name, kitchen, Path(status)
 
 
-def cmd_consult_gate():
-    """PreToolUse on Swarm `send`: exit 2 with the reason when the send is refused."""
-    from claude_kitchen.plow_chat import swarm_send_refusal
-    kitchen = os.environ.get("AGENT_KITCHEN", "")
-    try:
-        payload = json.load(sys.stdin)
-        refusal = kitchen and swarm_send_refusal(kitchen, os.environ.get("AGENT_NAME", ""),
-                                                 payload["tool_input"], payload.get("transcript_path", ""))
-    except Exception as e:  # a gate that can't decide holds the send
-        refusal = f"not sent: the consult gate couldn't check this send ({e!r}); retry"
-    if refusal:
-        print(refusal, file=sys.stderr)
-        sys.exit(2)  # what blocks the tool call
-
-
 def cmd_hook(args):
     """Handle hook events from Claude Code or Antigravity (stdin), or Codex (--message arg).
     A bare session the head chef runs has no AGENT_NAME, so _hook_gate no-ops it."""
@@ -1373,16 +1358,17 @@ def _hook(name: str) -> str:
     return f'"{Path(sys.executable).as_posix()}" {path}' if name.endswith(".py") else path
 
 
+RETIRED_HOOKS = ("kitchen consult-gate",)  # commands kitchen no longer ships: setup drops any entry running one
+
 # (event, matcher, command, timeout): the Claude hook entries kitchen owns.
 OWNED_HOOKS = (
-    *RUNTIME_HOOKS[:3],
+    *RUNTIME_HOOKS,
     ("UserPromptSubmit", None, _hook("capture-prompt.sh"), None),
     ("PostToolUse", "AskUserQuestion", _hook("capture-answer.sh"), None),
     ("PreToolUse", "Bash", _hook("roborev-pre-commit-context.py"), None),
     ("PreToolUse", "Bash", _hook("roborev-pre-push-gate.py"), 660),
     ("PreToolUse", "Bash", _hook("roborev-pre-checkout-gate.py"), None),
     ("PreToolUse", "Edit|Write|MultiEdit|Bash", _hook("runbook-secret-gate.py"), None),
-    RUNTIME_HOOKS[3],
 )
 
 
@@ -1403,9 +1389,10 @@ def _install_claude_hooks(settings: Path) -> list[str]:
     def keeps(ev, group, h):
         """Drop an older copy (code-config's ~/.claude/hooks, or the legacy roborev
         installer's .../roborev/claude-hooks), and any copy of an owned hook that isn't
-        the canonical entry (wrong matcher or timeout) or repeats one already kept."""
+        the canonical entry (wrong matcher or timeout) or repeats one already kept, or a
+        retired hook however it is wrapped."""
         cmd = h.get("command") or ""
-        if any(cmd.endswith(d + m) for m in moved for d in ("/.claude/hooks/", "/roborev/claude-hooks/")):
+        if any(r in cmd for r in RETIRED_HOOKS) or any(cmd.endswith(d + m) for m in moved for d in ("/.claude/hooks/", "/roborev/claude-hooks/")):
             return False
         if cmd not in owned:
             return True
@@ -1415,11 +1402,13 @@ def _install_claude_hooks(settings: Path) -> list[str]:
         seen.add(key)
         return True
 
+    label = lambda cmd: next((r.split()[-1] for r in RETIRED_HOOKS if r in cmd), Path(cmd).name)
+
     for ev in list(hooks):
         for group in hooks[ev]:
             entries = group.get("hooks", [])
             kept = [keeps(ev, group, h) for h in entries]  # per entry, so an identical duplicate is dropped too
-            added += [f"-{Path(h.get('command') or '').name}" for h, k in zip(entries, kept) if not k]
+            added += [f"-{label(h.get('command') or '')}" for h, k in zip(entries, kept) if not k]
             group["hooks"] = [h for h, k in zip(entries, kept) if k]
         hooks[ev] = [g for g in hooks[ev] if g.get("hooks")]
         if not hooks[ev]:
@@ -1833,7 +1822,6 @@ def main():
     p_close.add_argument("--keep-worktree", action="store_true", help="Skip worktree removal entirely")
 
     sub.add_parser("hook", help="Claude Code hook handler (called by hooks, not directly)")
-    sub.add_parser("consult-gate", help="Refuse a Swarm send to the head chef that credits no agent (a hook)")
 
     p_hook_codex = sub.add_parser("hook-codex", help="Codex hook handler (called by notify, not directly)")
     p_hook_codex.add_argument("json_payload", nargs="?", default="{}", help="JSON from Codex")
@@ -1922,8 +1910,6 @@ def main():
         sys.exit(0 if result.get("status") == "complete" and not (result.get("error") or result.get("logout_error")) else 1)
     elif args.command in ("hook", "hook-codex", "hook-agy"):
         cmd_hook(args)
-    elif args.command == "consult-gate":
-        cmd_consult_gate()
     elif args.command == "channel-server":
         from claude_kitchen.channel import main as channel_main
         channel_main(args.kitchen)
