@@ -1488,7 +1488,7 @@ def _link_installs(pkg: Path, home: Path, wiki_skills: tuple[Path, ...] = ()) ->
     report = [f"skipped {home / '.local' / 'bin' / 'tc'}: tc is a bash tool" if WINDOWS else
               _place_link(pkg / "tc" / "tc", home / ".local" / "bin" / "tc", ("code-config/tc",))]
     dirs = [pkg / "skills", *(d for d in wiki_skills if d.is_dir())]
-    for src in sorted(p for d in dirs for p in d.iterdir() if p.is_dir()):
+    for src in (p for d in dirs for p in sorted(d.iterdir()) if p.is_dir()):  # kitchen first: a same-named wiki skill is skipped
         moved = (f"code-config/claude/skills/{src.name}", f"code-config/codex/skills/{src.name}")
         for root in (home / ".claude" / "skills", home / ".agents" / "skills"):
             report.append(_place_link(src, root / src.name, moved))
