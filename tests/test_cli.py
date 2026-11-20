@@ -849,7 +849,7 @@ class TestStatusPreservationAcrossNonStopWriters:
     @patch("claude_kitchen.cli.resolve_kitchen", return_value="risotto")
     def test_a_ticketed_chat_message_gets_hot_springs_then_a_check_before_the_report(
             self, mock_rk, mock_state, mock_keys, monkeypatch, tmp_path, source):
-        """The owner sees a cook take their message on (🫡) and finish it (✅), both landing before the
+        """The owner sees a cook take their message on (🔨) and finish it (✅), both landing before the
         sous's answer, so the answer stays the chat's latest preview."""
         mock_state.return_value = tmp_path
         write_status(tmp_path, "eng", {"status": "idle", "agent": "eng", "backend": "claude"})
@@ -875,14 +875,14 @@ class TestStatusPreservationAcrossNonStopWriters:
 
         from claude_kitchen.cli import cmd_ticket
         cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message=chat_message, priority=None, dangerously_skip_priority=True))
-        assert marks == ([("react", "🫡")] if source == "swarm" else [("add", "🫡")])
+        assert marks == ([("react", "🔨")] if source == "swarm" else [("add", "🔨")])
 
         pushes = []
         _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message="done",
                        session_id="00000000-0000-0000-0000-000000000000", transcript_path=str(tmp_path / "none.jsonl"))
         with patch("claude_kitchen.channel.send_to_socket", lambda _sock, push: pushes.append((list(marks), push))):
             cmd_hook(argparse.Namespace(command="hook"))
-        done = [("react", "🫡"), ("react", "✅"), ("redact", "%24r1")] if source == "swarm" else [("add", "🫡"), ("add", "✅")]
+        done = [("react", "🔨"), ("react", "✅"), ("redact", "%24r1")] if source == "swarm" else [("add", "🔨"), ("add", "✅")]
         assert [(seen, push["chat_message"]) for seen, push in pushes] == [(done, chat_message)]
 
     def test_a_ticket_taken_while_the_report_marks_its_message_keeps_its_own(self, monkeypatch, tmp_path):
