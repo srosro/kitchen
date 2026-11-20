@@ -1,5 +1,6 @@
 """CLI entry point for claude-kitchen."""
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -56,12 +57,13 @@ _NOTES_TEMPLATES = {
 
 
 def _seed(dir_path: Path, templates: dict[str, str]):
-    """Create dir and write any template files that don't already exist."""
+    """Create dir and write any template files that don't already exist.
+    Exclusive creation never follows a link, dangling or not: a sous can write
+    its notes, and the host must not write wherever a link it left points."""
     dir_path.mkdir(parents=True, exist_ok=True)
     for name, body in templates.items():
-        f = dir_path / name
-        if not f.exists():
-            f.write_text(body)
+        with contextlib.suppress(FileExistsError), open(dir_path / name, "x") as f:
+            f.write(body)
 
 
 def _cwd_project() -> Path | None:
