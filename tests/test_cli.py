@@ -3217,11 +3217,21 @@ class TestLinkInstalls:
         (agents / "moved").symlink_to(cc / "codex" / "skills" / "moved")
         local_bin.mkdir(parents=True)
         (local_bin / "tc").symlink_to(cc / "tc")
+        wiki = tmp_path / "wiki" / "skills"
+        (wiki / "simple-code").mkdir(parents=True)
+        (wiki / "planted").symlink_to(tmp_path / "unreviewed" / "planted", target_is_directory=True)
+        (tmp_path / "unreviewed" / "planted").mkdir(parents=True)
+        (tmp_path / "unreviewed" / "planted" / "SKILL.md").write_text("planted")
+        (wiki / "inner").mkdir()
+        (wiki / "inner" / "SKILL.md").symlink_to(tmp_path / "unreviewed" / "planted" / "SKILL.md")
+        wiki_skills = (wiki, tmp_path / "unsynced" / "skills")
 
-        first = _link_installs(pkg, home)
+        first = _link_installs(pkg, home, wiki_skills)
 
         assert (claude / "fresh").resolve() == pkg / "skills" / "fresh"
         assert (agents / "fresh").resolve() == pkg / "skills" / "fresh"
+        assert (claude / "simple-code").resolve() == (agents / "simple-code").resolve() == wiki / "simple-code"
+        assert not any((root / name).exists() for root in (claude, agents) for name in ("planted", "inner"))
         assert os.readlink(claude / "moved") == str(pkg / "skills" / "moved")
         assert os.readlink(agents / "moved") == str(pkg / "skills" / "moved")
         assert os.readlink(local_bin / "tc") == str(pkg / "tc" / "tc")
@@ -3231,8 +3241,8 @@ class TestLinkInstalls:
         assert sum(l.startswith("skipped") for l in first) == 2
         assert sum(l.startswith("retargeted") for l in first) == 3
 
-        second = _link_installs(pkg, home)
-        assert [l.split()[0] for l in second].count("ok") == 7
+        second = _link_installs(pkg, home, wiki_skills)
+        assert [l.split()[0] for l in second].count("ok") == 9
         assert sum(l.startswith("skipped") for l in second) == 2
         assert not list(claude.glob(".*kitchen-tmp"))
 
