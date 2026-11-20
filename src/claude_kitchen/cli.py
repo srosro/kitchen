@@ -1507,7 +1507,7 @@ def _link_installs(pkg: Path, home: Path, wiki_skills: tuple[Path, ...] = ()) ->
 
 
 # Each variable the base rules read, with an example value for the line to add.
-OPERATOR_SETTINGS = {"OWNER_NAME": "Alex", "TIMEZONE": "America/Los_Angeles", "PERSONAL_RUNBOOK": "~/Plow/wiki/personal",
+OPERATOR_SETTINGS = {"OWNER_NAME": "Alex", "TIMEZONE": "Europe/London", "PERSONAL_RUNBOOK": "~/Plow/wiki/personal",
                      "COMPANY_RUNBOOK": "~/Plow/wiki/plowco", "COMPANY_RUNBOOK_REVIEWED": "~/Plow/plowco-main"}
 
 
