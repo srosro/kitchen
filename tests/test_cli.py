@@ -2467,6 +2467,45 @@ class TestCmdCloseWipesNotesNotWiki:
         assert (wiki / "mistakes.md").exists(), "project wiki must persist"
 
 
+def _write_operator_env(home: Path, **overrides) -> Path:
+    from claude_kitchen.cli import OPERATOR_SETTINGS
+    env = home / ".config" / "kitchen" / "operator.env"
+    env.parent.mkdir(parents=True, exist_ok=True)
+    env.write_text("".join(f"{k}={v}\n" for k, v in {**OPERATOR_SETTINGS, **overrides}.items() if v is not None))
+    return env
+
+
+@pytest.fixture
+def operator_env(tmp_path):
+    """A configured machine: operator.env sets every variable `kitchen setup` requires."""
+    return _write_operator_env(tmp_path)
+
+
+class TestOperatorEnv:
+    """Only setup refuses on a missing variable, naming the line to add; open and
+    hire warn and still link, so a newly merged company skill reaches the next cook."""
+
+    def test_setup_refuses_naming_the_line_to_add(self, tmp_path, monkeypatch):
+        from claude_kitchen.cli import cmd_setup
+        monkeypatch.setenv("HOME", str(tmp_path))
+        _write_operator_env(tmp_path, PERSONAL_RUNBOOK=None)
+        with pytest.raises(SystemExit) as exc:
+            cmd_setup(MagicMock())
+        assert "sets no PERSONAL_RUNBOOK." in exc.value.code
+        assert "\n   PERSONAL_RUNBOOK=~/Plow/wiki/personal" in exc.value.code
+
+    def test_open_and_hire_warn_and_still_link_the_company_skills(self, tmp_path, monkeypatch, capsys):
+        from claude_kitchen.cli import _link_skills
+        monkeypatch.setenv("HOME", str(tmp_path))
+        _write_operator_env(tmp_path, PERSONAL_RUNBOOK=None, COMPANY_RUNBOOK_REVIEWED=str(tmp_path / "main"))
+        (tmp_path / "main" / "skills" / "how-to-x").mkdir(parents=True)
+        (tmp_path / "main" / "skills" / "how-to-x" / "SKILL.md").write_text("x")
+        _link_skills()
+        assert (tmp_path / ".claude" / "skills" / "how-to-x").resolve() == tmp_path / "main" / "skills" / "how-to-x"
+        assert "sets no PERSONAL_RUNBOOK: run `kitchen setup`" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("operator_env")
 class TestCmdSetupExit:
     @patch("claude_kitchen.cli.subprocess.run")
     def test_exits_non_zero_when_claude_missing(self, mock_run, monkeypatch, tmp_path):
@@ -2524,6 +2563,7 @@ class TestCmdSetupHooks:
         data = json.loads(settings.read_text())
         commands = [h["command"] for groups in data["hooks"].values() for g in groups for h in g["hooks"]]
         assert data["model"] == "opus"
+        assert data["autoMemoryEnabled"] is False
         assert not any(c.startswith("$HOME/.claude/hooks/") and "knightwatch" not in c for c in commands)
         assert not any("/roborev/claude-hooks/" in c for c in commands)
         assert mine["command"] in commands and gate["command"] in commands
@@ -2542,6 +2582,7 @@ class TestCmdSetupHooks:
         assert "-capture-prompt.sh" in out and "-roborev-pre-push-gate.py" in out
 
 
+@pytest.mark.usefixtures("operator_env")
 class TestCmdSetupStatusline:
     """No statusLine: the sous runs kitchen's own. A statusLine of the user's own
     is advised to embed the kitchen segment and the usage writer. None block setup."""
@@ -2677,6 +2718,7 @@ class TestCmdSetupStatusline:
         assert "kitchen statusline-segment" in body
 
 
+@pytest.mark.usefixtures("operator_env")
 class TestCmdSetupRootMcp:
     """`kitchen setup` auto-removes a stray state-root .mcp.json (§Design.4)."""
 
@@ -2748,6 +2790,7 @@ class TestCmdSetupRootMcp:
         assert per_kitchen_cfg.exists(), "per-kitchen config must be untouched"
 
 
+@pytest.mark.usefixtures("operator_env")
 class TestCmdSetupSuperpowers:
     """superpowers installs from either marketplace; setup accepts both."""
 
