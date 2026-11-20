@@ -325,7 +325,7 @@ latch agents new --own --name widget-boss --line ln_... \
 
 Then restart the sous so it loads the channel: it can run `kitchen restart sous` itself, which relaunches it on the same session in its tmux pane (or `/exit`, then `kitchen open --resume boss` from the project root). Text the line to check it. A new group needs no setup: add the line's number to it.
 
-A text the sous hands a cook with `kitchen ticket --chat-message "plow-chat <chat> <message>"` gets a 🔨 tapback, which turns ✅ when the cook reports, before the sous answers, so the answer stays the chat's latest preview. A swarm message (`--chat-message "swarm <room> <event>"`) gets the same reactions from the kitchen's account. Plow tapbacks only iMessage chats; elsewhere the attempt is logged and skipped.
+A text the sous hands a cook with `kitchen ticket --chat-message "plow-chat <chat> <message>"` gets a 🔨 tapback, which turns ✅ when the cook reports `STATUS: DONE` (any other report leaves the 🔨), before the sous answers, so the answer stays the chat's latest preview. A swarm message (`--chat-message "swarm <room> <event>"`) gets the same reactions from the kitchen's account. Plow tapbacks only iMessage chats; elsewhere the attempt is logged and skipped.
 
 ## Messaging the sous on Discord
 
