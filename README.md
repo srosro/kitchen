@@ -229,7 +229,7 @@ The sous runs these commands under the hood. You can also use them directly from
 | `kitchen hire <cook> [options]` | Spawn a cook and wait until its interactive prompt is ready. |
 | `kitchen roles` | List the packaged cook roles. |
 | `kitchen ticket <cook> "message" (--priority <ref> \| --dangerously-skip-priority) [--chat-message "<source> <chat> <id>"]` | Deliver a verified message to a cook. `--priority` names the Swarm priority the ticket works; it is appended to the message as `[priority: <ref>]` and the cook's report echoes it. `--chat-message` names the chat message the ticket answers; it rides back on the cook's next report as `chat_message`. |
-| `kitchen wait <source> <chat> <id> [note] --on <who>` / `kitchen wait done <id>` | Record, or clear, a chat message waiting on someone outside the kitchen. While anything is open (these, or a cook's `--chat-message`), every notification kitchen delivers to the sous starts with a ♨️/⏲️ digest, oldest first. |
+| `kitchen wait <source> <chat> <id> [note] --on <who>` / `kitchen wait done <id>` | Record, or clear, a chat message waiting on someone outside the kitchen. While anything is open (these, or a cook's `--chat-message`), every notification kitchen delivers to the sous starts with a 🫡/⏲️ digest, oldest first. |
 | `kitchen ticket sous --kitchen <kitchen> "message" (--priority <ref> \| --dangerously-skip-priority)` | From a sous, deliver a ticket to another kitchen's sous over its channel socket; exits non-zero if that sous is not listening. |
 | `kitchen peek <cook> [--full]` | Capture the cook's current pane or full scrollback. |
 | `kitchen brigade [kitchen]` | Show live cook status and known context usage. |
@@ -325,7 +325,7 @@ latch agents new --own --name widget-boss --line ln_... \
 
 Then restart the sous so it loads the channel: it can run `kitchen restart sous` itself, which relaunches it on the same session in its tmux pane (or `/exit`, then `kitchen open --resume boss` from the project root). Text the line to check it. A new group needs no setup: add the line's number to it.
 
-A text the sous hands a cook with `kitchen ticket --chat-message "plow-chat <chat> <message>"` gets a ♨️ tapback, which turns ✅ when the cook reports, before the sous answers, so the answer stays the chat's latest preview. A swarm message (`--chat-message "swarm <room> <event>"`) gets the same reactions from the kitchen's account. Plow tapbacks only iMessage chats; elsewhere the attempt is logged and skipped.
+A text the sous hands a cook with `kitchen ticket --chat-message "plow-chat <chat> <message>"` gets a 🫡 tapback, which turns ✅ when the cook reports, before the sous answers, so the answer stays the chat's latest preview. A swarm message (`--chat-message "swarm <room> <event>"`) gets the same reactions from the kitchen's account. Plow tapbacks only iMessage chats; elsewhere the attempt is logged and skipped.
 
 ## Messaging the sous on Discord
 

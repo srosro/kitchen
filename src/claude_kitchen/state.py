@@ -426,7 +426,7 @@ def with_digest(base: Path, content: str) -> str:
     waits = sorted(read_waits(base), key=lambda w: w["opened_at"])
     lines = []
     if cooks:
-        lines += ["♨️ Waiting on cooks:"] + [f"- {cook} · {r['message']} · {_age(r['opened_at'])}" for r, cook in cooks]
+        lines += ["🫡 Waiting on cooks:"] + [f"- {cook} · {r['message']} · {_age(r['opened_at'])}" for r, cook in cooks]
     if waits:
         lines += ["⏲️ Waiting on others:"] + [
             f"- {w['on']} · {w['message']}{' · ' + w['note'] if w['note'] else ''} · {_age(w['opened_at'])}" for w in waits]
