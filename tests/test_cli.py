@@ -16,7 +16,7 @@ from unittest.mock import patch, MagicMock, call
 import httpx
 import pytest
 
-from claude_kitchen.cli import resolve_kitchen, resolve_project, cmd_brigade, cmd_hook, cmd_open, cmd_hire, cmd_close, cmd_clock_out, _codex_rollout, _sweep_cooks, cmd_sweep, main, _agy_summary, SKIP_PRIORITY_WARNING
+from claude_kitchen.cli import resolve_kitchen, resolve_project, cmd_brigade, cmd_hook, cmd_open, cmd_hire, cmd_close, cmd_clock_out, _codex_rollout, _sweep_cooks, cmd_sweep, main, _agy_summary, SKIP_PRIORITY_WARNING, SETUP_PARTS
 from claude_kitchen.state import channel_socket, read_status, update_status, write_status
 from claude_kitchen.tmux import CK_PREFIX, PROBE_TIMEOUT, SESSION, PromptBlocked
 
@@ -2497,7 +2497,7 @@ class TestOperatorEnv:
         monkeypatch.setenv("HOME", str(tmp_path))
         _write_operator_env(tmp_path, PERSONAL_RUNBOOK=None)
         with pytest.raises(SystemExit) as exc:
-            cmd_setup(MagicMock())
+            cmd_setup(MagicMock(only=SETUP_PARTS))
         assert "sets no PERSONAL_RUNBOOK." in exc.value.code
         assert "\n   PERSONAL_RUNBOOK=~/Plow/wiki/personal" in exc.value.code
 
@@ -2528,7 +2528,7 @@ class TestCmdSetupExit:
         )
         from claude_kitchen.cli import cmd_setup
         with pytest.raises(SystemExit) as exc:
-            cmd_setup(MagicMock())
+            cmd_setup(MagicMock(only=SETUP_PARTS))
         assert exc.value.code == 1
 
 
@@ -2568,7 +2568,7 @@ class TestCmdSetupHooks:
 
         for _ in range(2):
             with pytest.raises(SystemExit):  # superpowers is absent from this HOME
-                cmd_setup(MagicMock())
+                cmd_setup(MagicMock(only=SETUP_PARTS))
 
         data = json.loads(settings.read_text())
         commands = [h["command"] for groups in data["hooks"].values() for g in groups for h in g["hooks"]]
@@ -2620,7 +2620,7 @@ class TestCmdSetupStatusline:
         monkeypatch.setenv("HOME", str(tmp_path))
         from claude_kitchen.cli import cmd_setup
         with pytest.raises(SystemExit):
-            cmd_setup(MagicMock())
+            cmd_setup(MagicMock(only=SETUP_PARTS))
         out = capsys.readouterr().out
         assert "the sous runs kitchen's own" in out
 
@@ -2632,7 +2632,7 @@ class TestCmdSetupStatusline:
         self._prep_home(tmp_path, self._base_settings())
 
         from claude_kitchen.cli import cmd_setup
-        cmd_setup(MagicMock())
+        cmd_setup(MagicMock(only=SETUP_PARTS))
         out = capsys.readouterr().out
         assert "the sous runs kitchen's own" in out
         assert "🍳 All set" in out
@@ -2651,7 +2651,7 @@ class TestCmdSetupStatusline:
         self._prep_home(tmp_path, {**self._base_settings(), "statusLine": {"type": "command", "command": str(script)}})
 
         from claude_kitchen.cli import cmd_setup
-        cmd_setup(MagicMock())
+        cmd_setup(MagicMock(only=SETUP_PARTS))
         out = capsys.readouterr().out
         assert all(s in out for s in ("no kitchen segment detected", "$(kitchen statusline-segment)",
                                       "rate_limits writer", "🍳 All set"))
@@ -2669,7 +2669,7 @@ class TestCmdSetupStatusline:
         script.chmod(0o755)
 
         from claude_kitchen.cli import cmd_setup
-        cmd_setup(MagicMock())
+        cmd_setup(MagicMock(only=SETUP_PARTS))
         out = capsys.readouterr().out
         assert "kitchen segment active" in out
         assert "not configured" not in out
@@ -2685,7 +2685,7 @@ class TestCmdSetupStatusline:
         self._prep_home(tmp_path, settings)
 
         from claude_kitchen.cli import cmd_setup
-        cmd_setup(MagicMock())
+        cmd_setup(MagicMock(only=SETUP_PARTS))
         out = capsys.readouterr().out
         assert "kitchen segment active" in out
 
@@ -2754,7 +2754,7 @@ class TestCmdSetupRootMcp:
         root_mcp.write_text('{"mcpServers": {}}')
 
         from claude_kitchen.cli import cmd_setup
-        cmd_setup(MagicMock())
+        cmd_setup(MagicMock(only=SETUP_PARTS))
 
         assert not root_mcp.exists(), "stray root .mcp.json must be removed"
         out = capsys.readouterr().out
@@ -2769,8 +2769,8 @@ class TestCmdSetupRootMcp:
         (tmp_path / ".claude-kitchen").mkdir(parents=True)
 
         from claude_kitchen.cli import cmd_setup
-        cmd_setup(MagicMock())  # no .mcp.json present
-        cmd_setup(MagicMock())  # second run — still a clean no-op
+        cmd_setup(MagicMock(only=SETUP_PARTS))  # no .mcp.json present
+        cmd_setup(MagicMock(only=SETUP_PARTS))  # second run — still a clean no-op
         out = capsys.readouterr().out
         assert "Removed stray root-level MCP config" not in out
         assert not (tmp_path / ".claude-kitchen" / ".mcp.json").exists()
@@ -2793,7 +2793,7 @@ class TestCmdSetupRootMcp:
         per_kitchen_cfg.write_text("{}")
 
         from claude_kitchen.cli import cmd_setup
-        cmd_setup(MagicMock())
+        cmd_setup(MagicMock(only=SETUP_PARTS))
 
         assert not (root / ".mcp.json").exists(), "root .mcp.json removed"
         assert root_kitchen_cfg.exists(), "root kitchen-mcp.json must be untouched"
@@ -2812,7 +2812,7 @@ class TestCmdSetupSuperpowers:
         sp = tmp_path / ".claude" / "plugins" / "cache" / marketplace / "superpowers"
         sp.mkdir(parents=True)
         from claude_kitchen.cli import cmd_setup
-        cmd_setup(MagicMock())  # setup installs the hooks itself, so it passes
+        cmd_setup(MagicMock(only=SETUP_PARTS))  # setup installs the hooks itself, so it passes
         assert f"✅ superpowers plugin installed ({sp})" in capsys.readouterr().out
 
     @patch("claude_kitchen.cli.subprocess.run")
@@ -2821,7 +2821,7 @@ class TestCmdSetupSuperpowers:
         monkeypatch.setenv("HOME", str(tmp_path))
         from claude_kitchen.cli import cmd_setup
         with pytest.raises(SystemExit):
-            cmd_setup(MagicMock())
+            cmd_setup(MagicMock(only=SETUP_PARTS))
         out = capsys.readouterr().out
         assert "❌ superpowers plugin not found" in out
         assert "superpowers-marketplace" in out and "claude-plugins-official" in out
@@ -3318,16 +3318,51 @@ class TestLinkInstalls:
 
 
 def test_install_claude_hooks_drops_a_duplicate_in_otherwise_canonical_settings(tmp_path):
-    from claude_kitchen.cli import _install_claude_hooks, OWNED_HOOKS
+    from claude_kitchen.cli import _claude_settings, OWNED_HOOKS
     settings = tmp_path / "settings.json"
-    _install_claude_hooks(settings)  # canonical install
-    data = json.loads(settings.read_text())
+    data, _ = _claude_settings(settings)  # canonical install
     group = next(g for g in data["hooks"]["PreToolUse"] if g["hooks"][0]["command"].endswith("roborev-pre-commit-context.py"))
     group["hooks"] = group["hooks"] * 2  # the only defect: one entry twice
     settings.write_text(json.dumps(data))
-    assert _install_claude_hooks(settings) == ["-roborev-pre-commit-context.py"]
-    commands = [h["command"] for gs in json.loads(settings.read_text())["hooks"].values() for g in gs for h in g["hooks"]]
-    assert len(commands) == len(OWNED_HOOKS)
+    data, added = _claude_settings(settings)
+    assert added == ["-roborev-pre-commit-context.py"]
+    assert len([h for gs in data["hooks"].values() for g in gs for h in g["hooks"]]) == len(OWNED_HOOKS)
+
+
+@pytest.mark.usefixtures("operator_env")
+@patch("claude_kitchen.cli.subprocess.run")
+@pytest.mark.parametrize("only", [{"memory", "skills"}, set(SETUP_PARTS)], ids=["memory,skills", "default"])
+def test_setup_lists_its_changes_and_installs_only_the_parts_asked_for(mock_run, only, tmp_path, monkeypatch, capsys):
+    """`--only memory,skills` pins auto-memory off and links skills, adding no hook and
+    no MCP server; the default does all of it. The list prints before anything is
+    written, and a config file the MCP setup changes is backed up first."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    settings.write_text('{"model": "opus"}')
+    codex = tmp_path / ".codex" / "config.toml"
+    codex.parent.mkdir()
+    codex.write_text('model = "gpt-5"\n')
+
+    def run(cmd, **kw):
+        if cmd[-1].endswith("setup-playwright-mcp.sh"):
+            assert "kitchen setup will:" in capsys.readouterr().out  # listed before the MCP write
+            codex.write_text('model = "gpt-5"\n[mcp_servers.playwright]\n')
+        return MagicMock(returncode=0, stdout="2.1.99 (claude)\n", stderr="")
+    mock_run.side_effect = run
+    from claude_kitchen.cli import cmd_setup
+    with pytest.raises(SystemExit):  # superpowers is absent from this HOME
+        cmd_setup(MagicMock(only=only))
+
+    data = json.loads(settings.read_text())
+    assert data["model"] == "opus" and data["autoMemoryEnabled"] is False
+    assert (tmp_path / ".claude" / "skills" / "playwright").is_symlink()
+    assert ("hooks" in data) == ("hooks" in only)
+    assert ("permissions" in data) == ("mcp" in only)
+    assert ("[mcp_servers.playwright]" in codex.read_text()) == ("mcp" in only)
+    backups = list(codex.parent.glob("config.toml.bak-kitchen-*"))
+    assert [b.read_text() for b in backups] == (['model = "gpt-5"\n'] if "mcp" in only else [])
+    assert [json.loads(b.read_text()) for b in settings.parent.glob("settings.json.bak-kitchen-*")] == [{"model": "opus"}]
 
 
 def test_confirm_dev_channels_answers_only_the_new_dialog():
