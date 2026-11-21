@@ -3,6 +3,8 @@
 **Operating point:** a general-purpose agent harness used by a small team.
 Iteration speed and clear extension seams matter more than hypothetical scale.
 
+**Sibling repos:** `plow-pbc/kitchen`, the Rust replacement.
+
 ## Review bar
 
 - **Simple, maintainable, extensible code wins.** Prefer one clear owner and a
