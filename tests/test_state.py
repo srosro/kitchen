@@ -467,7 +467,7 @@ def test_restart_keeps_a_sous_running_when_swarm_cant_read_its_account(tmp_path,
     monkeypatch.setattr(cli, "resolve_kitchen", lambda k: k)
     scheduled, popen = [], subprocess.Popen
     monkeypatch.setattr(subprocess, "Popen", lambda argv, **kw: scheduled.append(argv[2]) if argv[0] == "sh" else popen(argv, **kw))
-    args = argparse.Namespace(kitchen="boss")
+    args = argparse.Namespace(kitchen="boss", fresh=False)
 
     cli.cmd_restart(args)
     [script] = scheduled
@@ -483,6 +483,28 @@ def test_restart_keeps_a_sous_running_when_swarm_cant_read_its_account(tmp_path,
     with pytest.raises(subprocess.CalledProcessError):
         cli.cmd_restart(args)
     assert len(scheduled) == 1
+
+
+@pytest.mark.parametrize("fresh", [False, True])
+def test_restart_resumes_the_sous_unless_fresh(tmp_path, monkeypatch, fresh):
+    from claude_kitchen import cli
+    monkeypatch.setenv("HOME", str(tmp_path))
+    base = state_dir("boss")
+    base.mkdir(parents=True)
+    kj = {"source": str(tmp_path), "sous_launch": {"argv": ["kitchen", "open"], "cwd": str(tmp_path),
+                                                  "socket": "/sock", "pane": "%1"}}
+    if not fresh:
+        kj["sous_session_id"] = "s"  # a fresh restart needs no recorded conversation
+    (base / "kitchen.json").write_text(json.dumps(kj))
+    (base / "sous.pid").write_text(str(os.getpid()))
+    monkeypatch.setattr(cli, "resolve_kitchen", lambda k: k)
+    monkeypatch.setattr(cli, "sous_first_turn", lambda k: [])
+    scheduled = []
+    monkeypatch.setattr(subprocess, "Popen", lambda argv, **kw: scheduled.append(argv[2]))
+
+    cli.cmd_restart(argparse.Namespace(kitchen="boss", fresh=fresh))
+    [script] = scheduled
+    assert ("--resume" in script) == (not fresh)
 
 
 def test_a_pre_accounts_or_dangling_swarm_credential_refuses_to_open(tmp_path, monkeypatch):
