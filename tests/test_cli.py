@@ -89,7 +89,7 @@ class TestHook:
         _stdin_payload(
             monkeypatch,
             hook_event_name="Stop",
-            last_assistant_message="all tests pass",
+            last_assistant_message="all tests pass\n\nSTATUS: DONE",
             session_id="abc123",
         )
 
@@ -100,23 +100,25 @@ class TestHook:
         status_file = tmp_path / "cooks" / "eng.json"
         data = json.loads(status_file.read_text())
         assert data["status"] == "idle"
-        assert data["summary"] == "all tests pass"
+        assert data["summary"] == "all tests pass\n\nSTATUS: DONE"
 
         mock_send.assert_called_once()
         call_args = mock_send.call_args
         assert call_args[0][0] == channel_socket(tmp_path)
         assert call_args[0][1]["cook"] == "eng"
-        assert call_args[0][1]["summary"] == "all tests pass"
+        assert call_args[0][1]["summary"] == "all tests pass\n\nSTATUS: DONE"
 
+    @pytest.mark.parametrize("last_message", ["Nothing to relay.\n\nSILENT\n", "Waiting on the build to finish."])
     @pytest.mark.parametrize("owes_a_chat", [False, True])
-    def test_a_silent_turn_end_wakes_no_one_unless_it_owes_a_chat(self, monkeypatch, tmp_path, owes_a_chat):
+    def test_a_turn_end_without_a_status_line_wakes_no_one_unless_it_owes_a_chat(
+            self, monkeypatch, tmp_path, owes_a_chat, last_message):
         monkeypatch.setenv("AGENT_NAME", "relay")
         monkeypatch.setenv("AGENT_KITCHEN", "risotto")
         monkeypatch.setenv("STATUS_DIR", str(tmp_path))
         if owes_a_chat:
             update_status(tmp_path, "relay", chat_message={"message": "swarm !room $evt"})
         _stdin_payload(monkeypatch, hook_event_name="Stop",
-                       last_assistant_message="Nothing to relay.\n\nSILENT\n")
+                       last_assistant_message=last_message)
 
         pushes = []
         with patch("claude_kitchen.channel.send_to_socket", lambda _sock, push: pushes.append(push)):
@@ -355,7 +357,7 @@ class TestHook:
         monkeypatch.setenv("AGENT_KITCHEN", "risotto")
         monkeypatch.setenv("STATUS_DIR", str(tmp_path))
         payload = _codex_notify_payload(
-            **{"last-assistant-message": "captured codex summary"}
+            **{"last-assistant-message": "captured codex summary\nSTATUS: DONE"}
         )
 
         mock_send = MagicMock()
@@ -365,14 +367,14 @@ class TestHook:
         status_file = tmp_path / "cooks" / "codex-eng.json"
         data = json.loads(status_file.read_text())
         assert data["status"] == "idle"
-        assert data["summary"] == "captured codex summary"
+        assert data["summary"] == "captured codex summary\nSTATUS: DONE"
         assert data["session_id"] == "00000000-0000-0000-0000-000000000000"
 
         mock_send.assert_called_once()
         call_args = mock_send.call_args
         assert call_args[0][0] == channel_socket(tmp_path)
         assert call_args[0][1]["cook"] == "codex-eng"
-        assert call_args[0][1]["summary"] == "captured codex summary"
+        assert call_args[0][1]["summary"] == "captured codex summary\nSTATUS: DONE"
 
 
 def _stage_transcript(tmp_path, *, model, usage):
@@ -587,7 +589,7 @@ class TestCodexTokenCapture:
         with patch("claude_kitchen.channel.send_to_socket", mock_send):
             cmd_hook(argparse.Namespace(command="hook-codex", json_payload=_codex_notify_payload(**{
                 "thread-id": real, "client": "codex-tui",
-                "last-assistant-message": "NOTIFY-PROBE-1",
+                "last-assistant-message": "NOTIFY-PROBE-1\nSTATUS: DONE",
             })))
             cmd_hook(argparse.Namespace(command="hook-codex", json_payload=_codex_notify_payload(**{
                 "thread-id": "01a1421f-8113-7cb3-ada5-1605a20a0849", "client": "codex-tui",
@@ -596,7 +598,7 @@ class TestCodexTokenCapture:
 
         data = json.loads((tmp_path / "state" / "cooks" / "cx-eng.json").read_text())
         assert data["session_id"] == real
-        assert data["summary"] == "NOTIFY-PROBE-1"
+        assert data["summary"] == "NOTIFY-PROBE-1\nSTATUS: DONE"
         mock_send.assert_called_once()
 
     def test_codex_notify_accepts_pinned_thread_without_rollout(self, monkeypatch, tmp_path):
@@ -615,12 +617,12 @@ class TestCodexTokenCapture:
         mock_send = MagicMock()
         with patch("claude_kitchen.channel.send_to_socket", mock_send):
             cmd_hook(argparse.Namespace(command="hook-codex", json_payload=_codex_notify_payload(**{
-                "thread-id": real, "last-assistant-message": "nine days in",
+                "thread-id": real, "last-assistant-message": "nine days in\nSTATUS: DONE",
             })))
 
         data = json.loads((tmp_path / "state" / "cooks" / "cx-eng.json").read_text())
         assert data["status"] == "idle"
-        assert data["summary"] == "nine days in"
+        assert data["summary"] == "nine days in\nSTATUS: DONE"
         mock_send.assert_called_once()
 
     def test_codex_rollout_found_under_codex_home(self, monkeypatch, tmp_path):
@@ -672,7 +674,7 @@ class TestChannelCtxAttribute:
         monkeypatch.setenv("AGENT_KITCHEN", "risotto")
         monkeypatch.setenv("STATUS_DIR", str(tmp_path))
         _stdin_payload(monkeypatch,
-            hook_event_name="Stop", last_assistant_message="ok",
+            hook_event_name="Stop", last_assistant_message="ok\nSTATUS: DONE",
             session_id="00000000-0000-0000-0000-000000000000",
             transcript_path=transcript_path)
 
@@ -691,7 +693,7 @@ class TestChannelCtxAttribute:
         monkeypatch.setenv("AGENT_KITCHEN", "risotto")
         monkeypatch.setenv("STATUS_DIR", str(tmp_path))
         _stdin_payload(monkeypatch,
-            hook_event_name="Stop", last_assistant_message="ok",
+            hook_event_name="Stop", last_assistant_message="ok\nSTATUS: DONE",
             session_id="00000000-0000-0000-0000-000000000000",
             transcript_path=str(tmp_path / "vanished.jsonl"))
 
@@ -718,7 +720,7 @@ class TestChannelCtxAttribute:
         monkeypatch.setenv("AGENT_KITCHEN", "risotto")
         monkeypatch.setenv("STATUS_DIR", str(tmp_path / "state"))
         payload = _codex_notify_payload(**{"thread-id": thread_id,
-                                           "last-assistant-message": "<redacted>"})
+                                           "last-assistant-message": "<redacted>\nSTATUS: DONE"})
 
         mock_send = MagicMock()
         with patch("claude_kitchen.channel.send_to_socket", mock_send):
@@ -737,7 +739,7 @@ class TestChannelCtxAttribute:
         monkeypatch.setenv("STATUS_DIR", str(tmp_path / "state"))
         payload = _codex_notify_payload(**{
             "thread-id": "11111111-1111-1111-1111-111111111111",
-            "last-assistant-message": "no rollout",
+            "last-assistant-message": "no rollout\nSTATUS: DONE",
         })
 
         mock_send = MagicMock()
@@ -831,7 +833,7 @@ class TestStatusPreservationAcrossNonStopWriters:
         pushes = []
 
         def report(*_a, **_k):
-            _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message="done",
+            _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message="done\nSTATUS: DONE",
                 session_id="00000000-0000-0000-0000-000000000000", transcript_path=str(tmp_path / "none.jsonl"))
             with patch("claude_kitchen.channel.send_to_socket", lambda _sock, push: pushes.append(push)):
                 cmd_hook(argparse.Namespace(command="hook"))
@@ -3162,7 +3164,7 @@ class TestAgySummary:
 
     def test_the_stop_hook_marks_the_cook_idle_and_notifies_without_ctx(self, tmp_path, monkeypatch):
         write_status(tmp_path, "gem", {"status": "working", "agent": "gem", "backend": "gemini"})
-        payload = self._payload(tmp_path, [{"type": "PLANNER_RESPONSE", "content": "done\n"}])
+        payload = self._payload(tmp_path, [{"type": "PLANNER_RESPONSE", "content": "done\nSTATUS: DONE\n"}])
         payload["conversationId"] = "conv-1"
         monkeypatch.setenv("AGENT_NAME", "gem")
         monkeypatch.setenv("AGENT_KITCHEN", "risotto")
@@ -3174,8 +3176,8 @@ class TestAgySummary:
             main()
         status = json.loads((tmp_path / "cooks" / "gem.json").read_text())
         assert (status["status"], status["summary"], status["session_id"], status["backend"]) == \
-            ("idle", "done", "conv-1", "gemini")
-        assert push.call_args.args[1] == {"cook": "gem", "summary": "done", "ts": status["ts"]}
+            ("idle", "done\nSTATUS: DONE", "conv-1", "gemini")
+        assert push.call_args.args[1] == {"cook": "gem", "summary": "done\nSTATUS: DONE", "ts": status["ts"]}
 
 
 class TestTicketSous:
