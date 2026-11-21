@@ -21,7 +21,6 @@ import re
 import sys
 import uuid
 from dataclasses import dataclass, field
-from functools import cache
 from datetime import date, datetime, timedelta
 from itertools import takewhile
 from pathlib import Path
@@ -35,7 +34,7 @@ from mcp.types import Tool
 
 from claude_kitchen.channel import push, reply_server
 from claude_kitchen.state import (atomic_write_json, matrix_get, matrix_put, plow_chat_dir, read_env, state_dir, swarm_account,
-                                  swarm_accounts, swarm_credential, with_digest)
+                                  swarm_accounts, with_digest)
 
 CREDENTIALS = "plow-credentials"  # written mode 600 by `latch agents new --own --token-file`
 TRUSTED_CHATS = "trusted-chats"  # one chat uid per line, or `*` for every chat; read at each hand-over, so edits need no restart
@@ -186,11 +185,6 @@ def local(user_id: str) -> str:
     return user_id[1:].split(":")[0]
 
 
-CREDIT = re.compile(r"\n— with (\S+)\s*$")  # the credit an agent ends a Swarm send to the owner with
-CONSULT_HOURS = 6  # how recent a consult a credit may name
-TAG = re.compile(r'sender="(@[^"]+)" display_name="([^"]*)"')  # a Swarm message as a session reads it
-
-
 def display_name(accounts: list[dict], user_id: str) -> str:
     """`user_id`'s Swarm display name, from the first of `accounts` whose
     server knows it, else its localpart."""
@@ -207,106 +201,6 @@ def display_name(accounts: list[dict], user_id: str) -> str:
 def credited(text: str, name: str) -> str:
     """`text` ending with who it was worked with."""
     return f"{text}\n\n— with {name}" if name else text
-
-
-def sending_accounts(kitchen: str, agent: str) -> list[dict]:
-    """The Swarm accounts a session in `kitchen` sends as: a cook hired with its
-    own (`hire --swarm-account`), else the kitchen's."""
-    mcp = state_dir(kitchen) / "cooks" / f"{agent}.mcp"
-    if agent and mcp.exists():
-        return [swarm_credential(json.loads(mcp.read_text())["mcpServers"]["swarm"]["args"][-1])]
-    return swarm_accounts(kitchen)
-
-
-def dm_partner(accounts: list[dict], room: str) -> str:
-    """The other member of `room`, by its `!…` id, when it is a DM with one of
-    `accounts`; "" when it isn't, or none of them is in it."""
-    for account in accounts:
-        try:
-            members = matrix_get(account, f"/rooms/{quote(room, safe='')}/joined_members")["joined"]
-        except HTTPError as e:
-            if e.code != 403:  # anything but "not in this room" stops the send
-                raise
-            continue
-        others = set(members) - {account["user_id"]}
-        return others.pop() if len(members) == 2 and len(others) == 1 else ""
-    return ""
-
-
-def strings(x) -> list[str]:
-    """Every string inside a JSON value."""
-    if isinstance(x, str):
-        return [x]
-    return [s for v in (x.values() if isinstance(x, dict) else x if isinstance(x, list) else ()) for s in strings(v)]
-
-
-def lines_back(path: str, block: int = 1 << 20):
-    """A file's lines, last first, read from the end a block at a time."""
-    with open(path, "rb") as f:
-        end, head = f.seek(0, 2), b""
-        while end:
-            start = max(0, end - block)
-            f.seek(start)
-            lines = (f.read(end - start) + head).split(b"\n")
-            head, end = lines.pop(0), start
-            yield from reversed(lines)
-        yield head
-
-
-def worked_with(transcript: str, name: str, text: str, accounts: list[dict], owner: str) -> bool:
-    """Whether the session `transcript` records, in the last CONSULT_HOURS,
-    sent a Swarm message to `name` other than `text` that wasn't refused, or
-    was sent one by it.
-    `name` is a user id's localpart, or the first word of a display name a
-    message the session read in that time, or a DM partner's profile, shows
-    for it; the owner and `accounts` never count."""
-    since, recent = datetime.now().astimezone() - timedelta(hours=CONSULT_HOURS), []
-    for line in lines_back(transcript):
-        e = json.loads(line) if line.strip() else {}
-        if "timestamp" in e:
-            if datetime.fromisoformat(e["timestamp"]) < since:
-                break
-            recent.append(e)
-    name = name.casefold()
-    ids = {i for e in recent if e["type"] != "assistant" for t in strings(e)  # what it was shown, not what it wrote
-           for i, shown in TAG.findall(t) if shown.casefold().split()[:1] == [name]}
-    exclude = {owner, *(a["user_id"] for a in accounts)}
-    named = lambda user_id: user_id not in exclude and (user_id in ids or local(user_id).casefold() == name)
-    partner = cache(lambda room: (p := dm_partner(accounts, room)) and p not in exclude and (named(p) or display_name(accounts, p).casefold().split()[:1] == [name]))
-    refused = {b.get("tool_use_id") for e in recent if e["type"] == "user" for b in e["message"].get("content") or ()
-               if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("is_error")}
-    for e in recent:
-        content = e.get("message", {}).get("content")
-        blocks = [{"type": "text", "text": content}] if isinstance(content, str) else content or []
-        if e["type"] == "assistant" and any(
-                b.get("type") == "tool_use" and re.fullmatch(r"mcp__swarm.*__send", b["name"])
-                and b["id"] not in refused and b["input"].get("text") != text
-                and (any(map(named, [b["input"].get("room", ""), *b["input"].get("mentions", [])]))
-                     or b["input"].get("room", "").startswith("!") and partner(b["input"]["room"])) for b in blocks):
-            return True  # it sent them one
-        inbound = [b["text"] for b in blocks if b.get("type") == "text"] if e["type"] == "user" else \
-            strings(e.get("attachment")) if e["type"] == "attachment" else []
-        if any(named(i) for t in inbound for i, _ in TAG.findall(t)):
-            return True  # they sent it one
-    return False
-
-
-def swarm_send_refusal(kitchen: str, agent: str, send: dict, transcript: str = "") -> str | None:
-    """Why `agent`'s Swarm `send` to the owner is refused on a line with
-    `consult-gate`: a "— with <agent>" credit it ends with must name an agent,
-    other than the owner or the sender, that the session in `transcript` worked
-    with lately; no credit, or "— with none", goes through. None to let it through."""
-    gate = plow_chat_dir(kitchen) / CONSULT_GATE
-    credit = CREDIT.search(send.get("text", ""))
-    if not gate.exists() or send.get("dangerously_skip_attaching_a_priority") or not credit or credit[1].casefold() == "none":
-        return None
-    owner, room, accounts = listed(gate).pop(), send.get("room", ""), sending_accounts(kitchen, agent)
-    if owner not in (room, *(send.get("mentions") or ())) and not (room.startswith("!") and dm_partner(accounts, room) == owner):
-        return None
-    if transcript and worked_with(transcript, credit[1], send["text"], accounts, owner):
-        return None
-    return (f"not sent: this session hasn't worked with \"{credit[1]}\" in the last {CONSULT_HOURS} hours: "
-            "consult them first, or end with \"— with none\"")
 
 
 async def ask_reviewer(prompt: str) -> str:

@@ -3323,6 +3323,23 @@ def test_install_claude_hooks_drops_a_duplicate_in_otherwise_canonical_settings(
     assert len(commands) == len(OWNED_HOOKS)
 
 
+def test_install_claude_hooks_removes_the_retired_consult_gate(tmp_path):
+    """The consult gate moved into swarm: setup drops its hook, bare or wrapped in a kitchen-only guard,
+    and leaves an unrelated hook in the same group alone."""
+    from claude_kitchen.cli import _install_claude_hooks
+    settings = tmp_path / "settings.json"
+    other = {"type": "command", "command": "/x/my-swarm-logger"}
+    settings.write_text(json.dumps({"hooks": {"PreToolUse": [
+        {"matcher": "mcp__swarm.*__send", "hooks": [{"type": "command", "command": "kitchen consult-gate"}, other]},
+        {"matcher": "mcp__swarm.*__send", "hooks": [{"type": "command", "command":
+            'if [ -n "$AGENT_KITCHEN" ]; then exec /home/you/.local/bin/kitchen consult-gate; fi'}]}]}}))
+    changed = _install_claude_hooks(settings)
+    assert changed.count("-consult-gate") == 2
+    commands = [h["command"] for gs in json.loads(settings.read_text())["hooks"].values() for g in gs for h in g["hooks"]]
+    assert not [c for c in commands if "consult-gate" in c]
+    assert other["command"] in commands
+
+
 def test_confirm_dev_channels_answers_only_the_new_dialog():
     """A dead sous's leftover dialog text gets no Enter; the new dialog gets one, so `kitchen open` starts unattended."""
     import time
