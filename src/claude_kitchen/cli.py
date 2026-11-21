@@ -1471,7 +1471,7 @@ def _backup(path: Path) -> Path | None:
     """Copy an existing file beside itself, mode kept, before setup writes it."""
     if not path.exists():
         return None
-    backup = path.with_name(f"{path.name}.bak-kitchen-{datetime.now():%Y%m%d-%H%M%S}")
+    backup = path.with_name(f"{path.name}.bak-kitchen-{datetime.now():%Y%m%d-%H%M%S-%f}")
     shutil.copy2(path, backup)
     return backup
 
