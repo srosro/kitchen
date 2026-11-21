@@ -1089,16 +1089,18 @@ def cmd_hook(args):
     # tokens survived via update_status.
     push = {"cook": name, "summary": summary, "ts": ts}
     final = read_status(base, name) or {}
-    last_line = summary.rstrip().rpartition("\n")[2].strip()
-    # A turn ending on the line SILENT wakes no one, unless it owes a chat an answer.
-    if "chat_message" not in final and last_line == "SILENT":
+    # A report ends on its STATUS line, give or take a Links block after it.
+    tail = [line.strip() for line in summary.splitlines() if line.strip()][-10:]
+    status_line = next((line for line in reversed(tail) if line.startswith("STATUS:")), None)
+    # Only a report wakes the sous, or a turn that owes a chat an answer.
+    if "chat_message" not in final and not status_line:
         return
     if "chat_message" in final:
         from claude_kitchen.plow_chat import DONE, mark
         answered = final.pop("chat_message")
         write_status(base, name, final)  # before the mark: a ticket taken meanwhile writes its own
         # ✅ only for a finished task: a BLOCKED or NEEDS_CONTEXT report leaves the 🔨 on.
-        push["chat_message"] = (mark(kitchen, answered, DONE) if last_line == "STATUS: DONE" else answered)["message"]
+        push["chat_message"] = (mark(kitchen, answered, DONE) if status_line == "STATUS: DONE" else answered)["message"]
     ctx = _ctx_for_channel(final.get("tokens"))
     if ctx:
         push["ctx"] = ctx
@@ -1712,7 +1714,7 @@ def _sous_session_id(base: Path, kitchen_state: dict,
 
 def cmd_restart(args):
     """Relaunch the sous in its own tmux pane: its `kitchen open` argv plus
-    --resume, RESTART_DELAY seconds from now so the caller — usually the sous
+    --resume (or a new conversation with --fresh), RESTART_DELAY seconds from now so the caller — usually the sous
     itself — gets this answer back first. Cooks run on the kitchen's own tmux
     server, which this never touches."""
     if os.environ.get("KITCHEN_CONTAINER"):
@@ -1724,7 +1726,7 @@ def cmd_restart(args):
     if not launch or not launch["pane"]:
         sys.exit(f"Kitchen \"{kitchen}\" has no sous pane on record: open it from tmux "
                  f"(`kitchen open --resume`) once, then restart works.")
-    if not _sous_session_id(base, kj):
+    if not args.fresh and not _sous_session_id(base, kj):
         sys.exit(f"Kitchen \"{kitchen}\" has no sous session to resume yet.")
     if WINDOWS:
         sys.exit("kitchen restart isn't on Windows yet: exit the sous, then run `kitchen open --resume` in its pane.")
@@ -1740,7 +1742,7 @@ def cmd_restart(args):
     # pane back when the new sous exits, as it had before. The relaunched
     # `kitchen open` confirms the dev-channels dialog itself.
     relaunch = (f"while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; "
-                f"{shlex.join(['env', first_turn, *launch['argv'], '--resume'])}; exec \"$SHELL\" -l")
+                f"{shlex.join(['env', first_turn, *launch['argv'], *['--resume'] * (not args.fresh)])}; exec \"$SHELL\" -l")
     t = shlex.join(["tmux", "-S", launch["socket"]])
     pane = shlex.quote(launch["pane"])
     script = (f"sleep {RESTART_DELAY}; "
@@ -1864,6 +1866,7 @@ def main():
     p_restart = sub.add_parser("restart", help="Relaunch the sous with its launch flags plus --resume; cooks keep running")
     p_restart.add_argument("target", choices=["sous"])
     p_restart.add_argument("--kitchen", help="Target kitchen")
+    p_restart.add_argument("--fresh", action="store_true", help="Start the sous in a new conversation instead of resuming")
 
     p_close = sub.add_parser("close", help="Close a kitchen")
     p_close.add_argument("kitchen", nargs="?", help="Kitchen name")
