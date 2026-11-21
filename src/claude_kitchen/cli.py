@@ -1468,11 +1468,13 @@ def _own_hooks(hooks: dict) -> list[str]:
 
 
 def _backup(path: Path) -> Path | None:
-    """Copy an existing file beside itself, mode kept, before setup writes it."""
+    """Copy an existing file beside itself before setup writes it, created with
+    the file's mode so a private config is never readable by others."""
     if not path.exists():
         return None
     backup = path.with_name(f"{path.name}.bak-kitchen-{datetime.now():%Y%m%d-%H%M%S-%f}")
-    shutil.copy2(path, backup)
+    with os.fdopen(os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, path.stat().st_mode & 0o777), "wb") as f:
+        f.write(path.read_bytes())
     return backup
 
 
@@ -1566,7 +1568,7 @@ def cmd_setup(args):
     home = Path.home()
     claude_settings = home / ".claude" / "settings.json"
     settings, added = _claude_settings(claude_settings, args.only)
-    mcp_configs = (home / ".claude.json", home / ".codex" / "config.toml")
+    mcp_configs = (home / ".claude.json", Path(os.environ.get("CODEX_HOME", home / ".codex")) / "config.toml")
     mcp = "mcp" in args.only and not WINDOWS
     print("kitchen setup will:")
     if added:
