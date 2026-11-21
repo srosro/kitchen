@@ -1,6 +1,7 @@
 """CLI entry point for claude-kitchen."""
 import argparse
 import contextlib
+import filecmp
 import json
 import os
 import re
@@ -1394,15 +1395,40 @@ OWNED_HOOKS = (
 )
 
 
-def _install_claude_hooks(settings: Path) -> list[str]:
-    """Make kitchen the one owner of its Claude hooks: drop an entry that runs an
-    older copy of a hook kitchen ships, add each owned entry
-    that is missing, and allow the playwright skill's two screen-only tools. Every
-    other key and hook is left untouched, save autoMemoryEnabled, pinned false. Backs the file up and keeps its mode
-    before writing. Returns what it changed."""
+SETUP_PARTS = ("hooks", "memory", "skills", "mcp")
+
+
+def _setup_parts(value: str) -> set[str]:
+    parts = set(value.split(","))
+    if unknown := parts - set(SETUP_PARTS):
+        raise argparse.ArgumentTypeError(f"unknown {', '.join(sorted(unknown))}; choose from {','.join(SETUP_PARTS)}")
+    return parts
+
+
+def _claude_settings(settings: Path, parts=SETUP_PARTS) -> tuple[dict, list[str]]:
+    """The Claude settings kitchen wants, for the setup parts asked for. hooks:
+    make kitchen the one owner of its hooks, dropping an entry that runs an older
+    copy of a hook kitchen ships and adding each owned entry that is missing.
+    memory: autoMemoryEnabled pinned false. mcp: allow the playwright skill's two
+    screen-only tools. Every other key and hook is left untouched. Returns the
+    settings and what changed; writes nothing."""
     raw = settings.read_text() if settings.exists() else None
     data = json.loads(raw) if raw else {}
-    hooks = data.setdefault("hooks", {})
+    added = []
+    if "hooks" in parts:
+        added += _own_hooks(data.setdefault("hooks", {}))
+    if "memory" in parts and data.get("autoMemoryEnabled") is not False:
+        data["autoMemoryEnabled"] = False  # durable learning lives in skills and runbooks, never Claude's memory
+        added.append("autoMemoryEnabled=false")
+    if "mcp" in parts:
+        allow = data.setdefault("permissions", {}).setdefault("allow", [])
+        missing = [t for t in PLAYWRIGHT_READ_ONLY_TOOLS if t not in allow]
+        allow.extend(missing)
+        added += missing
+    return data, added
+
+
+def _own_hooks(hooks: dict) -> list[str]:
     moved = {Path(cmd.rstrip('"')).name for _, _, cmd, _ in OWNED_HOOKS if "/" in cmd}
     canonical = {(ev, m, cmd, t) for ev, m, cmd, t in OWNED_HOOKS}
     owned = {cmd for _, _, cmd, _ in OWNED_HOOKS}
@@ -1438,22 +1464,24 @@ def _install_claude_hooks(settings: Path) -> list[str]:
         entry = {"type": "command", "command": cmd, **({"timeout": timeout} if timeout else {})}
         hooks.setdefault(ev, []).append({**({"matcher": matcher} if matcher is not None else {}), "hooks": [entry]})
         added.append(ev if cmd == "kitchen hook" else Path(cmd.rstrip('"')).name)
-    if data.get("autoMemoryEnabled") is not False:
-        data["autoMemoryEnabled"] = False  # durable learning lives in skills and runbooks, never Claude's memory
-        added.append("autoMemoryEnabled=false")
-    allow = data.setdefault("permissions", {}).setdefault("allow", [])
-    missing = [t for t in PLAYWRIGHT_READ_ONLY_TOOLS if t not in allow]
-    if not added and not missing:
-        return added
-    allow.extend(missing)
-    added += missing
-    mode = 0o600
-    if raw is not None:
-        mode = settings.stat().st_mode & 0o777
-        backup = settings.with_name(f"{settings.name}.bak-kitchen-{datetime.now():%Y%m%d-%H%M%S}")
-        atomic_write_json(backup, json.loads(raw), mode=mode)
-    atomic_write_json(settings, data, mode=mode)
     return added
+
+
+def _backup(path: Path) -> Path | None:
+    """Copy an existing file beside itself before setup writes it, created with
+    the file's mode so a private config is never readable by others."""
+    if not path.exists():
+        return None
+    backup = path.with_name(f"{path.name}.bak-kitchen-{datetime.now():%Y%m%d-%H%M%S-%f}")
+    with os.fdopen(os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, path.stat().st_mode & 0o777), "wb") as f:
+        f.write(path.read_bytes())
+    return backup
+
+
+def _write_settings(settings: Path, data: dict):
+    mode = settings.stat().st_mode & 0o777 if settings.exists() else 0o600
+    _backup(settings)
+    atomic_write_json(settings, data, mode=mode)
 
 
 def _place_link(src: Path, dest: Path, moved_from: tuple[str, ...]) -> str:
@@ -1534,24 +1562,44 @@ def _link_skills(strict: bool = False) -> list[str]:
 
 
 def cmd_setup(args):
-    """Install kitchen's Claude hooks, check the environment, print what's needed."""
+    """List the changes setup is about to make, make them (args.only: the parts
+    to install), each file it writes backed up first, then check the environment."""
     all_good = True
-    codex_hook_cmd = "kitchen"
+    home = Path.home()
+    claude_settings = home / ".claude" / "settings.json"
+    settings, added = _claude_settings(claude_settings, args.only)
+    mcp_configs = (home / ".claude.json", Path(os.environ.get("CODEX_HOME", home / ".codex")) / "config.toml")
+    mcp = "mcp" in args.only and not WINDOWS
+    print("kitchen setup will:")
+    if added:
+        print(f"  • change {claude_settings}: {', '.join(added)} (backed up first)")
+    if "skills" in args.only:
+        print(f"  • link skills into {home / '.claude' / 'skills'} and {home / '.agents' / 'skills'}, and tc into {home / '.local' / 'bin'}")
+    if mcp:
+        print(f"  • register the Playwright MCP server where it is missing or out of date: {', '.join(map(str, mcp_configs))} (backed up first)")
+    if not (added or "skills" in args.only or mcp):
+        print("  • change nothing")
 
-    # --- Claude Code hooks ---
-    claude_settings = Path.home() / ".claude" / "settings.json"
-    added = _install_claude_hooks(claude_settings)
-    print(f"✅ Claude settings {'added (' + ', '.join(added) + ') to ' + str(claude_settings) if added else 'installed'}")
+    if added:
+        _write_settings(claude_settings, settings)
+        print(f"✅ Claude settings added ({', '.join(added)}) to {claude_settings}")
 
-    # --- Skills ---
-    for line in _link_skills(strict=True):
-        print(f"✅ link {line}")
+    if "skills" in args.only:
+        for line in _link_skills(strict=True):
+            print(f"✅ link {line}")
 
     # --- Playwright MCP server (the playwright skill's browser); idempotent ---
-    if WINDOWS:
+    if "mcp" in args.only and WINDOWS:
         print("⚠️  Playwright MCP: not set up on Windows yet (its setup script is bash)")
-    elif subprocess.run(["bash", str(_PKG_DIR / "setup-playwright-mcp.sh")]).returncode != 0:
-        all_good = False
+    elif mcp:
+        backups = [(c, _backup(c)) for c in mcp_configs]
+        if subprocess.run(["bash", str(_PKG_DIR / "setup-playwright-mcp.sh")]).returncode != 0:
+            all_good = False
+        for config, backup in backups:
+            if backup and filecmp.cmp(config, backup, shallow=False):
+                backup.unlink()  # unchanged: no backup to keep
+            elif backup:
+                print(f"✅ backed up {config} to {backup}")
 
     # --- mcp SDK ---
     try:
@@ -1881,7 +1929,9 @@ def main():
 
     sub.add_parser("hook-agy", help="Antigravity/gemini hook handler (called by agy hooks via stdin, not directly)")
 
-    sub.add_parser("setup", help="Install kitchen's Claude hooks and check the environment")
+    p_setup = sub.add_parser("setup", help="Install kitchen's Claude hooks and check the environment")
+    p_setup.add_argument("--only", type=_setup_parts, default=set(SETUP_PARTS), metavar=",".join(SETUP_PARTS),
+                         help="install only these parts (default: all)")
 
     sub.add_parser(
         "statusline-segment",

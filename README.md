@@ -154,11 +154,13 @@ kitchen setup
 1. Claude hooks, owned by kitchen: `kitchen hook` (`Stop`, `UserPromptSubmit`); the memory-capture nudges `capture-prompt.sh` (`UserPromptSubmit`) and `capture-answer.sh` (after `AskUserQuestion`); `runbook-secret-gate.py` (`PreToolUse[Edit|Write|MultiEdit|Bash]`), which refuses a write into the runbook wikis that carries a credential shape, and any write to the retired `preferences.md`/`mistakes.md`; and the roborev gates for `git commit`, `git push` and branch switches (`PreToolUse[Bash]`), all from `src/claude_kitchen/hooks/`. Setup drops an older `~/.claude/hooks/<name>` copy of any of these, adds each missing entry once, keeps every other setting and hook, and writes a `settings.json.bak-kitchen-<time>` backup first. The roborev gates need the `roborev` CLI; without it they stay silent. It also pins `"autoMemoryEnabled": false`: durable learning goes in skills and runbooks, never Claude's memory.
 2. That `~/.config/kitchen/operator.env` sets `OWNER_NAME`, `TIMEZONE`, `PERSONAL_RUNBOOK`, `COMPANY_RUNBOOK` and `COMPANY_RUNBOOK_REVIEWED`. Setup exits non-zero naming any that is missing, with the line to add; `kitchen open` and `kitchen hire` only warn.
 3. Kitchen's skills (`src/claude_kitchen/skills/*`) and the company wiki's reviewed ones (`skills/*` under `COMPANY_RUNBOOK_REVIEWED`), linked into `~/.claude/skills` and `~/.agents/skills`, and its `tc`, linked into `~/.local/bin`. A missing link is created, a link to the `code-config` copy it moved from is retargeted, and anything else is left alone and reported. Every `kitchen open` and `kitchen hire` relinks too, so a skill merged to the company wiki reaches the next sous or cook without a setup run.
-4. The Playwright MCP server behind the `playwright` skill (`setup-playwright-mcp.sh`): a pinned `@playwright/mcp`, headed on macOS and headless on Linux, with Playwright's Chromium downloaded when the host has none. It is a no-op once registered.
+4. The Playwright MCP server behind the `playwright` skill (`setup-playwright-mcp.sh`): a pinned `@playwright/mcp`, headed on macOS and headless on Linux, with Playwright's Chromium downloaded when the host has none. It is a no-op once registered. `~/.claude.json` and Codex's `config.toml` (under `CODEX_HOME`, default `~/.codex`) are backed up first (`.bak-kitchen-<time>`), and a backup of a file it left unchanged is dropped.
 5. The `mcp` Python SDK.
 6. The superpowers plugin.
 7. Claude Code version 2.1.80 or newer.
 8. That no legacy kitchen uses the reserved name `projects`.
+
+Setup first lists the changes it is about to make. `kitchen setup --only memory,skills` installs just those parts, out of `hooks`, `memory`, `skills` and `mcp` (the Playwright server and its two allowed tools); with no flag it installs all four. The `operator.env` check comes with `skills`, which needs it; the other checks always run.
 
 The statusline check is advisory. Re-run the command until the blocking checks are green.
 
