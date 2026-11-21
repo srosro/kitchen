@@ -1,8 +1,8 @@
-# Kitchen
+# Plow Agent Harness (Kitchen)
 
 **Keep one AI focused on the big picture while a brigade of AI coding agents does the work.**
 
-Kitchen turns a Claude Code session into a hands-on engineering lead. That **sous chef** hires Claude, Codex, or Gemini **cooks** in tmux, gives them focused tickets, and receives their completed work automatically through Claude Code channels. You keep talking to one coherent orchestrator while the cooks spend their own context reading code, running tests, implementing changes, and reviewing one another.
+Plow Agent Harness (Kitchen) turns a Claude Code session into a hands-on engineering lead. That **sous chef** hires Claude, Codex, or Gemini **cooks** in tmux, gives them focused tickets, and receives their completed work automatically through Claude Code channels. You keep talking to one coherent orchestrator while the cooks spend their own context reading code, running tests, implementing changes, and reviewing one another.
 
 It runs the stock agent CLIs you already use—authenticated through your existing subscriptions—not stripped-down API workers hidden behind a custom harness.
 
@@ -316,7 +316,7 @@ The capture hooks route each lesson they nudge an agent to write down by audienc
 
 A kitchen whose state dir holds `plow-chat/plow-credentials` also loads the `plow-chat` channel when `kitchen open` starts its sous. Texts to that Plow line arrive as `<channel source="plow-chat" from="<name>" chat="<chat uid>">`; photos and files sent with them are saved under `plow-chat/files/` and their space-separated paths added as a `file` attribute. The sous answers with its `reply` tool, or sends up to four local files as one message with `send_file`. `start_chat` opens a new chat by texting the given phone numbers or iMessage emails a first message (Plow adds the line's owner too) and returns its chat uid. It reaches only people already in one of the line's chats or listed in `plow-chat/start-chat-allow` (one handle per line), opens at most 5 new chats a day, and logs each to `plow-chat/started-chats.log`. A started chat carries no authority of its own: it never asks Plow to mark it trusted, and once `trusted-chats` exists its answers arrive `trusted="false"` until listed there. Plow delivers only chats the line's account owns, meaning the owner's 1:1 and any iMessage group the owner was in when its first text arrived. By default every member of those chats speaks with head-chef authority, and so does any other agent's Plow line in them: its texts arrive under that line's name. Anyone who has both numbers can start such a group, so to narrow it, list the chat uids that carry authority in `plow-chat/trusted-chats`, one per line (`#` starts a comment). Once that file exists, texts from any other chat arrive with `trusted="false"`, and the sous reads them as context only. It is read at each text, so editing it needs no restart. A line holding only `*` keeps every chat's authority. While the file is missing, the owner's texts in their 1:1 arrive with `who_counts="unset"`: the sous asks them once who else counts, and writes their answer to the file. Every `reply`, `send_file` and `start_chat` that anyone but the line's owner will read, outside a chat listed by uid in `plow-chat/trusted-chats` (`*` doesn't count), first goes to a fresh reviewer (`claude -p --safe-mode` with no tools). It reads the chat's latest 50 texts straight from Plow and checks content only: it holds a text that shares someone else's private data, contains a credential, or makes a commitment in the owner's name that neither the thread nor the draft says the owner agreed. A held send returns `not sent: a reviewer held it for existing chat <uid> with <names> (<why>)` or `… for a new chat with <handles> (<why>)`, and nothing reaches Plow.
 
-**Setup**, using [`latch`](https://github.com/plow-pbc/latch-cli#install) and the kitchen name `kitchen open` prints (a kitchen `boss` opened in a `widget` repo is `widget-boss`):
+**Setup**, using [`latch`](https://github.com/plow-pbc/latch-cli#install) (Plow Computer Use) and the kitchen name `kitchen open` prints (a kitchen `boss` opened in a `widget` repo is `widget-boss`):
 
 ```sh
 latch login                       # text the printed code from your phone
@@ -336,7 +336,7 @@ A kitchen whose state dir holds `discord/.env` (mode 600, `DISCORD_BOT_TOKEN=<to
 
 ## Messaging the sous in a Swarm company
 
-A kitchen whose state dir holds `swarm/credential.json` also loads [swarm](https://github.com/plow-pbc/swarm)'s MCP server, bound to the account that file names. The file is a link to the credential the swarm CLI keeps under `~/.swarm/accounts/<server>/<name>/`:
+A kitchen whose state dir holds `swarm/credential.json` also loads [Plow Agent Chat (swarm)](https://github.com/plow-pbc/swarm)'s MCP server, bound to the account that file names. The file is a link to the credential the swarm CLI keeps under `~/.swarm/accounts/<server>/<name>/`:
 
 ```bash
 swarm accounts add <agent> '<invite-link>'
