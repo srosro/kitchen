@@ -108,10 +108,14 @@ class TestHook:
         assert call_args[0][1]["cook"] == "eng"
         assert call_args[0][1]["summary"] == "all tests pass\n\nSTATUS: DONE"
 
-    @pytest.mark.parametrize("last_message", ["Nothing to relay.\n\nSILENT\n", "Waiting on the build to finish."])
+    @pytest.mark.parametrize("last_message,is_report", [
+        ("Nothing to relay.\n\nSILENT\n", False),
+        ("Waiting on the build to finish.", False),
+        ("Shipped.\n\nSTATUS: DONE_WITH_CONCERNS\n\nLinks\n- https://example.com/pull/1\n- https://example.com/pull/2\n", True),
+    ])
     @pytest.mark.parametrize("owes_a_chat", [False, True])
-    def test_a_turn_end_without_a_status_line_wakes_no_one_unless_it_owes_a_chat(
-            self, monkeypatch, tmp_path, owes_a_chat, last_message):
+    def test_only_a_report_wakes_the_sous_unless_the_turn_owes_a_chat(
+            self, monkeypatch, tmp_path, owes_a_chat, last_message, is_report):
         monkeypatch.setenv("AGENT_NAME", "relay")
         monkeypatch.setenv("AGENT_KITCHEN", "risotto")
         monkeypatch.setenv("STATUS_DIR", str(tmp_path))
@@ -126,7 +130,8 @@ class TestHook:
 
         status = read_status(tmp_path, "relay")
         assert status["status"] == "idle" and "chat_message" not in status
-        assert [p.get("chat_message") for p in pushes] == (["swarm !room $evt"] if owes_a_chat else [])
+        assert [p.get("chat_message") for p in pushes] == (
+            ["swarm !room $evt"] if owes_a_chat else [None] if is_report else [])
 
     def _dead_login(self, monkeypatch, tmp_path, event="StopFailure", line=False, swarm_exit=0,
                     error="authentication_failed"):
@@ -882,7 +887,7 @@ class TestStatusPreservationAcrossNonStopWriters:
         assert marks == ([("react", "🔨")] if source == "swarm" else [("add", "🔨")])
 
         pushes = []
-        _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message=f"Report.\nSTATUS: {status}",
+        _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message=f"Report.\nSTATUS: {status}\n\nLinks\n- https://example.com/pull/1",
                        session_id="00000000-0000-0000-0000-000000000000", transcript_path=str(tmp_path / "none.jsonl"))
         with patch("claude_kitchen.channel.send_to_socket", lambda _sock, push: pushes.append((list(marks), push))):
             cmd_hook(argparse.Namespace(command="hook"))

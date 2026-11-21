@@ -1089,16 +1089,18 @@ def cmd_hook(args):
     # tokens survived via update_status.
     push = {"cook": name, "summary": summary, "ts": ts}
     final = read_status(base, name) or {}
-    last_line = summary.rstrip().rpartition("\n")[2].strip()
-    # Only a report wakes the sous: a turn ending on its STATUS line, or one that owes a chat an answer.
-    if "chat_message" not in final and not last_line.startswith("STATUS:"):
+    # A report ends on its STATUS line, give or take a Links block after it.
+    tail = [line.strip() for line in summary.splitlines() if line.strip()][-10:]
+    status_line = next((line for line in reversed(tail) if line.startswith("STATUS:")), None)
+    # Only a report wakes the sous, or a turn that owes a chat an answer.
+    if "chat_message" not in final and not status_line:
         return
     if "chat_message" in final:
         from claude_kitchen.plow_chat import DONE, mark
         answered = final.pop("chat_message")
         write_status(base, name, final)  # before the mark: a ticket taken meanwhile writes its own
         # ✅ only for a finished task: a BLOCKED or NEEDS_CONTEXT report leaves the 🔨 on.
-        push["chat_message"] = (mark(kitchen, answered, DONE) if last_line == "STATUS: DONE" else answered)["message"]
+        push["chat_message"] = (mark(kitchen, answered, DONE) if status_line == "STATUS: DONE" else answered)["message"]
     ctx = _ctx_for_channel(final.get("tokens"))
     if ctx:
         push["ctx"] = ctx
