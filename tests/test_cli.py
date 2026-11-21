@@ -843,14 +843,16 @@ class TestStatusPreservationAcrossNonStopWriters:
         report()
         assert [p.get("chat_message") for p in pushes] == ["swarm !r:s $ev", None]
 
+    @pytest.mark.parametrize("status", ["DONE", "BLOCKED", "NEEDS_CONTEXT"])
     @pytest.mark.parametrize("source", ["swarm", "plow-chat"])
     @patch("claude_kitchen.cli.send_keys")
     @patch("claude_kitchen.cli.state_dir")
     @patch("claude_kitchen.cli.resolve_kitchen", return_value="risotto")
     def test_a_ticketed_chat_message_gets_hot_springs_then_a_check_before_the_report(
-            self, mock_rk, mock_state, mock_keys, monkeypatch, tmp_path, source):
-        """The owner sees a cook take their message on (♨️) and finish it (✅), both landing before the
-        sous's answer, so the answer stays the chat's latest preview."""
+            self, mock_rk, mock_state, mock_keys, monkeypatch, tmp_path, source, status):
+        """The owner sees a cook take their message on (🔨) and finish it (✅), both landing before the
+        sous's answer, so the answer stays the chat's latest preview. A report that isn't done
+        (blocked, or asking for context) leaves the 🔨: ✅ means the task is complete."""
         mock_state.return_value = tmp_path
         write_status(tmp_path, "eng", {"status": "idle", "agent": "eng", "backend": "claude"})
         monkeypatch.setenv("AGENT_NAME", "eng")
@@ -875,15 +877,16 @@ class TestStatusPreservationAcrossNonStopWriters:
 
         from claude_kitchen.cli import cmd_ticket
         cmd_ticket(argparse.Namespace(kitchen="risotto", cook="eng", message="fix it", chat_message=chat_message, priority=None, dangerously_skip_priority=True))
-        assert marks == ([("react", "♨️")] if source == "swarm" else [("add", "♨️")])
+        assert marks == ([("react", "🔨")] if source == "swarm" else [("add", "🔨")])
 
         pushes = []
-        _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message="done",
+        _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message=f"Report.\nSTATUS: {status}",
                        session_id="00000000-0000-0000-0000-000000000000", transcript_path=str(tmp_path / "none.jsonl"))
         with patch("claude_kitchen.channel.send_to_socket", lambda _sock, push: pushes.append((list(marks), push))):
             cmd_hook(argparse.Namespace(command="hook"))
-        done = [("react", "♨️"), ("react", "✅"), ("redact", "%24r1")] if source == "swarm" else [("add", "♨️"), ("add", "✅")]
-        assert [(seen, push["chat_message"]) for seen, push in pushes] == [(done, chat_message)]
+        started = [("react", "🔨")] if source == "swarm" else [("add", "🔨")]
+        done = started + ([("react", "✅"), ("redact", "%24r1")] if source == "swarm" else [("add", "✅")])
+        assert [(seen, push["chat_message"]) for seen, push in pushes] == [(done if status == "DONE" else started, chat_message)]
 
     def test_a_ticket_taken_while_the_report_marks_its_message_keeps_its_own(self, monkeypatch, tmp_path):
         """The cook is idle while its report's ✅ is on its way, so the sous can ticket it
@@ -897,7 +900,7 @@ class TestStatusPreservationAcrossNonStopWriters:
             update_status(tmp_path, "eng", chat_message={"message": "swarm !r:s $second"})
             return record
         monkeypatch.setattr("claude_kitchen.plow_chat.mark", ticketed_meanwhile)
-        _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message="done")
+        _stdin_payload(monkeypatch, hook_event_name="Stop", last_assistant_message="Report.\nSTATUS: DONE")
         with patch("claude_kitchen.channel.send_to_socket", lambda _sock, _push: None):
             cmd_hook(argparse.Namespace(command="hook"))
         assert read_status(tmp_path, "eng")["chat_message"]["message"] == "swarm !r:s $second"
@@ -1589,6 +1592,20 @@ class TestCmdOpenWikiAndNotes:
 
         with pytest.raises(SystemExit, match=r"Run `kitchen close renamed-risotto` and reopen\."):
             cmd_open(args)
+
+
+def test_seed_leaves_a_symlinked_note_alone(tmp_path):
+    """A sous that can write its notes must not steer the host's reopen into
+    writing a template wherever a link it left points."""
+    from claude_kitchen.cli import _seed
+    notes, target = tmp_path / "notes", tmp_path / "elsewhere"
+    notes.mkdir()
+    (notes / "handoff.md").symlink_to(target)
+
+    _seed(notes, {"handoff.md": "# Handoff\n", "log.md": "# Log\n"})
+
+    assert not target.exists()
+    assert (notes / "log.md").read_text() == "# Log\n"
 
 
 class TestCmdOpenSoftCutover:
@@ -2450,6 +2467,48 @@ class TestCmdCloseWipesNotesNotWiki:
         assert (wiki / "mistakes.md").exists(), "project wiki must persist"
 
 
+def _write_operator_env(home: Path, **overrides) -> Path:
+    from claude_kitchen.cli import OPERATOR_SETTINGS
+    env = home / ".config" / "kitchen" / "operator.env"
+    env.parent.mkdir(parents=True, exist_ok=True)
+    env.write_text("".join(f"{k}={v}\n" for k, v in {**OPERATOR_SETTINGS, **overrides}.items() if v is not None))
+    return env
+
+
+@pytest.fixture
+def operator_env(tmp_path):
+    """A configured machine: operator.env sets every variable `kitchen setup` requires."""
+    return _write_operator_env(tmp_path)
+
+
+class TestOperatorEnv:
+    """Only setup refuses on a missing variable, naming the line to add; open and
+    hire warn and still link, so a newly merged company skill reaches the next cook."""
+
+    def test_setup_refuses_naming_the_line_to_add(self, tmp_path, monkeypatch):
+        from claude_kitchen.cli import cmd_setup
+        monkeypatch.setenv("HOME", str(tmp_path))
+        _write_operator_env(tmp_path, PERSONAL_RUNBOOK=None)
+        with pytest.raises(SystemExit) as exc:
+            cmd_setup(MagicMock())
+        assert "sets no PERSONAL_RUNBOOK." in exc.value.code
+        assert "\n   PERSONAL_RUNBOOK=~/Plow/wiki/personal" in exc.value.code
+
+    def test_open_and_hire_warn_and_still_link_the_company_skills(self, tmp_path, monkeypatch, capsys):
+        from claude_kitchen.cli import _link_skills
+        monkeypatch.setenv("HOME", str(tmp_path))
+        _write_operator_env(tmp_path, PERSONAL_RUNBOOK=None, COMPANY_RUNBOOK_REVIEWED=str(tmp_path / "main"))
+        (tmp_path / "main" / "skills" / "how-to-x").mkdir(parents=True)
+        (tmp_path / "main" / "skills" / "how-to-x" / "SKILL.md").write_text("x")
+        (tmp_path / ".agents" / "skills" / "how-to-x").mkdir(parents=True)  # someone's own copy: left alone, and said so
+        _link_skills()
+        assert (tmp_path / ".claude" / "skills" / "how-to-x").resolve() == tmp_path / "main" / "skills" / "how-to-x"
+        err = capsys.readouterr().err
+        assert "sets no PERSONAL_RUNBOOK: run `kitchen setup`" in err
+        assert f"skipped {tmp_path / '.agents' / 'skills' / 'how-to-x'}: not a symlink" in err
+
+
+@pytest.mark.usefixtures("operator_env")
 class TestCmdSetupExit:
     @patch("claude_kitchen.cli.subprocess.run")
     def test_exits_non_zero_when_claude_missing(self, mock_run, monkeypatch, tmp_path):
@@ -2507,6 +2566,7 @@ class TestCmdSetupHooks:
         data = json.loads(settings.read_text())
         commands = [h["command"] for groups in data["hooks"].values() for g in groups for h in g["hooks"]]
         assert data["model"] == "opus"
+        assert data["autoMemoryEnabled"] is False
         assert not any(c.startswith("$HOME/.claude/hooks/") and "knightwatch" not in c for c in commands)
         assert not any("/roborev/claude-hooks/" in c for c in commands)
         assert mine["command"] in commands and gate["command"] in commands
@@ -2525,6 +2585,7 @@ class TestCmdSetupHooks:
         assert "-capture-prompt.sh" in out and "-roborev-pre-push-gate.py" in out
 
 
+@pytest.mark.usefixtures("operator_env")
 class TestCmdSetupStatusline:
     """No statusLine: the sous runs kitchen's own. A statusLine of the user's own
     is advised to embed the kitchen segment and the usage writer. None block setup."""
@@ -2660,6 +2721,7 @@ class TestCmdSetupStatusline:
         assert "kitchen statusline-segment" in body
 
 
+@pytest.mark.usefixtures("operator_env")
 class TestCmdSetupRootMcp:
     """`kitchen setup` auto-removes a stray state-root .mcp.json (§Design.4)."""
 
@@ -2731,6 +2793,7 @@ class TestCmdSetupRootMcp:
         assert per_kitchen_cfg.exists(), "per-kitchen config must be untouched"
 
 
+@pytest.mark.usefixtures("operator_env")
 class TestCmdSetupSuperpowers:
     """superpowers installs from either marketplace; setup accepts both."""
 
@@ -3217,11 +3280,21 @@ class TestLinkInstalls:
         (agents / "moved").symlink_to(cc / "codex" / "skills" / "moved")
         local_bin.mkdir(parents=True)
         (local_bin / "tc").symlink_to(cc / "tc")
+        wiki = tmp_path / "wiki" / "skills"
+        (wiki / "simple-code").mkdir(parents=True)
+        (wiki / "planted").symlink_to(tmp_path / "unreviewed" / "planted", target_is_directory=True)
+        (tmp_path / "unreviewed" / "planted").mkdir(parents=True)
+        (tmp_path / "unreviewed" / "planted" / "SKILL.md").write_text("planted")
+        (wiki / "inner").mkdir()
+        (wiki / "inner" / "SKILL.md").symlink_to(tmp_path / "unreviewed" / "planted" / "SKILL.md")
+        wiki_skills = (wiki, tmp_path / "unsynced" / "skills")
 
-        first = _link_installs(pkg, home)
+        first = _link_installs(pkg, home, wiki_skills)
 
         assert (claude / "fresh").resolve() == pkg / "skills" / "fresh"
         assert (agents / "fresh").resolve() == pkg / "skills" / "fresh"
+        assert (claude / "simple-code").resolve() == (agents / "simple-code").resolve() == wiki / "simple-code"
+        assert not any((root / name).exists() for root in (claude, agents) for name in ("planted", "inner"))
         assert os.readlink(claude / "moved") == str(pkg / "skills" / "moved")
         assert os.readlink(agents / "moved") == str(pkg / "skills" / "moved")
         assert os.readlink(local_bin / "tc") == str(pkg / "tc" / "tc")
@@ -3231,8 +3304,8 @@ class TestLinkInstalls:
         assert sum(l.startswith("skipped") for l in first) == 2
         assert sum(l.startswith("retargeted") for l in first) == 3
 
-        second = _link_installs(pkg, home)
-        assert [l.split()[0] for l in second].count("ok") == 7
+        second = _link_installs(pkg, home, wiki_skills)
+        assert [l.split()[0] for l in second].count("ok") == 9
         assert sum(l.startswith("skipped") for l in second) == 2
         assert not list(claude.glob(".*kitchen-tmp"))
 

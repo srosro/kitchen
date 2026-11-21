@@ -1,5 +1,6 @@
 """CLI entry point for claude-kitchen."""
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -24,7 +25,7 @@ from claude_kitchen.state import (
     MCP_CONFIG_NAME, LEGACY_MCP_CONFIG_NAME, WINDOWS, lock, sous_pid,
 )
 from claude_kitchen.models import max_context_for
-from claude_kitchen.outbound import approve_host, operator_setting
+from claude_kitchen.outbound import approve_host, operator_setting, operator_settings
 from claude_kitchen.spawn import (spawn_window, spawn_sous,
                                   check_sous_pid, FIRST_TURN_ENV, CLAUDE_MODELS, CODEX_MODELS,
                                   SUPERPOWERS_MARKETPLACES, RUNTIME_HOOKS)
@@ -56,12 +57,13 @@ _NOTES_TEMPLATES = {
 
 
 def _seed(dir_path: Path, templates: dict[str, str]):
-    """Create dir and write any template files that don't already exist."""
+    """Create dir and write any template files that don't already exist.
+    Exclusive creation never follows a link, dangling or not: a sous can write
+    its notes, and the host must not write wherever a link it left points."""
     dir_path.mkdir(parents=True, exist_ok=True)
     for name, body in templates.items():
-        f = dir_path / name
-        if not f.exists():
-            f.write_text(body)
+        with contextlib.suppress(FileExistsError), open(dir_path / name, "x") as f:
+            f.write(body)
 
 
 def _cwd_project() -> Path | None:
@@ -431,6 +433,7 @@ def cmd_open(args):
     persona.start(name)
 
     prompt = sous_prompt()
+    _link_skills()  # a skill merged to the company wiki reaches this sous without a setup run
 
     # What `kitchen restart sous` needs to relaunch this sous where it runs now.
     kj["sous_launch"] = {"argv": [a for a in sys.argv if a != "--resume"], "cwd": os.getcwd(),
@@ -565,6 +568,7 @@ def cmd_hire(args):
     # Before anything is written: psmux runs a cook's launch in PowerShell, written for Claude only so far, and tc is bash.
     if WINDOWS and (backend != "claude" or clean_room or args.slot):
         sys.exit("On Windows kitchen hires Claude cooks only, without --clean-room or --slot (tc is a bash tool), so far.")
+    _link_skills()  # a skill merged to the company wiki reaches this cook without a setup run
 
     # --with-skill: opt a custom skill into a clean-room cook (allowlist v1).
     # Each path loads as a session-scoped --plugin-dir (see build_shell_cmd) —
@@ -1070,14 +1074,16 @@ def cmd_hook(args):
     # tokens survived via update_status.
     push = {"cook": name, "summary": summary, "ts": ts}
     final = read_status(base, name) or {}
+    last_line = summary.rstrip().rpartition("\n")[2].strip()
     # A turn ending on the line SILENT wakes no one, unless it owes a chat an answer.
-    if "chat_message" not in final and summary.rstrip().rpartition("\n")[2].strip() == "SILENT":
+    if "chat_message" not in final and last_line == "SILENT":
         return
     if "chat_message" in final:
         from claude_kitchen.plow_chat import DONE, mark
         answered = final.pop("chat_message")
         write_status(base, name, final)  # before the mark: a ticket taken meanwhile writes its own
-        push["chat_message"] = mark(kitchen, answered, DONE)["message"]
+        # ✅ only for a finished task: a BLOCKED or NEEDS_CONTEXT report leaves the 🔨 on.
+        push["chat_message"] = (mark(kitchen, answered, DONE) if last_line == "STATUS: DONE" else answered)["message"]
     ctx = _ctx_for_channel(final.get("tokens"))
     if ctx:
         push["ctx"] = ctx
@@ -1376,7 +1382,7 @@ def _install_claude_hooks(settings: Path) -> list[str]:
     """Make kitchen the one owner of its Claude hooks: drop an entry that runs an
     older copy of a hook kitchen ships, add each owned entry
     that is missing, and allow the playwright skill's two screen-only tools. Every
-    other key and hook is left untouched. Backs the file up and keeps its mode
+    other key and hook is left untouched, save autoMemoryEnabled, pinned false. Backs the file up and keeps its mode
     before writing. Returns what it changed."""
     raw = settings.read_text() if settings.exists() else None
     data = json.loads(raw) if raw else {}
@@ -1419,6 +1425,9 @@ def _install_claude_hooks(settings: Path) -> list[str]:
         entry = {"type": "command", "command": cmd, **({"timeout": timeout} if timeout else {})}
         hooks.setdefault(ev, []).append({**({"matcher": matcher} if matcher is not None else {}), "hooks": [entry]})
         added.append(ev if cmd == "kitchen hook" else Path(cmd.rstrip('"')).name)
+    if data.get("autoMemoryEnabled") is not False:
+        data["autoMemoryEnabled"] = False  # durable learning lives in skills and runbooks, never Claude's memory
+        added.append("autoMemoryEnabled=false")
     allow = data.setdefault("permissions", {}).setdefault("allow", [])
     missing = [t for t in PLAYWRIGHT_READ_ONLY_TOOLS if t not in allow]
     if not added and not missing:
@@ -1469,17 +1478,46 @@ def _link(dest: Path, src: Path):
         dest.symlink_to(src)
 
 
-def _link_installs(pkg: Path, home: Path) -> list[str]:
-    """Link kitchen's skills into ~/.claude/skills (Claude) and ~/.agents/skills
-    (Codex), and its `tc` into ~/.local/bin. A link left by code-config, which
-    these moved from, is retargeted. Returns one line per link."""
+def _link_installs(pkg: Path, home: Path, wiki_skills: tuple[Path, ...] = ()) -> list[str]:
+    """Link kitchen's skills, and those in each wiki_skills dir that exists (a
+    reviewed copy: a skill loads into every session), into
+    ~/.claude/skills (Claude) and ~/.agents/skills (Codex), and its `tc` into
+    ~/.local/bin. A link left by code-config, which these moved from, is
+    retargeted. Returns one line per link."""
     report = [f"skipped {home / '.local' / 'bin' / 'tc'}: tc is a bash tool" if WINDOWS else
               _place_link(pkg / "tc" / "tc", home / ".local" / "bin" / "tc", ("code-config/tc",))]
-    for src in sorted(p for p in (pkg / "skills").iterdir() if p.is_dir()):
+    dirs = [pkg / "skills", *(d for d in wiki_skills if d.is_dir())]
+    # kitchen first, so a same-named wiki skill is skipped; a SKILL.md reached through a symlink out of its dir is unreviewed, so skipped too
+    for src in (p for d in dirs for p in sorted(d.iterdir()) if p.is_dir() and (p / "SKILL.md").resolve().is_relative_to(d.resolve())):
         moved = (f"code-config/claude/skills/{src.name}", f"code-config/codex/skills/{src.name}")
         for root in (home / ".claude" / "skills", home / ".agents" / "skills"):
             report.append(_place_link(src, root / src.name, moved))
     return report
+
+
+# Each variable the base rules read, with an example value for the line to add.
+OPERATOR_SETTINGS = {"OWNER_NAME": "Alex", "TIMEZONE": "Europe/London", "PERSONAL_RUNBOOK": "~/Plow/wiki/personal",
+                     "COMPANY_RUNBOOK": "~/Plow/wiki/plowco", "COMPANY_RUNBOOK_REVIEWED": "~/Plow/plowco-main"}
+
+
+def _link_skills(strict: bool = False) -> list[str]:
+    """Link kitchen's skills and the company wiki's reviewed ones (_link_installs).
+    A variable missing from operator.env stops setup (strict) with the line to add;
+    open and hire only warn, naming it, and link what they can. A skipped link is
+    warned about; the rest are returned."""
+    env = Path.home() / ".config" / "kitchen" / "operator.env"
+    settings = operator_settings(env)
+    missing = [k for k in OPERATOR_SETTINGS if not settings.get(k)]
+    if missing and strict:
+        sys.exit(f"❌ {env} sets no {', '.join(missing)}. Add, with your own value:\n"
+                 + "\n".join(f"   {k}={OPERATOR_SETTINGS[k]}" for k in missing))
+    if missing:
+        print(f"⚠️  {env} sets no {', '.join(missing)}: run `kitchen setup`.", file=sys.stderr)
+    company = settings.get("COMPANY_RUNBOOK_REVIEWED")
+    report = _link_installs(_PKG_DIR, Path.home(), (Path(company).expanduser() / "skills",) if company else ())
+    for line in (l for l in report if l.startswith("skipped")):
+        print(f"⚠️  link {line}", file=sys.stderr)
+    return [l for l in report if not l.startswith("skipped")]
 
 
 def cmd_setup(args):
@@ -1493,8 +1531,8 @@ def cmd_setup(args):
     print(f"✅ Claude settings {'added (' + ', '.join(added) + ') to ' + str(claude_settings) if added else 'installed'}")
 
     # --- Skills ---
-    for line in _link_installs(_PKG_DIR, Path.home()):
-        print(f"{'⚠️ ' if line.startswith('skipped') else '✅'} link {line}")
+    for line in _link_skills(strict=True):
+        print(f"✅ link {line}")
 
     # --- Playwright MCP server (the playwright skill's browser); idempotent ---
     if WINDOWS:
