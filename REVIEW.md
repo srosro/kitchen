@@ -1,5 +1,9 @@
 # Review instructions — kitchen
 
+## Cause-first bug fixes
+
+Fix a bug at its cause so the class can't recur. Never fix it with a layer, guard, link, workaround or hand-edit of data around it. A fix that adds net complexity must state why in the PR. When the bug comes from a duplicated source or identity, remove the duplicate rather than bridging the two.
+
 **Operating point:** a general-purpose agent harness used by a small team.
 Iteration speed and clear extension seams matter more than hypothetical scale.
 
