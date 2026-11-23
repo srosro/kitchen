@@ -1,3 +1,5 @@
+> **Deprecated:** this repository is archived and no longer maintained. Kitchen has moved to https://github.com/plow-pbc/kitchen.
+
 # Plow Agent Harness (Kitchen)
 
 **Keep one AI focused on the big picture while a brigade of AI coding agents does the work.**
